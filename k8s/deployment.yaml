@@ -1,0 +1,285 @@
+# Dedicated namespace for the simulator (OTLP direct to Coralogix by default; see env below).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-agent-sim
+  labels:
+    app.kubernetes.io/name: otel-ai-agent-sim
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-ai-agent-sim
+  namespace: ai-agent-sim
+  labels:
+    app: otel-ai-agent-sim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-ai-agent-sim
+  template:
+    metadata:
+      labels:
+        app: otel-ai-agent-sim
+    spec:
+      containers:
+        - name: sim
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:latest
+          imagePullPolicy: Always
+          env:
+            # Direct OTLP gRPC to Coralogix (bypass in-cluster collector). Requires Secret coralogix-otel-credentials.
+            - name: CORALOGIX_REGION
+              value: "us2"
+            - name: OTLP_ENDPOINT
+              value: ingress.us2.coralogix.com:443
+            - name: OTLP_INSECURE
+              value: "false"
+            - name: CORALOGIX_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: coralogix-otel-credentials
+                  key: private_key
+            # Prometheus text on :9090 — primary path when your in-cluster OpenTelemetry / Prometheus
+            # collector scrapes this pod and exports to Coralogix (see e.g. Coralogix otel-integration).
+            - name: PROMETHEUS_METRICS_PORT
+              value: "9090"
+            # Direct remote_write from the sim (same registry as :9090). Keep **false** when the collector
+            # already scrapes :9090 — otherwise you duplicate series. Set **true** if metrics panels are
+            # empty (nothing scrapes this pod). Optional job/instance for PromQL: PROMETHEUS_RW_* in app.
+            - name: PROMETHEUS_REMOTE_WRITE_ENABLED
+              value: "false"
+            # If enabling remote_write, uncomment so stock dashboards that filter on job/instance match:
+            # - name: PROMETHEUS_RW_JOB
+            #   value: "otel-ai-agent-sim"
+            # - name: PROMETHEUS_RW_INSTANCE
+            #   valueFrom:
+            #     fieldRef:
+            #       fieldPath: metadata.name
+            # Default in app: Prometheus ``session_id`` on Claude counters is bucketed (long-lived series).
+            # Align Prometheus ``session_id`` with OTLP log ``session.id`` for session-level dashboard joins.
+            - name: SIM_CLAUDE_METRICS_SESSION_ID_ALIGN_LOGS
+              value: "true"
+            # Optional low-cardinality mode: SIM_CLAUDE_METRICS_SESSION_ID_ALIGN_LOGS=false
+            # Optional: SIM_CLAUDE_PROMETHEUS_SESSION_LABELS=bounded (default) and SIM_CLAUDE_PROMETHEUS_SESSION_BUCKETS=512
+            # Optional: Coralogix Custom Metrics (OTLP MetricsService/Export); disable if using collector scrape only.
+            - name: CORALOGIX_OTLP_METRICS_ENABLED
+              value: "false"
+            - name: CORALOGIX_PROMETHEUS_REMOTE_WRITE_URL
+              value: https://ingress.us2.coralogix.com/prometheus/v1
+            # Omit TRACE_ITERATIONS to run forever; set e.g. "20" for a finite batch
+            # - name: TRACE_ITERATIONS
+            #   value: "20"
+            - name: TRACE_INTERVAL_SEC
+              value: "3"
+            - name: OTEL_SERVICE_NAME
+              value: ai-agent-engine
+            - name: CX_APPLICATION_NAME
+              value: AI-Production-Sim
+            - name: CX_SUBSYSTEM_NAME
+              value: Agent-Worker-Node
+            # OTLP logs + metrics for Claude Code / Codex must carry these (log facets + PromQL ``cx_*`` labels).
+            - name: CLAUDE_CODE_CX_APPLICATION_NAME
+              value: claude-code
+            - name: CLAUDE_CODE_CX_SUBSYSTEM_NAME
+              value: claude-code
+            # Claude log/metric shape: ``flat``, ``dotted``, or ``both`` (dual OTLP logs + duplicate Prom counters per subsystem).
+            - name: SIM_CLAUDE_TELEMETRY_PROFILE
+              value: both
+            # Optional for ``dotted`` / ``both``: SIM_CLAUDE_DOTTED_CX_SUBSYSTEM_NAME, SIM_CLAUDE_DOTTED_SERVICE_VERSION,
+            # SIM_CLAUDE_DOTTED_INSTRUMENTATION_VERSION, SIM_CLAUDE_DOTTED_ORGANIZATION_ID (emails are always @coralogix.com)
+            - name: CODEX_CX_APPLICATION_NAME
+              value: codex
+            - name: CODEX_CX_SUBSYSTEM_NAME
+              value: codex-sessions
+            # OpenAI Codex Advanced Config parity (OTL log fields; see developers.openai.com/codex/config-advanced):
+            # - name: SIM_CODEX_OTEL_ENVIRONMENT
+            #   value: "staging"
+            # - name: SIM_CODEX_SANDBOX_MODE
+            #   value: "workspace-write"
+            # - name: SIM_CODEX_APPROVAL_POLICY
+            #   value: "on-request"
+            # - name: SIM_CODEX_LOG_USER_PROMPT
+            #   value: "false"
+            - name: GEMINI_CX_APPLICATION_NAME
+              value: gemini-cli
+            # Real human / local CLI runs in Coralogix are often under ``gemini-cli-sessions-real``; this deploy
+            # keeps ``gemini-cli-sessions`` so sim traffic does not mix with that filter in DataPrime/Traces.
+            - name: GEMINI_CX_SUBSYSTEM_NAME
+              value: gemini-cli-sessions
+            # Gemini Prometheus: stable ``session_id`` / user + pinned file lines (steady ``increase()`` series).
+            - name: SIM_GEMINI_STABLE_SESSION_PER_USER
+              value: "true"
+            - name: SIM_GEMINI_PIN_METRIC_LABELS
+              value: "true"
+            # Narrow LOC draws + EWMA per user, tighter file/tool counts & latencies (smooth ``rate()`` curves).
+            - name: SIM_GEMINI_SMOOTH_PRODUCTIVITY
+              value: "true"
+            # Parallel long-lived Gemini users: each slot keeps one roster identity for
+            # ``SIM_GEMINI_LONG_SESSION_SEC`` or (if unset) ``SIM_CLAUDE_LONG_SESSION_SEC`` seconds.
+            - name: SIM_GEMINI_CONCURRENT_LONG_SESSIONS
+              value: "18"
+            # ``random`` (default) or ``round_robin`` — which slot to use each Gemini emit.
+            # - name: SIM_GEMINI_SESSION_SLOT_STRATEGY
+            #   value: "round_robin"
+            # Override Gemini-only window (else inherits ``SIM_CLAUDE_LONG_SESSION_SEC`` below when > 0).
+            # - name: SIM_GEMINI_LONG_SESSION_SEC
+            #   value: "7200"
+            - name: DEPLOYMENT_ENVIRONMENT
+              value: test-cluster
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # Restrict weighted selection to Claude Code + Gemini CLI + Codex + Cursor (see SIM_WEIGHT_*).
+            # When false or unset, generic agents (chatgpt, cursor, …) also participate with default weight 1 each.
+            - name: SIM_CLI_AGENTS_ONLY
+              value: "true"
+            # Pick one agent (examples): claude_code | gemini_cli | codex | cursor — omit for weighted multi-agent mix.
+            # - name: SIM_FORCE_AGENT
+            #   value: claude_code
+            # With ``SIM_CLAUDE_STABLE_SESSION_PER_USER=true`` (app default): ``session.id`` is fixed per roster user;
+            # this value locks the **same user** for N seconds before picking another (still one stable session id per user).
+            # With ``SIM_CLAUDE_STABLE_SESSION_PER_USER=false``: reuse one random UUID as ``session.id`` for N seconds
+            # (legacy). 0 = pick a new user (stable mode) or new UUID (legacy mode) every iteration.
+            #
+            # Parallel **long** Claude users (same duration N): ``SIM_CLAUDE_CONCURRENT_LONG_SESSIONS`` independent
+            # slots (like Gemini); each slot pins one roster row for N seconds — up to that many distinct users at once
+            # without shortening N. Slot pick: ``SIM_CLAUDE_SESSION_SLOT_STRATEGY`` = ``random`` (default) or ``round_robin``.
+            - name: SIM_CLAUDE_LONG_SESSION_SEC
+              value: "14400"
+            # Cursor Composer: ``SIM_CURSOR_STABLE_SESSION_PER_USER`` (app default true) + slots below reuse one roster
+            # user per slot for ``SIM_CURSOR_LONG_SESSION_SEC`` or (if unset) the same ``SIM_CLAUDE_LONG_SESSION_SEC``
+            # window — parallel sessions stay on distinct pinned users. Set ``SIM_CURSOR_LONG_SESSION_SEC=0`` for a new
+            # user every emit (legacy). Optional: ``SIM_CURSOR_CONCURRENT_LONG_SESSIONS``, ``SIM_CURSOR_SESSION_SLOT_STRATEGY``.
+            # Match Gemini slot count — many overlapping 4h Claude identities.
+            - name: SIM_CLAUDE_CONCURRENT_LONG_SESSIONS
+              value: "18"
+            # - name: SIM_CLAUDE_SESSION_SLOT_STRATEGY
+            #   value: "round_robin"
+            - name: SIM_CLAUDE_STABLE_SESSION_PER_USER
+              value: "true"
+            # Pin app.version + model (and collapse edit_decision labels) so the same Prometheus series is scraped repeatedly.
+            - name: SIM_CLAUDE_PIN_METRIC_LABELS
+              value: "true"
+            # When false (default), Claude ``user_prompt`` spans are not created and Claude OTLP traces are dropped.
+            - name: SIM_CLAUDE_OTLP_TRACES_ENABLED
+              value: "false"
+            # Claude Code agent selection: ``SIM_CLAUDE_OFF_HOURS_ACTIVITY`` when “off” (default 0.2 ≈ 80 percent reduction).
+            # Worldwide mode blends Europe / Asia / Pacific local weekdays + office hours; single-region mode uses ``SIM_CLAUDE_OFFICE_TZ`` only.
+            - name: SIM_CLAUDE_OFFICE_HOURS_ENABLE
+              value: "true"
+            - name: SIM_CLAUDE_WORLDWIDE_WORKFORCE_ENABLE
+              value: "true"
+            - name: SIM_CLAUDE_WORKFORCE_TZ_EUROPE
+              value: "Europe/London"
+            - name: SIM_CLAUDE_WORKFORCE_TZ_ASIA
+              value: "Asia/Tokyo"
+            - name: SIM_CLAUDE_WORKFORCE_TZ_PACIFIC
+              value: "America/Los_Angeles"
+            # Single-region fallback when ``SIM_CLAUDE_WORLDWIDE_WORKFORCE_ENABLE=false``:
+            - name: SIM_CLAUDE_OFFICE_TZ
+              value: "America/Los_Angeles"
+            - name: SIM_CLAUDE_OFF_HOURS_ACTIVITY
+              value: "0.2"
+            # US federal holidays: Pacific cohort uses them by default; set ``SIM_CLAUDE_WORKFORCE_US_HOLIDAYS_EUROPE=true`` etc. to extend.
+            - name: SIM_CLAUDE_US_HOLIDAYS_ENABLE
+              value: "true"
+            # - name: SIM_CLAUDE_OFFICE_HOUR_START
+            #   value: "9"
+            # - name: SIM_CLAUDE_OFFICE_HOUR_END
+            #   value: "18"
+            # Gemini CLI ``user_prompt`` OTLP spans (``gemini-cli`` resource). Metrics/logs unchanged when false.
+            - name: SIM_GEMINI_OTLP_TRACES_ENABLED
+              value: "true"
+            # Per-turn token totals (defaults in app.py ~4.5k–225k combined; avoids one 50M spike flattening charts).
+            # - name: SIM_CLAUDE_TOTAL_TOKENS_MIN
+            #   value: "100000"
+            # - name: SIM_CLAUDE_TOTAL_TOKENS_MAX
+            #   value: "50000000"
+            # More users + higher token counts in ``topk(... increase(...))``: ``round_robin`` roster, batch emits, mult.
+            # - name: SIM_CLAUDE_ROSTER_STRATEGY
+            #   value: round_robin
+            # - name: SIM_CLAUDE_TOKEN_EMIT_BATCH
+            #   value: "3"
+            # - name: SIM_CLAUDE_PER_EMIT_TOKEN_MULT
+            #   value: "1.5"
+            # Productivity ratio (active time): app default min 2s/turn per type=cli|user; set "1" to match older sim.
+            # - name: SIM_CLAUDE_ACTIVE_TIME_MIN_S
+            #   value: "1"
+            # Claude Code: `user_prompt` on scope `claude-code` + claude_code.* metrics/logs
+            # - name: SIM_FORCE_AGENT
+            #   value: gemini_cli
+            # - name: SIM_FORCE_AGENT
+            #   value: codex
+            # Optional: align Resource with a real Gemini export (serviceName / application / subsystem):
+            # - name: OTEL_SERVICE_NAME
+            #   value: gemini-cli
+            # - name: CX_APPLICATION_NAME
+            #   value: gemini-cli
+            # - name: CX_SUBSYSTEM_NAME
+            #   value: gemini-cli-sessions
+            # - name: GEMINI_CX_APPLICATION_NAME
+            #   value: gemini-cli
+            # - name: GEMINI_CX_SUBSYSTEM_NAME
+            #   value: gemini-cli-sessions
+            # (``gemini-cli-sessions-real`` in the tenant = real interactive CLI; not the sim’s value above.)
+            # Gemini CLI Prometheus labels: ``standard`` (default) matches ``gemini_cli_*_total``
+            # series (``job``, ``service_*``, ``telemetry_sdk_*``, ``status_code`` on API, no ``user_id`` on counters).
+            # Use ``extended`` only for the older sim label set (``mimetype``/``extension`` on file ops, etc.).
+            # - name: SIM_GEMINI_METRIC_LABEL_SHAPE
+            #   value: standard
+            # Roster email: default in code is ``natural`` (``first.last@coralogix.com``). Set ``SIM_ROSTER_EMAIL_FORMAT=legacy``
+            # for ``team.067.…`` or ``=underscore`` for ``team067_…`` if saved filters require it.
+            # - name: SIM_ROSTER_EMAIL_FORMAT
+            #   value: legacy
+            # Per-session stable mapping to one of 225 fixed @coralogix.com users (see ``random_coralogix_identity``).
+            # Relative selection weight per agent (higher = more traces). Others default to 1 in code.
+            - name: SIM_WEIGHT_CLAUDE_CODE
+              value: "3"
+            - name: SIM_WEIGHT_GEMINI_CLI
+              value: "5"
+            - name: SIM_WEIGHT_CODEX
+              value: "5"
+            # Acceptance rate for code_edit_tool.decision metrics (0.0–1.0):
+            - name: SIM_TOOL_ACCEPT_RATE
+              value: "0.78"
+            # Per-turn productivity deltas (keeps 12h per-user commit/PR totals plausible; override if needed):
+            - name: SIM_CLAUDE_LOC_ADDED_MIN
+              value: "2"
+            - name: SIM_CLAUDE_LOC_ADDED_MAX
+              value: "72"
+            - name: SIM_CLAUDE_LOC_REMOVED_MAX
+              value: "48"
+            - name: SIM_CLAUDE_COMMITS_MIN
+              value: "0"
+            - name: SIM_CLAUDE_COMMITS_MAX
+              value: "1"
+            - name: SIM_CLAUDE_PRS_MIN
+              value: "0"
+            - name: SIM_CLAUDE_PRS_MAX
+              value: "1"
+            # Generic agent traces only (not gemini_cli/claude_code/codex): shallow=4 spans, deep>=10 spans
+            # - name: SIM_DEEP_TRACE_RATIO
+            #   value: "0.45"
+            # - name: SIM_DEEP_TRACE_MIN_SPANS
+            #   value: "10"
+            # - name: SIM_DEEP_TRACE_MAX_SPANS
+            #   value: "18"
+            # Force every generic trace to be deep with at least N spans (e.g. 12):
+            # - name: SIM_MIN_SPAN_COUNT
+            #   value: "12"
+            # Codex: extra child spans under run_turn (default 4 in code); set 0 for minimal run_turn->user_prompt only
+            # - name: SIM_CODEX_EXTRA_SPANS
+            #   value: "4"
+          ports:
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

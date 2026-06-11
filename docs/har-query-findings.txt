@@ -1,0 +1,29 @@
+Findings: AI Center / HAR queries vs live telemetry (validated with Coralogix MCP, 2026-04-15)
+
+Reference bundle: har-extracted-queries.json (PromQL query strings + DataPrime pipelines parsed from HAR POST bodies).
+
+1) Gemini token charts (PromQL: increase(gemini_cli_token_usage_total[...]))
+   - Range query over recent window can return series with value 0 while gemini_cli_session_count_total shows non-zero deltas.
+   - Likely causes: OTLP delta counters vs PromQL increase() expectations, sparse export interval (15m metric interval in sim), or label cardinality on token series.
+   - Logs for application gemini-cli ARE present (simulated OTLP logs with service_name gemini-cli).
+
+2) Codex dashboard DataPrime (source logs | filter $d.resource.attributes['service_name'] == 'codex_cli_rs' ...)
+   - MCP get_logs with that filter FAILS: keypath $d.resource.attributes['service.name'] does not exist on stored logs schema.
+   - Working filter for the same data: $l.applicationname == 'codex' OR filter on log body/attributes after ingest.
+   - HAR queries assume a resource attribute path that does not match how Coralogix exposes OTLP logs in DataPrime (resource nested under JSON; labels use applicationname).
+
+3) Spans vs logs application labels
+   - get_traces sample spans showed labels.applicationName = 'ai-agent-sim' and subsystemName = 'otel-ai-agent-sim' for traces that include codex user_prompt, while tags.cx.application.name inside the span may still reflect older/wrong routing.
+   - If AI Center widgets scope traces by application = codex/gemini-cli but span labels are namespace-scoped, charts show “no data” for trace panels even when logs/metrics exist.
+   - Action: confirm cluster collector applies application_name_attributes (cx.application.name first) to TRACES exporter path, not only logs; redeploy collector if traces pipeline differs.
+
+4) MCP validation commands that worked
+   - Logs: source logs | filter $l.applicationname == 'gemini-cli' | limit 3
+   - Logs: source logs | filter $l.applicationname == 'codex' | limit 3
+   - Traces: source spans | filter $d.tags['gen_ai.system'] != null | limit 3
+   - Traces: filter $l.applicationname == 'gemini-cli' failed (keypath missing on span schema; use tags in $d.tags or label fields per Coralogix docs)
+
+Next steps (engineering)
+   - Align sim metric temporality or dashboard queries with Coralogix guidance for OTLP delta counters.
+   - Replace HAR DataPrime filters that use $d.resource.attributes['service.name'] on logs with $l.applicationname / $d.logRecord.attributes or documented OTLP log field paths.
+   - Audit trace ingestion labels so span applicationName matches cx.application.name from OTLP trace resource (same Helm rule as logs).

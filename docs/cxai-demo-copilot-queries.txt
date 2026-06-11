@@ -1,0 +1,100 @@
+# Copilot CLI dashboard — DataPrime pipelines (EU2 cxai-demo HAR)
+
+Source: ~/Downloads/cxai-demo.app.eu2.coralogix.com.har
+Endpoint: ng-api-grpc.eu2.coralogix.com … InternalDataprimeQueryService/Query (grpc-web+proto).
+
+Common filter prefix (all widgets below):
+
+  source spans
+  | filter $l.serviceName == 'github-copilot' || tags['otel.scope.name'] == 'github.copilot'
+
+---
+
+## Presence / facet sanity
+
+  … | limit 1
+  | aggregate count() as count
+  | choose count
+
+## Application × subsystem breakdown
+
+  … | filter $l.applicationName != null || $l.subsystemName != null
+  | groupby $l.applicationName as applicationName, $l.subsystemName as subsystemName aggregate count() as count
+  | sort by count desc
+  | choose applicationName, subsystemName
+
+## Token totals (invoke_agent)
+
+  … | filter tags['gen_ai.operation.name'] == 'invoke_agent'
+  | create input from tags['gen_ai.usage.input_tokens']:number
+  | create output from tags['gen_ai.usage.output_tokens']:number
+  | aggregate sum(input) as inputTokens, sum(output) as outputTokens
+  | create totalTokens from inputTokens + outputTokens
+  | choose totalTokens, inputTokens, outputTokens
+
+## Chat duration stats
+
+  … | filter tags['gen_ai.operation.name'] == 'chat'
+  | create dur_ms from $m.duration:number / 1000
+  | aggregate sum(dur_ms) as totalDurationMs, avg(dur_ms) as avgDurationMs, count() as chatCount
+  | choose totalDurationMs, avgDurationMs, chatCount
+
+## Sessions (distinct conversations)
+
+  … | filter tags['gen_ai.operation.name'] == 'invoke_agent'
+  | create conversation_id from tags['gen_ai.conversation.id']
+  | filter conversation_id != null
+  | aggregate approx_count_distinct(conversation_id) as totalSessions
+  | choose totalSessions
+
+## Unique users
+
+  … | filter tags['gen_ai.operation.name'] == 'invoke_agent'
+  | create user_email from tags['enduser.pseudo.id']
+  | filter user_email != null
+  | aggregate approx_count_distinct(user_email) as uniqueUsers
+  | choose uniqueUsers
+
+## Models × tokens
+
+  … | filter tags['gen_ai.operation.name'] == 'invoke_agent'
+  | create model from tags['gen_ai.request.model']
+  | filter model != null
+  | create input from tags['gen_ai.usage.input_tokens']:number
+  | create output from tags['gen_ai.usage.output_tokens']:number
+  | groupby model aggregate sum(input) as totalInput, sum(output) as totalOutput
+  | create totalTokens from totalInput + totalOutput
+  | sort by totalTokens desc
+  | choose model, totalTokens
+
+## Power user / cost by user
+
+  … | filter tags['gen_ai.operation.name'] == 'invoke_agent'
+  | create user from tags['enduser.pseudo.id']
+  | filter user != null
+  | create cost from tags['github.copilot.cost']:number
+  | groupby user aggregate sum(cost) as totalCost
+  | sort by totalCost desc
+  | choose user as userEmail, totalCost
+
+## Cost over time (daily buckets)
+
+  … | filter tags['gen_ai.operation.name'] == 'invoke_agent'
+  | create cost from tags['github.copilot.cost']:number
+  | groupby roundTime($m.timestamp, 86400000ms) as Time aggregate sum(cost) as cost
+  | sort by Time asc
+  | choose Time, cost
+
+## Cache read vs input (invoke_agent)
+
+  … | filter tags['gen_ai.operation.name'] == 'invoke_agent'
+  | create cacheRead from tags['gen_ai.usage.cache_read.input_tokens']:number
+  | create input from tags['gen_ai.usage.input_tokens']:number
+  | aggregate sum(cacheRead) as cacheReadTokens, sum(input) as inputTokens
+  | create cacheCreationTokens from 0
+  | choose cacheReadTokens, cacheCreationTokens, inputTokens
+
+---
+
+Simulator alignment: sim/copilot_cli.py (Resource service.name=github-copilot; span tags include
+otel.scope.name=github.copilot, enduser.pseudo.id, github.copilot.cost, gen_ai.usage.* on invoke_agent).

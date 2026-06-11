@@ -1,0 +1,46 @@
+# Standalone example config (full collector). If you **already** run otelcol-contrib elsewhere,
+# do not replace your file — merge in ``config/vcenter-receiver-fragment.yaml`` instead.
+#
+# Local macOS + vcsim on same host: https://127.0.0.1:8989/sdk — adjust port if needed.
+#
+# Run:
+#   otelcol-contrib --config=config/otel-collector-local-vcenter.yaml
+#
+# Switch exporters.debug for otlp/http to Coralogix when you want telemetry shipped.
+
+receivers:
+  vcenter:
+    endpoint: https://127.0.0.1:8989/sdk
+    username: user
+    password: pass
+    collection_interval: 5m
+    initial_delay: 1s
+    metrics:
+      vcenter.host.cpu.utilization:
+        enabled: false
+    tls:
+      insecure: true
+
+processors:
+  batch: {}
+
+exporters:
+  debug:
+    verbosity: detailed
+  # Example: ship metrics to an OTLP backend (uncomment and set endpoint / headers).
+  # otlphttp:
+  #   endpoint: https://ingress.cx498.coralogix.com:443/opentelemetry/v1/metrics
+  #   headers:
+  #     Authorization: Bearer <private_key>
+
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [vcenter]
+      processors: [batch]
+      exporters: [debug]

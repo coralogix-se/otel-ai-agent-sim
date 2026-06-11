@@ -1,0 +1,37 @@
+# Merge with Coralogix otel-integration Helm upgrade (cluster collector).
+# Receivers listed under extraConfig.service.pipelines.metrics are **appended** to the
+# chart-generated metrics pipeline (see Coralogix opentelemetry-collector ``applyExtraConfig``).
+#
+#   helm upgrade otel-coralogix-integration coralogix/otel-integration -n <ns> \
+#     --reuse-values \
+#     -f k8s/coralogix-exporter-appname-patch.yaml \
+#     -f k8s/coralogix-vcenter-receiver-patch.yaml
+#
+# Replace endpoint / credentials with your vCenter; prefer ``password: ${env:VCENTER_PASSWORD}``
+# and set that env on the collector Deployment, or use an External Secrets reference.
+#
+# **govcsim / vcsim** (local vSphere API sim): ``tls.insecure: true`` matches the usual self-signed
+# or plain HTTP test setup. Default users are often ``user`` / ``pass`` (``-username`` / ``-password`` flags).
+# If the **collector runs in Kubernetes** but **vcsim runs on your laptop**, ``https://127.0.0.1:8989/sdk``
+# points at the **pod loopback**, not your Mac — use the host reachable from the cluster (e.g. Node IP,
+# ``host.docker.internal`` on Docker Desktop, ``kubectl port-forward``, or run vcsim inside the cluster).
+
+opentelemetry-cluster-collector:
+  extraConfig:
+    receivers:
+      vcenter:
+        endpoint: https://127.0.0.1:8989/sdk
+        username: user
+        password: pass
+        collection_interval: 5m
+        initial_delay: 1s
+        metrics:
+          vcenter.host.cpu.utilization:
+            enabled: false
+        tls:
+          insecure: true
+    service:
+      pipelines:
+        metrics:
+          receivers:
+            - vcenter

@@ -1,0 +1,26 @@
+# Merge with: helm upgrade otel-coralogix-integration coralogix/otel-integration -n astronomy-demo \
+#   --reuse-values \
+#   -f k8s/coralogix-exporter-appname-patch.yaml \
+#   -f k8s/coralogix-vcenter-receiver-patch.yaml
+#
+# (Omit the vCenter patch if you are not scraping vSphere.)
+#
+# Coralogix exporter uses application_name_attributes in order and takes the first match.
+# Without cx.application.name first, k8s.namespace.name wins — every pod in ai-agent-sim
+# maps to the namespace as Application, ignoring OTLP CLI app names.
+
+opentelemetry-cluster-collector:
+  config:
+    exporters:
+      coralogix:
+        application_name_attributes:
+          - cx.application.name
+          - k8s.namespace.name
+          - service.namespace
+        subsystem_name_attributes:
+          - cx.subsystem.name
+          - app.label.component
+          - k8s.deployment.name
+          - k8s.statefulset.name
+          - k8s.cronjob.name
+          - service.name

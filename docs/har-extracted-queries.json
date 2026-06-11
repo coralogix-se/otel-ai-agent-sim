@@ -1,0 +1,630 @@
+{
+  "description": "Queries extracted from browser HAR captures of Coralogix AI Center (cx498).",
+  "har_files": [
+    {
+      "label": "codex",
+      "path": "/Users/davidbott/Downloads/dmb-sm.app.cx498.coralogix.com.har",
+      "dataprime_candidates": 52,
+      "promql_candidates": 0
+    },
+    {
+      "label": "gemini",
+      "path": "/Users/davidbott/Downloads/geminidmb-sm.app.cx498.coralogix.com.har",
+      "dataprime_candidates": 1,
+      "promql_candidates": 47
+    },
+    {
+      "label": "gemini2",
+      "path": "/Users/davidbott/Downloads/gemini2dmb-sm.app.cx498.coralogix.com.har",
+      "dataprime_candidates": 0,
+      "promql_candidates": 17,
+      "notes": "Same core Gemini PromQL as gemini1 plus session_count 60s range chart, topk(10) by user_email for tokens, and topk(10) by function_name for gemini_cli_tool_call_count_total. No gemini_cli_lines_changed in this capture."
+    },
+    {
+      "label": "claude",
+      "path": "/Users/davidbott/Downloads/claudedmb-sm.app.cx498.coralogix.com.har",
+      "dataprime_candidates": 27,
+      "promql_candidates": 202
+    }
+  ],
+  "dataprime_unique": [
+    {
+      "har": "codex",
+      "query": "zU\nO\nMsource spans\n| filter tags['gen_ai.system'] != null\n| count into total_spans\"!"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| limit 1\n| aggregate count() as count\n| choose count\"\n8\n8"
+    },
+    {
+      "har": "codex",
+      "query": "f\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $l.applicationname != null || $l.subsystemname != null\n| groupby $l.applicationname as applicationName, $l.subsystemname as subsystemName aggregate count() as count\n| sort by count desc\n| choose applicationName, subsystemName\"\n=\n="
+    },
+    {
+      "har": "codex",
+      "query": "h\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $l.applicationname != null || $l.subsystemname != null\n| groupby $l.applicationname as applicationName, $l.subsystemname as subsystemName aggregate count() as count\n| sort by count desc\n| choose applicationName, subsystemName\"!"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached\n| create totalTokens from totalInput + totalOutput\n| choose totalTokens, totalInput, totalOutput, totalCached\"!"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| aggregate distinct_count($d.logRecord.attributes['conversation.id']) as uniqueSessions\n| choose uniqueSessions\"!"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['user.email'] != null\n| aggregate distinct_count($d.logRecord.attributes['user.email']) as uniqueUsers\n| choose uniqueUsers\"!"
+    },
+    {
+      "har": "codex",
+      "query": "`\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes.model != null\n| groupby $d.logRecord.attributes.model as model aggregate count() as count\n| sort by count desc\n| choose model\"!"
+    },
+    {
+      "har": "codex",
+      "query": "s\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['user.email'] != null\n| create user from $d.logRecord.attributes['user.email']\n| create tokens from $d.logRecord.attributes.input_token_count:number + $d.logRecord.attributes.output_token_count:number\n| groupby user aggregate sum(tokens) as totalTokens\n| sort by totalTokens desc\n| limit 1\n| choose user as userEmail, totalTokens\"!"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| create conversation_id from $d.logRecord.attributes['conversation.id']\n| groupby conversation_id aggregate max($m.timestamp) as session_end, min($m.timestamp) as session_start\n| create session_duration from (session_end - session_start) / 1ms\n| aggregate sum(session_duration) as total_ms\n| choose total_ms\"!"
+    },
+    {
+      "har": "codex",
+      "query": "source spans\n| filter $l.serviceName == 'codex_cli_rs'\n| filter $l.operationName == 'run_turn'\n| create dur_ms from $m.duration:number / 1000\n| aggregate avg(dur_ms) as avg_ms\"!"
+    },
+    {
+      "har": "codex",
+      "query": "w\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| groupby roundTime($m.timestamp, 300000ms) as Time aggregate sum(input) as totalInput, sum(output) as totalOutput\n| create tokens from totalInput + totalOutput\n| sort by Time asc\n| choose Time, tokens, totalInput, totalOutput\"!"
+    },
+    {
+      "har": "codex",
+      "query": "/\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create model from $d.logRecord.attributes.model\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| groupby model aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached, count() as requestCount\n| create totalTokens from totalInput + totalOutput\n| sort by totalTokens desc\n| choose model, totalTokens, totalInput, totalOutput, totalCached, requestCount\"!"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| limit 1\n| aggregate count() as count\n| choose count\"!"
+    },
+    {
+      "har": "codex",
+      "query": "u\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| groupby roundTime($m.timestamp, 300000ms) as Time aggregate sum(input) as totalInput, sum(output) as totalOutput\n| create tokens from totalInput + totalOutput\n| sort by Time asc\n| choose Time, tokens, totalInput, totalOutput\"\na\na"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached\n| create totalTokens from totalInput + totalOutput\n| choose totalTokens, totalInput, totalOutput, totalCached\"\na\na"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| aggregate distinct_count($d.logRecord.attributes['conversation.id']) as uniqueSessions\n| choose uniqueSessions\"\na\na"
+    },
+    {
+      "har": "codex",
+      "query": "-\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create model from $d.logRecord.attributes.model\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| groupby model aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached, count() as requestCount\n| create totalTokens from totalInput + totalOutput\n| sort by totalTokens desc\n| choose model, totalTokens, totalInput, totalOutput, totalCached, requestCount\"\nb\nb"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached\n| create totalTokens from totalInput + totalOutput\n| choose totalTokens, totalInput, totalOutput, totalCached\"\nf\nf"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| aggregate distinct_count($d.logRecord.attributes['conversation.id']) as uniqueSessions\n| choose uniqueSessions\"\nf\nf"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['user.email'] != null\n| aggregate distinct_count($d.logRecord.attributes['user.email']) as uniqueUsers\n| choose uniqueUsers\"\nf\nf"
+    },
+    {
+      "har": "codex",
+      "query": "^\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes.model != null\n| groupby $d.logRecord.attributes.model as model aggregate count() as count\n| sort by count desc\n| choose model\"\nf\nf"
+    },
+    {
+      "har": "codex",
+      "query": "q\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['user.email'] != null\n| create user from $d.logRecord.attributes['user.email']\n| create tokens from $d.logRecord.attributes.input_token_count:number + $d.logRecord.attributes.output_token_count:number\n| groupby user aggregate sum(tokens) as totalTokens\n| sort by totalTokens desc\n| limit 1\n| choose user as userEmail, totalTokens\"\nf\nf"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| create conversation_id from $d.logRecord.attributes['conversation.id']\n| groupby conversation_id aggregate max($m.timestamp) as session_end, min($m.timestamp) as session_start\n| create session_duration from (session_end - session_start) / 1ms\n| aggregate sum(session_duration) as total_ms\n| choose total_ms\"\nf\nf"
+    },
+    {
+      "har": "codex",
+      "query": "source spans\n| filter $l.serviceName == 'codex_cli_rs'\n| filter $l.operationName == 'run_turn'\n| create dur_ms from $m.duration:number / 1000\n| aggregate avg(dur_ms) as avg_ms\"\nf\nf"
+    },
+    {
+      "har": "codex",
+      "query": "u\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| groupby roundTime($m.timestamp, 300000ms) as Time aggregate sum(input) as totalInput, sum(output) as totalOutput\n| create tokens from totalInput + totalOutput\n| sort by Time asc\n| choose Time, tokens, totalInput, totalOutput\"\nn\nn"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached\n| create totalTokens from totalInput + totalOutput\n| choose totalTokens, totalInput, totalOutput, totalCached\"\nn\nn"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| aggregate distinct_count($d.logRecord.attributes['conversation.id']) as uniqueSessions\n| choose uniqueSessions\"\nn\nn"
+    },
+    {
+      "har": "codex",
+      "query": "-\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create model from $d.logRecord.attributes.model\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| groupby model aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached, count() as requestCount\n| create totalTokens from totalInput + totalOutput\n| sort by totalTokens desc\n| choose model, totalTokens, totalInput, totalOutput, totalCached, requestCount\"\no\no"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached\n| create totalTokens from totalInput + totalOutput\n| choose totalTokens, totalInput, totalOutput, totalCached\"\nu\nu"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| aggregate distinct_count($d.logRecord.attributes['conversation.id']) as uniqueSessions\n| choose uniqueSessions\"\nu\nu"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['user.email'] != null\n| aggregate distinct_count($d.logRecord.attributes['user.email']) as uniqueUsers\n| choose uniqueUsers\"\nu\nu"
+    },
+    {
+      "har": "codex",
+      "query": "^\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes.model != null\n| groupby $d.logRecord.attributes.model as model aggregate count() as count\n| sort by count desc\n| choose model\"\nu\nu"
+    },
+    {
+      "har": "codex",
+      "query": "q\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['user.email'] != null\n| create user from $d.logRecord.attributes['user.email']\n| create tokens from $d.logRecord.attributes.input_token_count:number + $d.logRecord.attributes.output_token_count:number\n| groupby user aggregate sum(tokens) as totalTokens\n| sort by totalTokens desc\n| limit 1\n| choose user as userEmail, totalTokens\"\nu\nu"
+    },
+    {
+      "har": "codex",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| create conversation_id from $d.logRecord.attributes['conversation.id']\n| groupby conversation_id aggregate max($m.timestamp) as session_end, min($m.timestamp) as session_start\n| create session_duration from (session_end - session_start) / 1ms\n| aggregate sum(session_duration) as total_ms\n| choose total_ms\"\nu\nu"
+    },
+    {
+      "har": "codex",
+      "query": "source spans\n| filter $l.serviceName == 'codex_cli_rs'\n| filter $l.operationName == 'run_turn'\n| create dur_ms from $m.duration:number / 1000\n| aggregate avg(dur_ms) as avg_ms\"\nu\nu"
+    },
+    {
+      "har": "claude",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached\n| create totalTokens from totalInput + totalOutput\n| choose totalTokens, totalInput, totalOutput, totalCached\"\n:\n:"
+    },
+    {
+      "har": "claude",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| aggregate distinct_count($d.logRecord.attributes['conversation.id']) as uniqueSessions\n| choose uniqueSessions\"\n:\n:"
+    },
+    {
+      "har": "claude",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['user.email'] != null\n| aggregate distinct_count($d.logRecord.attributes['user.email']) as uniqueUsers\n| choose uniqueUsers\"\n:\n:"
+    },
+    {
+      "har": "claude",
+      "query": "^\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes.model != null\n| groupby $d.logRecord.attributes.model as model aggregate count() as count\n| sort by count desc\n| choose model\"\n:\n:"
+    },
+    {
+      "har": "claude",
+      "query": "q\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['user.email'] != null\n| create user from $d.logRecord.attributes['user.email']\n| create tokens from $d.logRecord.attributes.input_token_count:number + $d.logRecord.attributes.output_token_count:number\n| groupby user aggregate sum(tokens) as totalTokens\n| sort by totalTokens desc\n| limit 1\n| choose user as userEmail, totalTokens\"\n:\n:"
+    },
+    {
+      "har": "claude",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| create conversation_id from $d.logRecord.attributes['conversation.id']\n| groupby conversation_id aggregate max($m.timestamp) as session_end, min($m.timestamp) as session_start\n| create session_duration from (session_end - session_start) / 1ms\n| aggregate sum(session_duration) as total_ms\n| choose total_ms\"\n:\n:"
+    },
+    {
+      "har": "claude",
+      "query": "source spans\n| filter $l.serviceName == 'codex_cli_rs'\n| filter $l.operationName == 'run_turn'\n| create dur_ms from $m.duration:number / 1000\n| aggregate avg(dur_ms) as avg_ms\"\n:\n:"
+    },
+    {
+      "har": "claude",
+      "query": "u\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| groupby roundTime($m.timestamp, 300000ms) as Time aggregate sum(input) as totalInput, sum(output) as totalOutput\n| create tokens from totalInput + totalOutput\n| sort by Time asc\n| choose Time, tokens, totalInput, totalOutput\"\n@\n@"
+    },
+    {
+      "har": "claude",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached\n| create totalTokens from totalInput + totalOutput\n| choose totalTokens, totalInput, totalOutput, totalCached\"\n@\n@"
+    },
+    {
+      "har": "claude",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| aggregate distinct_count($d.logRecord.attributes['conversation.id']) as uniqueSessions\n| choose uniqueSessions\"\n@\n@"
+    },
+    {
+      "har": "claude",
+      "query": "-\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create model from $d.logRecord.attributes.model\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| groupby model aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached, count() as requestCount\n| create totalTokens from totalInput + totalOutput\n| sort by totalTokens desc\n| choose model, totalTokens, totalInput, totalOutput, totalCached, requestCount\"\nA\nA"
+    },
+    {
+      "har": "claude",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached\n| create totalTokens from totalInput + totalOutput\n| choose totalTokens, totalInput, totalOutput, totalCached\"\nD\nD"
+    },
+    {
+      "har": "claude",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| aggregate distinct_count($d.logRecord.attributes['conversation.id']) as uniqueSessions\n| choose uniqueSessions\"\nD\nD"
+    },
+    {
+      "har": "claude",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['user.email'] != null\n| aggregate distinct_count($d.logRecord.attributes['user.email']) as uniqueUsers\n| choose uniqueUsers\"\nD\nD"
+    },
+    {
+      "har": "claude",
+      "query": "^\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes.model != null\n| groupby $d.logRecord.attributes.model as model aggregate count() as count\n| sort by count desc\n| choose model\"\nD\nD"
+    },
+    {
+      "har": "claude",
+      "query": "q\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['user.email'] != null\n| create user from $d.logRecord.attributes['user.email']\n| create tokens from $d.logRecord.attributes.input_token_count:number + $d.logRecord.attributes.output_token_count:number\n| groupby user aggregate sum(tokens) as totalTokens\n| sort by totalTokens desc\n| limit 1\n| choose user as userEmail, totalTokens\"\nD\nD"
+    },
+    {
+      "har": "claude",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| create conversation_id from $d.logRecord.attributes['conversation.id']\n| groupby conversation_id aggregate max($m.timestamp) as session_end, min($m.timestamp) as session_start\n| create session_duration from (session_end - session_start) / 1ms\n| aggregate sum(session_duration) as total_ms\n| choose total_ms\"\nD\nD"
+    },
+    {
+      "har": "claude",
+      "query": "source spans\n| filter $l.serviceName == 'codex_cli_rs'\n| filter $l.operationName == 'run_turn'\n| create dur_ms from $m.duration:number / 1000\n| aggregate avg(dur_ms) as avg_ms\"\nD\nD"
+    },
+    {
+      "har": "claude",
+      "query": "u\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| groupby roundTime($m.timestamp, 300000ms) as Time aggregate sum(input) as totalInput, sum(output) as totalOutput\n| create tokens from totalInput + totalOutput\n| sort by Time asc\n| choose Time, tokens, totalInput, totalOutput\"\nJ\nJ"
+    },
+    {
+      "har": "claude",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached\n| create totalTokens from totalInput + totalOutput\n| choose totalTokens, totalInput, totalOutput, totalCached\"\nJ\nJ"
+    },
+    {
+      "har": "claude",
+      "query": "source logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| filter $d.logRecord.attributes['conversation.id'] != null\n| aggregate distinct_count($d.logRecord.attributes['conversation.id']) as uniqueSessions\n| choose uniqueSessions\"\nJ\nJ"
+    },
+    {
+      "har": "claude",
+      "query": "-\nsource logs\n| filter $d.resource.attributes['service_name'] == 'codex_cli_rs'\n| filter $d.logRecord.attributes['event.name'] == 'codex.sse_event'\n| filter $d.logRecord.attributes['event.kind'] == 'response.completed'\n| create model from $d.logRecord.attributes.model\n| create input from $d.logRecord.attributes.input_token_count:number\n| create output from $d.logRecord.attributes.output_token_count:number\n| create cached from $d.logRecord.attributes.cached_token_count:number\n| groupby model aggregate sum(input) as totalInput, sum(output) as totalOutput, sum(cached) as totalCached, count() as requestCount\n| create totalTokens from totalInput + totalOutput\n| sort by totalTokens desc\n| choose model, totalTokens, totalInput, totalOutput, totalCached, requestCount\"\nL\nL"
+    }
+  ],
+  "promql_query_params_unique": [
+    {
+      "har": "gemini",
+      "query_string": "query=count(increase(gemini_cli_session_count_total[365d]))&time=1776269564"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=sum by (cx_application_name, cx_subsystem_name) (increase(gemini_cli_token_usage_total[365d]))&time=1776269564"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"input\"}[60s]))&start=1776265965&end=1776269565&step=60s"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"output\"}[60s]))&start=1776265965&end=1776269565&step=60s"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total[60s]))&start=1776265965&end=1776269565&step=60s"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total[3600s]))&time=1776269565"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"input\"}[3600s]))&time=1776269565"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"output\"}[3600s]))&time=1776269565"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"cache\"}[3600s]))&time=1776269565"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=count(count by (session_id) (increase(gemini_cli_token_usage_total[3600s])))&time=1776269565"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=count(count by (user_id) (increase(gemini_cli_token_usage_total[3600s]) > 0))&time=1776269565"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=sum by (model) (increase(gemini_cli_api_request_count_total[3600s]))&time=1776269565"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=topk(1, sum by (user_email) (increase(gemini_cli_token_usage_total[3600s])))&time=1776269565"
+    },
+    {
+      "har": "gemini",
+      "query_string": "query=sum by (model) (increase(gemini_cli_token_usage_total[3600s]))&time=1776269565"
+    },
+    {
+      "har": "gemini2",
+      "query_string": "query=sum(increase(gemini_cli_session_count_total[60s]))&start=1776290001&end=1776293601&step=60s"
+    },
+    {
+      "har": "gemini2",
+      "query_string": "query=topk(10,%20sum%20by%20(function_name)%20(increase(gemini_cli_tool_call_count_total%5B3600s%5D)))&time=1776293601"
+    },
+    {
+      "har": "gemini2",
+      "query_string": "query=topk(10,%20sum%20by%20(user_email)%20(increase(gemini_cli_token_usage_total%5B3600s%5D)))&time=1776293603"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(increase(gemini_cli_session_count_total[365d]))&time=1776269711"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (cx_application_name, cx_subsystem_name) (increase(gemini_cli_token_usage_total[365d]))&time=1776269711"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(count by (session_id) (increase(gemini_cli_token_usage_total[3600s])))&time=1776269711"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total[3600s]))&time=1776269711"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(count by (user_id) (increase(gemini_cli_token_usage_total[3600s]) > 0))&time=1776269711"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (model) (increase(gemini_cli_api_request_count_total[3600s]))&time=1776269711"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=topk(1, sum by (user_email) (increase(gemini_cli_token_usage_total[3600s])))&time=1776269711"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"input\"}[3600s]))&time=1776269711"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"output\"}[3600s]))&time=1776269711"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"cache\"}[3600s]))&time=1776269711"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"input\"}[60s]))&start=1776266111&end=1776269711&step=60s"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"output\"}[60s]))&start=1776266111&end=1776269711&step=60s"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total[60s]))&start=1776266111&end=1776269711&step=60s"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (model) (increase(gemini_cli_token_usage_total[3600s]))&time=1776269711"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(count by (session_id) (increase(gemini_cli_token_usage_total[3600s])))&time=1776269712"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total[3600s]))&time=1776269712"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(count by (user_id) (increase(gemini_cli_token_usage_total[3600s]) > 0))&time=1776269712"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (model) (increase(gemini_cli_api_request_count_total[3600s]))&time=1776269712"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=topk(1, sum by (user_email) (increase(gemini_cli_token_usage_total[3600s])))&time=1776269712"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"input\"}[3600s]))&time=1776269712"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"output\"}[3600s]))&time=1776269712"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"cache\"}[3600s]))&time=1776269712"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"input\"}[60s]))&start=1776266112&end=1776269712&step=60s"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total{type=\"output\"}[60s]))&start=1776266112&end=1776269712&step=60s"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(gemini_cli_token_usage_total[60s]))&start=1776266112&end=1776269712&step=60s"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (model) (increase(gemini_cli_token_usage_total[3600s]))&time=1776269712"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(increase(claude_code_cost_usage_USD_total[365d]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (cx_application_name, cx_subsystem_name) (increase(claude_code_cost_usage_USD_total[365d]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_cost_usage_USD_total[3600s]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_token_usage_tokens_total[3600s]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(count by (session_id) (increase(claude_code_token_usage_tokens_total[3600s])))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(count by (user_email) (increase(claude_code_token_usage_tokens_total[3600s])))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_active_time_total_s_total[3600s]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (model) (increase(claude_code_cost_usage_USD_total[3600s]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (user_email) (increase(claude_code_cost_usage_USD_total[3600s]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_cost_usage_USD_total[60s]))&start=1776266114&end=1776269714&step=60s"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_token_usage_tokens_total[60s]))&start=1776266114&end=1776269714&step=60s"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_token_usage_tokens_total{type=\"cacheRead\"}[3600s]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_token_usage_tokens_total{type=\"input\"}[3600s]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (cx_application_name) (increase(claude_code_cost_usage_USD_total[3600s]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (cx_application_name) (increase(claude_code_token_usage_tokens_total[3600s]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (cx_subsystem_name) (increase(claude_code_cost_usage_USD_total[3600s]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (cx_subsystem_name) (increase(claude_code_token_usage_tokens_total[3600s]))&time=1776269714"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(count by (session_id) (increase(claude_code_token_usage_tokens_total[3600s])))&time=1776269717"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(count by (session_id) (increase(claude_code_token_usage_tokens_total[60s])))&start=1776266117&end=1776269717&step=60s"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_commit_count_total[3600s]))&time=1776269717"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_pull_request_count_total[3600s]))&time=1776269717"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_lines_of_code_count_total{type=\"added\"}[3600s]))&time=1776269717"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_lines_of_code_count_total{type=\"removed\"}[3600s]))&time=1776269717"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_code_edit_tool_decision_total{decision=\"accept\"}[3600s])) / sum(increase(claude_code_code_edit_tool_decision_total[3600s])) * 100&time=1776269717"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_token_usage_tokens_total{type=\"input\"}[3600s]))&time=1776269717"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_token_usage_tokens_total{type=\"output\"}[3600s]))&time=1776269717"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=topk(5, sum by (tool_name) (increase(claude_code_code_edit_tool_decision_total[3600s])))&time=1776269717"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (user_email) (increase(claude_code_cost_usage_USD_total[3600s]))&time=1776269717"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (user_email) (increase(claude_code_token_usage_tokens_total[3600s]))&time=1776269717"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (user_email) (increase(claude_code_session_count_total[3600s]))&time=1776269717"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(increase(claude_code_cost_usage_USD_total[365d]))&time=1776269746"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (cx_application_name, cx_subsystem_name) (increase(claude_code_cost_usage_USD_total[365d]))&time=1776269746"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (cx_application_name, cx_subsystem_name) (increase(claude_code_cost_usage_USD_total[365d]))&time=1776269747"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_cost_usage_USD_total[3600s]))&time=1776269748"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_token_usage_tokens_total[3600s]))&time=1776269748"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(count by (session_id) (increase(claude_code_token_usage_tokens_total[3600s])))&time=1776269748"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=count(count by (user_email) (increase(claude_code_token_usage_tokens_total[3600s])))&time=1776269748"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_active_time_total_s_total[3600s]))&time=1776269748"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (model) (increase(claude_code_cost_usage_USD_total[3600s]))&time=1776269748"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (user_email) (increase(claude_code_cost_usage_USD_total[3600s]))&time=1776269748"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_cost_usage_USD_total[60s]))&start=1776266148&end=1776269748&step=60s"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_token_usage_tokens_total[60s]))&start=1776266148&end=1776269748&step=60s"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_token_usage_tokens_total{type=\"cacheRead\"}[3600s]))&time=1776269748"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum(increase(claude_code_token_usage_tokens_total{type=\"input\"}[3600s]))&time=1776269748"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (cx_application_name) (increase(claude_code_cost_usage_USD_total[3600s]))&time=1776269748"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (cx_application_name) (increase(claude_code_token_usage_tokens_total[3600s]))&time=1776269748"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (cx_subsystem_name) (increase(claude_code_cost_usage_USD_total[3600s]))&time=1776269748"
+    },
+    {
+      "har": "claude",
+      "query_string": "query=sum by (cx_subsystem_name) (increase(claude_code_token_usage_tokens_total[3600s]))&time=1776269748"
+    }
+  ]
+}

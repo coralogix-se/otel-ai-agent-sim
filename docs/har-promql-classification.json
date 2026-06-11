@@ -1,0 +1,166 @@
+[
+  {
+    "query": "count(increase(gemini_cli_session_count_total[365d]))",
+    "note": "run_in_metrics_explorer"
+  },
+  {
+    "query": "sum by (cx_application_name, cx_subsystem_name) (increase(gemini_cli_token_usage_total[365d]))",
+    "note": "often_empty_try_gemini_cli_token_usage__token__total_or_check_delta"
+  },
+  {
+    "query": "sum(increase(gemini_cli_token_usage_total{type=\"input\"}[60s]))",
+    "note": "often_empty_try_gemini_cli_token_usage__token__total_or_check_delta"
+  },
+  {
+    "query": "sum(increase(gemini_cli_token_usage_total{type=\"output\"}[60s]))",
+    "note": "often_empty_try_gemini_cli_token_usage__token__total_or_check_delta"
+  },
+  {
+    "query": "sum(increase(gemini_cli_token_usage_total[60s]))",
+    "note": "often_empty_try_gemini_cli_token_usage__token__total_or_check_delta"
+  },
+  {
+    "query": "sum(increase(gemini_cli_token_usage_total[3600s]))",
+    "note": "often_empty_try_gemini_cli_token_usage__token__total_or_check_delta"
+  },
+  {
+    "query": "sum(increase(gemini_cli_token_usage_total{type=\"input\"}[3600s]))",
+    "note": "often_empty_try_gemini_cli_token_usage__token__total_or_check_delta"
+  },
+  {
+    "query": "sum(increase(gemini_cli_token_usage_total{type=\"output\"}[3600s]))",
+    "note": "often_empty_try_gemini_cli_token_usage__token__total_or_check_delta"
+  },
+  {
+    "query": "sum(increase(gemini_cli_token_usage_total{type=\"cache\"}[3600s]))",
+    "note": "often_empty_try_gemini_cli_token_usage__token__total_or_check_delta"
+  },
+  {
+    "query": "count(count by (session_id) (increase(gemini_cli_token_usage_total[3600s])))",
+    "note": "often_empty_try_gemini_cli_token_usage__token__total_or_check_delta"
+  },
+  {
+    "query": "count(count by (user_id) (increase(gemini_cli_token_usage_total[3600s]) > 0))",
+    "note": "often_empty_try_gemini_cli_token_usage__token__total_or_check_delta"
+  },
+  {
+    "query": "sum by (model) (increase(gemini_cli_api_request_count_total[3600s]))",
+    "note": "verify_gemini_cli_api_request_count_total_vs_1_total"
+  },
+  {
+    "query": "topk(1, sum by (user_email) (increase(gemini_cli_token_usage_total[3600s])))",
+    "note": "often_empty_try_gemini_cli_token_usage__token__total_or_check_delta"
+  },
+  {
+    "query": "sum by (model) (increase(gemini_cli_token_usage_total[3600s]))",
+    "note": "often_empty_try_gemini_cli_token_usage__token__total_or_check_delta"
+  },
+  {
+    "query": "count(increase(claude_code_cost_usage_USD_total[365d]))",
+    "note": "run_in_metrics_explorer"
+  },
+  {
+    "query": "sum by (cx_application_name, cx_subsystem_name) (increase(claude_code_cost_usage_USD_total[365d]))",
+    "note": "run_in_metrics_explorer"
+  },
+  {
+    "query": "sum(increase(claude_code_cost_usage_USD_total[3600s]))",
+    "note": "run_in_metrics_explorer"
+  },
+  {
+    "query": "sum(increase(claude_code_token_usage_tokens_total[3600s]))",
+    "note": "metric_name_mismatch_account_has_claude_code_token_usage__token__total"
+  },
+  {
+    "query": "count(count by (session_id) (increase(claude_code_token_usage_tokens_total[3600s])))",
+    "note": "metric_name_mismatch_account_has_claude_code_token_usage__token__total"
+  },
+  {
+    "query": "count(count by (user_email) (increase(claude_code_token_usage_tokens_total[3600s])))",
+    "note": "metric_name_mismatch_account_has_claude_code_token_usage__token__total"
+  },
+  {
+    "query": "sum(increase(claude_code_active_time_total_s_total[3600s]))",
+    "note": "run_in_metrics_explorer"
+  },
+  {
+    "query": "sum by (model) (increase(claude_code_cost_usage_USD_total[3600s]))",
+    "note": "run_in_metrics_explorer"
+  },
+  {
+    "query": "sum by (user_email) (increase(claude_code_cost_usage_USD_total[3600s]))",
+    "note": "run_in_metrics_explorer"
+  },
+  {
+    "query": "sum(increase(claude_code_cost_usage_USD_total[60s]))",
+    "note": "run_in_metrics_explorer"
+  },
+  {
+    "query": "sum(increase(claude_code_token_usage_tokens_total[60s]))",
+    "note": "metric_name_mismatch_account_has_claude_code_token_usage__token__total"
+  },
+  {
+    "query": "sum(increase(claude_code_token_usage_tokens_total{type=\"cacheRead\"}[3600s]))",
+    "note": "metric_name_mismatch_account_has_claude_code_token_usage__token__total"
+  },
+  {
+    "query": "sum(increase(claude_code_token_usage_tokens_total{type=\"input\"}[3600s]))",
+    "note": "metric_name_mismatch_account_has_claude_code_token_usage__token__total"
+  },
+  {
+    "query": "sum by (cx_application_name) (increase(claude_code_cost_usage_USD_total[3600s]))",
+    "note": "run_in_metrics_explorer"
+  },
+  {
+    "query": "sum by (cx_application_name) (increase(claude_code_token_usage_tokens_total[3600s]))",
+    "note": "metric_name_mismatch_account_has_claude_code_token_usage__token__total"
+  },
+  {
+    "query": "sum by (cx_subsystem_name) (increase(claude_code_cost_usage_USD_total[3600s]))",
+    "note": "run_in_metrics_explorer"
+  },
+  {
+    "query": "sum by (cx_subsystem_name) (increase(claude_code_token_usage_tokens_total[3600s]))",
+    "note": "metric_name_mismatch_account_has_claude_code_token_usage__token__total"
+  },
+  {
+    "query": "count(count by (session_id) (increase(claude_code_token_usage_tokens_total[60s])))",
+    "note": "metric_name_mismatch_account_has_claude_code_token_usage__token__total"
+  },
+  {
+    "query": "sum(increase(claude_code_commit_count_total[3600s]))",
+    "note": "possible_name_mismatch_commit_count_1_total"
+  },
+  {
+    "query": "sum(increase(claude_code_pull_request_count_total[3600s]))",
+    "note": "possible_name_mismatch_pull_request_count_1_total"
+  },
+  {
+    "query": "sum(increase(claude_code_lines_of_code_count_total{type=\"added\"}[3600s]))",
+    "note": "possible_name_mismatch_lines_of_code_count_1_total"
+  },
+  {
+    "query": "sum(increase(claude_code_lines_of_code_count_total{type=\"removed\"}[3600s]))",
+    "note": "possible_name_mismatch_lines_of_code_count_1_total"
+  },
+  {
+    "query": "sum(increase(claude_code_code_edit_tool_decision_total{decision=\"accept\"}[3600s])) / sum(increase(claude_code_code_edit_tool_decision_total[3600s])) * 100",
+    "note": "possible_name_mismatch_code_edit_tool_decision_1_total"
+  },
+  {
+    "query": "sum(increase(claude_code_token_usage_tokens_total{type=\"output\"}[3600s]))",
+    "note": "metric_name_mismatch_account_has_claude_code_token_usage__token__total"
+  },
+  {
+    "query": "topk(5, sum by (tool_name) (increase(claude_code_code_edit_tool_decision_total[3600s])))",
+    "note": "possible_name_mismatch_code_edit_tool_decision_1_total"
+  },
+  {
+    "query": "sum by (user_email) (increase(claude_code_token_usage_tokens_total[3600s]))",
+    "note": "metric_name_mismatch_account_has_claude_code_token_usage__token__total"
+  },
+  {
+    "query": "sum by (user_email) (increase(claude_code_session_count_total[3600s]))",
+    "note": "possible_name_mismatch_metrics_list_shows_claude_code_session_count_1_total"
+  }
+]

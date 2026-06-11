@@ -1,0 +1,35 @@
+# Local dev: receive OTLP on 4317 (gRPC) / 4318 (HTTP); print traces & logs to stdout.
+# Optional: scrape Prometheus from the sim on the host (Mac: host.docker.internal).
+#
+# Start (from repo root):
+#   docker run --rm -p 4317:4317 -p 4318:4318 \
+#     -v "$PWD/config/otel-collector-local-dev.yaml:/etc/otelcol/config.yaml:ro" \
+#     otel/opentelemetry-collector:latest --config=/etc/otelcol/config.yaml
+#
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 256
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

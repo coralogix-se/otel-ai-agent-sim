@@ -1,0 +1,22 @@
+# Local Coralogix keys / cluster secret mirror (never commit)
+k8s/codeagentsim/secrets.env
+k8s/codeagentsim/secret-multi-export.yaml
+k8s/secret-coralogix-otel.yaml
+.env
+.env.local
+*.secrets.env
+
+# Python / local dev
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Large captures / runtime logs
+.logs/
+*.har
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo

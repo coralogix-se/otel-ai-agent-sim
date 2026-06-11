@@ -1,0 +1,106 @@
+{
+  "generated": "2026-04-15",
+  "mcp_server": "user-dmbsm-coralogix-server",
+  "time_window_example": "2026-04-14T00:00:00Z to 2026-04-15T23:59:59Z",
+  "short_traces_codex": {
+    "reason": "Simulator only created run_turn -> user_prompt (2 spans). Extra child spans are now emitted under run_turn when SIM_CODEX_EXTRA_SPANS > 0 (default 4).",
+    "env": "SIM_CODEX_EXTRA_SPANS"
+  },
+  "promql_har_vs_coralogix_metrics": {
+    "note": "metrics__list in this account shows actual __name__ values. HAR/dashboard PromQL often does not match.",
+    "examples": [
+      {
+        "har_or_dashboard": "claude_code_token_usage_tokens_total",
+        "status": "not_found_by_metrics__metric_details",
+        "works_in_mcp_range_query": "claude_code_token_usage__token__total",
+        "sample": "sum(increase(claude_code_token_usage__token__total[3600s])) returned non-empty series"
+      },
+      {
+        "har_or_dashboard": "gemini_cli_token_usage_total",
+        "status": "range_query_often_zero_or_empty",
+        "alternative_with_data": "gemini_cli_token_usage__token__total",
+        "sample": "sum(increase(gemini_cli_token_usage__token__total[3600s])) returned non-empty series"
+      },
+      {
+        "note": "Other Claude counters in metrics__list use suffixes like _1_total (e.g. claude_code_session_count_1_total) vs HAR without _1 — verify in Metrics Explorer."
+      }
+    ]
+  },
+  "dataprime_har_vs_working": [
+    {
+      "har_filter": "$d.resource.attributes['service_name'] == 'codex_cli_rs'",
+      "mcp_result": "keypath does not exist on logs schema",
+      "substitute": "filter $l.applicationname == 'codex' (and optionally $l.subsystemname == 'codex-sessions')"
+    },
+    {
+      "har_filter": "$d.logRecord.attributes['event.name']",
+      "mcp_result": "keypath may not exist — attributes often appear inside JSON user_data message",
+      "substitute": "filter $m.text ~ \"codex.sse_event\" or use documented OTLP log field paths for your tenant"
+    },
+    {
+      "har_query": "source spans | filter tags['gen_ai.system']",
+      "substitute": "source spans | filter $d.tags['gen_ai.system'] != null"
+    },
+    {
+      "har_query": "source spans | filter $l.serviceName == 'codex_cli_rs' | filter $l.operationName == 'run_turn'",
+      "mcp_result": "works — used for avg duration"
+    }
+  ],
+  "gemini_cli_real_vs_sim": {
+    "description": "Parity checklist: real gemini-cli (Node) OTLP vs otel-ai-agent-sim.",
+    "trace_operations": ["user_prompt", "llm_call"],
+    "user_prompt_span_includes": [
+      "gen_ai.input.messages",
+      "gen_ai.operation.name",
+      "gen_ai.conversation.id",
+      "cx.application.name",
+      "cx.subsystem.name",
+      "session.id"
+    ],
+    "user_prompt_span_should_not_duplicate_llm_tags": [
+      "gen_ai.request.model",
+      "gen_ai.usage.input_tokens",
+      "gen_ai.prompt_price"
+    ],
+    "llm_call_span_includes": [
+      "gen_ai.operation.name",
+      "gen_ai.request.model",
+      "gen_ai.prompt.name",
+      "gen_ai.system_instructions",
+      "gen_ai.tool.definitions",
+      "gen_ai.usage.input_tokens",
+      "gen_ai.usage.output_tokens"
+    ],
+    "prompt_turn_id_suffix": "########0",
+    "subsystem_filter_note": "Live interactive CLI may use cx.subsystem.name gemini-cli-sessions-real; the sim defaults to gemini-cli-sessions for isolation.",
+    "automated_validation": "python scripts/validate_gemini_span_mcp.py (from repo root; project venv recommended)"
+  },
+  "batch_promql_note": "har-queries-for-mcp-run.json lists 41 unique PromQL strings from HAR URLs. Many reference metric names that do not exist verbatim in Coralogix; run Metrics → list, then swap names before pasting into dashboards.",
+  "claude_code_new_shapes_dmbsm": {
+    "description": "Session/repo + prompt analysis telemetry (2026-06). Legacy dmbsm sim (job=otel-ai-agent-sim) lacks these until latest image is deployed.",
+    "automated_validation": "python scripts/validate_claude_dmbsm_shapes.py",
+    "legacy_present_in_dmbsm": [
+      "claude_code_session_count_total{job=otel-ai-agent-sim}",
+      "flat OTLP logs: $l.subsystemname == 'claude-code', event_name user_prompt with prompt_length only (no prompt text)"
+    ],
+    "new_shapes_after_deploy": {
+      "metric": "claude_code_session_repo_info{session_id,repository_name} — gauge 1 per session/repo; join to logs on session_id",
+      "logs_flat": "user_prompt includes attributes.prompt; api_request adds cost_usd_micros, effort, query_source; claude_code.api_response_body event",
+      "logs_dotted": "$l.subsystemname == 'claude-code-sessions' with event.name, session.id, prompt text"
+    },
+    "dmbsm_metrics_queries": [
+      "search_metrics mode=by_name query=claude_code_session_repo_info",
+      "max by (session_id, repository_name) (max_over_time(claude_code_session_repo_info{job=\"otel-ai-agent-sim\"}[1h]))"
+    ],
+    "dmbsm_dataprime_queries": [
+      "source logs | filter $l.applicationname == 'claude-code' | limit 20",
+      "source logs | filter $l.applicationname == 'claude-code' | filter $l.subsystemname == 'claude-code-sessions' | limit 10"
+    ],
+    "repository_name_examples": [
+      "coralogix/cx-web-workspace",
+      "coralogix/eng-pipeline-handler",
+      "alexkruc/dotfiles",
+      "unknown"
+    ]
+  }
+}

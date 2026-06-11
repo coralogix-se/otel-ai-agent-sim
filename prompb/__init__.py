@@ -1,0 +1,1 @@
+# Prometheus WriteRequest protobuf (minimal).

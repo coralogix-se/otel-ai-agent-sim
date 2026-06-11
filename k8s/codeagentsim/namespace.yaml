@@ -1,0 +1,7 @@
+# Simulator + OTEL collector (multi-region Coralogix export).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: codeagentsim
+  labels:
+    app.kubernetes.io/name: otel-ai-agent-sim

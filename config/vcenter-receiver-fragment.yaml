@@ -1,0 +1,25 @@
+# -----------------------------------------------------------------------------
+# Add vCenter / vcsim metrics to an *existing* OpenTelemetry Collector config
+# (contrib build — must include the vcenter receiver).
+#
+# 1. Under top-level `receivers:`, add the `vcenter:` block below (sibling to otlp, prometheus, etc.).
+# 2. Under `service.pipelines.metrics`, append `vcenter` to `receivers:` alongside whatever you already have.
+#    Example if you currently have `receivers: [otlp, prometheus]`:
+#      receivers: [otlp, prometheus, vcenter]
+# 3. Reload / restart the collector (`SIGHUP` if supported, else restart the process).
+#
+# If your metrics pipeline uses different processors/exporters, keep those — only extend `receivers`.
+# -----------------------------------------------------------------------------
+
+# --- copy under receivers: ---
+vcenter:
+  endpoint: https://127.0.0.1:8989/sdk
+  username: user
+  password: pass
+  collection_interval: 5m
+  initial_delay: 1s
+  metrics:
+    vcenter.host.cpu.utilization:
+      enabled: false
+  tls:
+    insecure: true

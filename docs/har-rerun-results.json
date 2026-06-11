@@ -1,0 +1,185 @@
+{
+  "meta": {
+    "run_at": "2026-04-14",
+    "metrics_window": {
+      "start": "2026-04-13T00:00:00Z",
+      "end": "2026-04-15T21:05:00Z",
+      "step": "3h",
+      "limit": 50
+    },
+    "dataprime_window": {
+      "start_date": "2026-04-13T00:00:00Z",
+      "end_date": "2026-04-15T21:05:00Z"
+    },
+    "tool": "user-dmbsm-coralogix-server (metrics__range_query, get_logs, get_traces)",
+    "c4c_har_2026_04_14": {
+      "path": "~/Downloads/claudec4c..har",
+      "api_host": "https://api.eu2.coralogix.com",
+      "note": "Captured from another machine (c4c). AI Center issues the same PromQL as stock dashboards: sum(increase(claude_code_token_usage_tokens_total[3600s])), query_range with [60s], filters type=\"input\" and type=\"cacheRead\", sum by (cx_application_name|cx_subsystem_name). Token panels show correctly there—so `claude_code_token_usage_tokens_total` can be the live metric name on some tenants/regions; if yours returns 0, try `claude_code_token_usage__token__total` or confirm region and ingestion path."
+    }
+  },
+  "promql_findings": {
+    "metric_naming": {
+      "claude_tokens": "Stock HAR / AI Center uses `claude_code_token_usage_tokens_total`. In one MCP-sampled environment, token volume appeared on `claude_code_token_usage__token__total` instead, so `tokens_total` increase() was 0 there. A separate EU2 HAR (c4c, api.eu2.coralogix.com) shows the dashboard using `tokens_total` with non-zero token panels—treat naming as tenant/region-dependent until you verify which series exists in your metrics explorer.",
+      "gemini_tokens": "`gemini_cli_token_usage_total` returns small aggregate values vs `gemini_cli_token_usage__token__total`, which shows full input/output/cache breakdown (e.g. sum by (type) on `__token__` had non-zero input/output/cache in the same window). Prefer `gemini_cli_token_usage__token__total` for token dashboards and splits."
+    },
+    "results": [
+      { "index": 0, "query": "count(increase(gemini_cli_session_count_total[365d]))", "status": "ok", "notes": "Non-empty (e.g. 2–3 at sampled steps)." },
+      { "index": 1, "query": "sum by (cx_application_name, cx_subsystem_name) (increase(gemini_cli_token_usage_total[365d]))", "status": "ok", "notes": "Series present; values vary by step." },
+      { "index": 2, "query": "sum(increase(gemini_cli_token_usage_total{type=\"input\"}[60s]))", "status": "ok_zeros", "notes": "0 at sampled steps; 60s window often sparse vs scrape alignment." },
+      { "index": 3, "query": "sum(increase(gemini_cli_token_usage_total{type=\"output\"}[60s]))", "status": "ok_zeros", "notes": "0 at sampled steps." },
+      { "index": 4, "query": "sum(increase(gemini_cli_token_usage_total[60s]))", "status": "ok_zeros", "notes": "0 at sampled steps." },
+      { "index": 5, "query": "sum(increase(gemini_cli_token_usage_total[3600s]))", "status": "ok_nonzero", "notes": "Non-zero aggregate in window; see metric_naming.gemini_tokens for `__token__` comparison." },
+      { "index": 6, "query": "sum(increase(gemini_cli_token_usage_total{type=\"input\"}[3600s]))", "status": "ok_zeros", "notes": "0 with HAR metric name; `gemini_cli_token_usage__token__total` with type=input has data." },
+      { "index": 7, "query": "sum(increase(gemini_cli_token_usage_total{type=\"output\"}[3600s]))", "status": "ok_zeros", "notes": "0 with HAR name; use `__token__` for output split." },
+      { "index": 8, "query": "sum(increase(gemini_cli_token_usage_total{type=\"cache\"}[3600s]))", "status": "ok_nonzero", "notes": "Non-zero with HAR name (cache path still reports)." },
+      { "index": 9, "query": "count(count by (session_id) (increase(gemini_cli_token_usage_total[3600s])))", "status": "ok_nonzero", "notes": "Non-zero count (e.g. 41)." },
+      { "index": 10, "query": "count(count by (user_id) (increase(gemini_cli_token_usage_total[3600s]) > 0))", "status": "ok_nonzero", "notes": "Non-zero (e.g. 1)." },
+      { "index": 11, "query": "sum by (model) (increase(gemini_cli_api_request_count_total[3600s]))", "status": "ok_nonzero", "notes": "Series by model (e.g. gemini-2.0-flash)." },
+      { "index": 12, "query": "topk(1, sum by (user_email) (increase(gemini_cli_token_usage_total[3600s])))", "status": "ok_nonzero", "notes": "Returns a top user_email with non-zero increase." },
+      { "index": 13, "query": "sum by (model) (increase(gemini_cli_token_usage_total[3600s]))", "status": "ok_nonzero", "notes": "Non-zero by model." },
+      { "index": 14, "query": "count(increase(claude_code_cost_usage_USD_total[365d]))", "status": "ok_nonzero", "notes": "Monotonic-style counts across steps." },
+      { "index": 15, "query": "sum by (cx_application_name, cx_subsystem_name) (increase(claude_code_cost_usage_USD_total[365d]))", "status": "ok_nonzero", "notes": "Multiple application/subsystem series with non-zero USD." },
+      { "index": 16, "query": "sum(increase(claude_code_cost_usage_USD_total[3600s]))", "status": "ok_nonzero", "notes": "Non-zero USD increases per step." },
+      { "index": 17, "query": "sum(increase(claude_code_token_usage_tokens_total[3600s]))", "status": "wrong_metric_name", "notes": "increase() is 0; use `claude_code_token_usage__token__total`." },
+      { "index": 18, "query": "count(count by (session_id) (increase(claude_code_token_usage_tokens_total[3600s])))", "status": "ok_misleading", "notes": "Can return non-zero count while token sum on same metric is 0; not a reliable token panel until metric renamed." },
+      { "index": 19, "query": "count(count by (user_email) (increase(claude_code_token_usage_tokens_total[3600s])))", "status": "ok_misleading", "notes": "Same as index 18." },
+      { "index": 20, "query": "sum(increase(claude_code_active_time_total_s_total[3600s]))", "status": "ok_nonzero", "notes": "Non-zero active time (seconds) across steps." },
+      { "index": 21, "query": "sum by (model) (increase(claude_code_cost_usage_USD_total[3600s]))", "status": "ok_nonzero", "notes": "Non-zero by model." },
+      { "index": 22, "query": "sum by (user_email) (increase(claude_code_cost_usage_USD_total[3600s]))", "status": "ok_nonzero", "notes": "Many per-user series with non-zero USD." },
+      { "index": 23, "query": "sum(increase(claude_code_cost_usage_USD_total[60s]))", "status": "ok_nonzero", "notes": "Non-zero at steps (finer window still sees cost)." },
+      { "index": 24, "query": "sum(increase(claude_code_token_usage_tokens_total[60s]))", "status": "wrong_metric_name", "notes": "0; use `__token__` metric." },
+      { "index": 25, "query": "sum(increase(claude_code_token_usage_tokens_total{type=\"cacheRead\"}[3600s]))", "status": "wrong_metric_name", "notes": "0 with HAR name." },
+      { "index": 26, "query": "sum(increase(claude_code_token_usage_tokens_total{type=\"input\"}[3600s]))", "status": "wrong_metric_name", "notes": "0 with HAR name." },
+      { "index": 27, "query": "sum by (cx_application_name) (increase(claude_code_cost_usage_USD_total[3600s]))", "status": "ok_nonzero", "notes": "Non-zero by cx_application_name." },
+      { "index": 28, "query": "sum by (cx_application_name) (increase(claude_code_token_usage_tokens_total[3600s]))", "status": "wrong_metric_name", "notes": "0; use `__token__`." },
+      { "index": 29, "query": "sum by (cx_subsystem_name) (increase(claude_code_cost_usage_USD_total[3600s]))", "status": "ok_nonzero", "notes": "Non-zero by subsystem." },
+      { "index": 30, "query": "sum by (cx_subsystem_name) (increase(claude_code_token_usage_tokens_total[3600s]))", "status": "wrong_metric_name", "notes": "0; use `__token__`." },
+      { "index": 31, "query": "count(count by (session_id) (increase(claude_code_token_usage_tokens_total[60s])))", "status": "ok_misleading", "notes": "Non-zero count possible while token metric is wrong name." },
+      { "index": 32, "query": "sum(increase(claude_code_commit_count_total[3600s]))", "status": "ok_nonzero", "notes": "Non-zero (e.g. 30)." },
+      { "index": 33, "query": "sum(increase(claude_code_pull_request_count_total[3600s]))", "status": "ok_nonzero", "notes": "Non-zero (e.g. 14)." },
+      { "index": 34, "query": "sum(increase(claude_code_lines_of_code_count_total{type=\"added\"}[3600s]))", "status": "ok_zeros", "notes": "0 in sampled window; may be true or sparse." },
+      { "index": 35, "query": "sum(increase(claude_code_lines_of_code_count_total{type=\"removed\"}[3600s]))", "status": "ok_nonzero", "notes": "Non-zero (e.g. 80)." },
+      { "index": 36, "query": "sum(increase(claude_code_code_edit_tool_decision_total{decision=\"accept\"}[3600s])) / sum(increase(claude_code_code_edit_tool_decision_total[3600s])) * 100", "status": "ok_nonzero", "notes": "Non-zero percentage (e.g. ~79%)." },
+      { "index": 37, "query": "sum(increase(claude_code_token_usage_tokens_total{type=\"output\"}[3600s]))", "status": "wrong_metric_name", "notes": "0; use `__token__`." },
+      { "index": 38, "query": "topk(5, sum by (tool_name) (increase(claude_code_code_edit_tool_decision_total[3600s])))", "status": "ok_nonzero", "notes": "Non-zero top tools (Edit, NotebookEdit, Write, etc.)." },
+      { "index": 39, "query": "sum by (user_email) (increase(claude_code_token_usage_tokens_total[3600s]))", "status": "wrong_metric_name", "notes": "Per-user series present but values 0; use `__token__`." },
+      { "index": 40, "query": "sum by (user_email) (increase(claude_code_session_count_total[3600s]))", "status": "ok_nonzero", "notes": "Non-zero session increases per user in window." }
+    ]
+  },
+  "dashboard_remediation": {
+    "codex_logs": {
+      "resource_filter_working": "source logs | filter $d.resource.attributes['service_name'] == 'codex_cli_rs'",
+      "notes": "Codex path uses resource `service_name` (not semantic `service.name`) so DataPrime matches `$d.resource.attributes['service_name']`. Label filters such as `$l.applicationname == 'codex'` remain a fallback when resource facets differ by tenant."
+    },
+    "codex_log_body_attributes": {
+      "notes": "If Codex panels stay empty after fixing the resource filter, the remaining issue is usually log-record field paths: HAR used `$d.logRecord.attributes['event.name']`-style paths. Inspect one raw log in Explorer to match actual keypaths (snake_case vs dotted names). The sim emits attributes like `event.name`, `input_token_count`, and `user.email` on the Codex logger record—your tenant’s mapping may differ from Grafana’s HAR."
+    },
+    "claude_code_productivity_ratio": {
+      "intent": "Share of Claude Code active time in the CLI (AI-assisted) versus total active time (CLI + user). Matches counters emitted with label `type` in `claude_code_active_time_total_s_total`.",
+      "promql_example": "100 * sum(increase(claude_code_active_time_total_s_total{type=\"cli\"}[1h])) / (sum(increase(claude_code_active_time_total_s_total{type=\"cli\"}[1h])) + sum(increase(claude_code_active_time_total_s_total{type=\"user\"}[1h])))",
+      "grafana_interval": "Replace `[1h]` with `$__range` or your dashboard interval variable if supported.",
+      "notes": "If the ratio flickers between values and empty/NaN, check Coralogix collector logs for failed scrapes of `job=\"otel-ai-agent-sim\"` (stale pod IPs after rollout). The sim env `SIM_CLAUDE_ACTIVE_TIME_MIN_S` (default 2) raises per-turn increments so `increase()` over short windows is less often zero when scrapes are sparse."
+    },
+    "gemini_token_metrics": {
+      "replace": "gemini_cli_token_usage__token__total",
+      "instead_of": "gemini_cli_token_usage_total",
+      "notes": "Coralogix uses the `__token__` form for this remote-write series; token panels that use the plain name often show no input/output split or weak totals. Use `sum by (type) (increase(gemini_cli_token_usage__token__total[$__range]))` for breakdowns."
+    },
+    "gemini_lines_of_code_files_changed": {
+      "notes": "Gemini CLI (real product) exposes lines/file/tool signals per google-gemini/gemini-cli `docs/cli/telemetry.md`. The sim emits `gemini_cli_lines_changed_total` (label `type` added|removed) plus Coralogix volume mirror `gemini_cli_lines_changed__lines__total` when `SIM_GEMINI_EMIT_LINES_CHANGED_LINES_ALIAS=true` (default). Also `gemini_cli_file_operation_count_total`, `gemini_cli_tool_call_count_total`, and OTLP logs (`gemini_cli.file_operation`, `gemini_cli.tool_call`). Dashboards that show no LOC should try the `__lines__` series or widen the range / confirm Gemini-weighted emits. Claude-only metrics stay `claude_code_*`."
+    }
+  },
+  "dataprime_findings": {
+    "har_vs_coralogix": {
+      "resource_service_name": "Use `$d.resource.attributes['service_name'] == 'codex_cli_rs'` for Codex OTLP from this sim. Some HAR captures show `service.name`; product/UI may vary by tenant.",
+      "nested_log_record_attributes": "Log-record pipelines that used bracket paths such as `$d.logRecord.attributes['event.name']` failed in MCP tests; align field access with Explorer / `get_schemas` for your account. Resource filtering alone is not sufficient if downstream filters still reference non-existent keypaths."
+    },
+    "results": [
+      {
+        "id": "dp_0",
+        "source": "get_traces",
+        "query_summary": "source spans | filter tags['gen_ai.system'] != null | count",
+        "status": "ok",
+        "sample": "total_spans ≈ 29070 in window"
+      },
+      {
+        "id": "dp_1",
+        "source": "get_traces",
+        "query_summary": "codex_cli_rs run_turn avg duration",
+        "status": "ok",
+        "sample": "avg_ms ≈ 2743"
+      },
+      {
+        "id": "dp_2",
+        "source": "get_logs",
+        "query_summary": "HAR: $d.resource.attributes['service_name'] == 'codex_cli_rs'",
+        "status": "ok",
+        "notes": "Canonical filter for Codex logs from this sim (resource `service_name`)."
+      },
+      {
+        "id": "dp_3",
+        "source": "get_logs",
+        "query_summary": "Substitute: $l.applicationname == 'codex', count",
+        "status": "ok",
+        "sample": "count >= 1 in window"
+      },
+      {
+        "id": "dp_4",
+        "source": "get_logs",
+        "query_summary": "HAR-style groupby application/subsystem with codex_cli_rs filter",
+        "status": "broken_schema",
+        "notes": "Same missing resource keypath; not rerun with substitute in file—substitute pattern works for simple groupby (see dp_5)."
+      },
+      {
+        "id": "dp_5",
+        "source": "get_logs",
+        "query_summary": "Substitute codex + groupby applicationName, subsystemName",
+        "status": "ok",
+        "sample": "codex / codex-sessions"
+      },
+      {
+        "id": "dp_6",
+        "source": "get_logs",
+        "query_summary": "SSE response.completed token aggregates",
+        "status": "broken_schema",
+        "notes": "logRecord.attributes paths for event name/kind and token counts missing; null totals."
+      },
+      {
+        "id": "dp_7",
+        "source": "get_logs",
+        "query_summary": "distinct user.email",
+        "status": "broken_schema",
+        "notes": "user.email keypath missing; uniqueUsers 0."
+      },
+      {
+        "id": "dp_8",
+        "source": "get_logs",
+        "query_summary": "model breakdown for codex.sse_event",
+        "status": "broken_schema",
+        "notes": "event.name and model paths missing; empty result."
+      },
+      {
+        "id": "dp_9",
+        "source": "get_logs",
+        "query_summary": "conversation duration total_ms",
+        "status": "broken_schema",
+        "notes": "conversation.id and derived fields missing/warned; total_ms null."
+      },
+      {
+        "id": "dp_10",
+        "source": "get_traces",
+        "query_summary": "Duplicate/garbage span pipelines (trailing u, :, D)",
+        "status": "not_run",
+        "notes": "Excluded; HAR extraction noise—use clean run_turn pipeline (dp_1)."
+      },
+      {
+        "id": "dp_11",
+        "source": "get_logs",
+        "query_summary": "$d.resource.attributes['service_name'] == 'codex_cli_rs'",
+        "status": "ok",
+        "notes": "Base filter for Codex OTLP logs when resource carries `service_name` (this sim)."
+      }
+    ]
+  }
+}
