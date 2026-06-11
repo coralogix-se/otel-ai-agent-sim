@@ -1,5 +1,5 @@
-"""Per-agent simulator modules (Gemini CLI, Claude Code, Codex, Copilot CLI, Cursor IDE, generic workflows)."""
+"""Per-agent simulator packages under ``sim/`` with shared helpers in ``sim.common``."""
 
-from sim.state import st
+from sim.common.state import st
 
 __all__ = ["st"]

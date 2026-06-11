@@ -7,15 +7,15 @@ import random
 import time
 import uuid
 
-from sim.claude_meta import _claude_effective_cx_subsystem, _claude_telemetry_profile
-from sim.claude_user_variance import (
+from sim.claude.meta import _claude_effective_cx_subsystem, _claude_telemetry_profile
+from sim.claude.user_variance import (
     claude_user_session_phase_offset,
     claude_user_session_rotate_duration_from_env,
 )
-from sim.common import tool_version_for, _stable_uuid
-from sim.constants import _CLAUDE_CODE_MODELS
-from sim.env import _env_bool, _env_float, _env_int
-from sim.state import st
+from sim.common.otel import tool_version_for, _stable_uuid
+from sim.common.constants import _CLAUDE_CODE_MODELS
+from sim.common.env import _env_bool, _env_float, _env_int
+from sim.common.state import st
 
 _FIRST_NAMES = (
     "Alex",

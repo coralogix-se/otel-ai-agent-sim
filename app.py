@@ -19,10 +19,10 @@ from zoneinfo import ZoneInfo
 
 import otlp_metrics
 import prometheus_rw
-from sim.claude_dashboard import emit_claude_code_dashboard
-from sim.constants import claude_prompt_for_session
-from sim.claude_repos import claude_rogue_user_token_multiplier
-from sim.claude_user_variance import (
+from sim.claude.dashboard import emit_claude_code_dashboard
+from sim.common.constants import claude_prompt_for_session
+from sim.claude.repos import claude_rogue_user_token_multiplier
+from sim.claude.user_variance import (
     claude_user_emit_turns_this_cycle,
     claude_user_productivity_multiplier,
     claude_user_session_phase_offset,
@@ -30,15 +30,15 @@ from sim.claude_user_variance import (
     claude_user_should_emit_this_cycle,
     claude_user_token_multiplier,
 )
-from sim.codex import _codex_model_for_turn
-from sim.common import _gen_ai_dashboard_llm_span_attributes
-from sim.model_pricing import estimate_llm_cost_usd
-from sim.cursor import (
+from sim.codex.agent import _codex_model_for_turn
+from sim.common.otel import _gen_ai_dashboard_llm_span_attributes
+from sim.common.model_pricing import estimate_llm_cost_usd
+from sim.cursor.agent import (
     _cursor_roster_user_for_emit,
     _cursor_stable_session_id_from_roster_user,
     emit_cursor_composer_session,
 )
-from sim.constants import (
+from sim.common.constants import (
     CLAUDE_CODE_DEFAULT_MODEL,
     CODEX_DEFAULT_MODEL,
     COPILOT_CLI_MODELS,
@@ -49,9 +49,9 @@ from sim.constants import (
     _CLAUDE_CODE_MODELS,
     claude_code_gen_ai_system_for_model,
 )
-from sim.copilot_cli import emit_copilot_cli_session
-from sim.copilot_collector_metrics import copilot_collector_enabled, register_copilot_collector_metrics
-from sim.state import st
+from sim.copilot.cli import emit_copilot_cli_session
+from sim.copilot.collector_metrics import copilot_collector_enabled, register_copilot_collector_metrics
+from sim.common.state import st
 from opentelemetry import trace
 from opentelemetry._logs import set_logger_provider
 from opentelemetry._logs.severity import SeverityNumber
@@ -1100,7 +1100,7 @@ def _gemini_installation_id() -> str:
 _gem_metric_pins: dict[str, tuple[str, str, str, str, str, str]] = {}
 # ``conversation_id`` → ``gen_ai.request.model`` when ``SIM_GEMINI_MODEL`` is unset (stable for session lifetime).
 _gem_session_models: dict[str, str] = {}
-# Pool: ``sim.constants.GEMINI_CLI_MODELS`` (imported above).
+# Pool: ``sim.common.constants.GEMINI_CLI_MODELS`` (imported above).
 # ``SIM_GEMINI_CONCURRENT_LONG_SESSIONS`` independent slots: each holds one roster user until its deadline
 # (``SIM_GEMINI_LONG_SESSION_SEC`` or Claude fallback) so many long-lived Gemini sessions overlap in time.
 _gem_slot_users: list[dict | None] = []
@@ -1738,7 +1738,7 @@ CLAUDE_CODE_AGENT_DESCRIPTION = (
     "claude_code.* telemetry and Code Agents dashboards."
 )
 
-# Model pool: ``sim.constants._CLAUDE_CODE_MODELS`` (imported above).
+# Model pool: ``sim.common.constants._CLAUDE_CODE_MODELS`` (imported above).
 
 CODEX_AGENT_DESCRIPTION = (
     "OpenAI Codex is an AI coding agent for your terminal and IDE: it reasons over your codebase, "

@@ -18,11 +18,11 @@ from opentelemetry.sdk._logs import LogRecord
 from opentelemetry.trace import Status, StatusCode, TraceFlags
 from opentelemetry import trace
 
-from sim.common import _gen_ai_dashboard_llm_span_attributes, _stable_uuid, tool_version_for
-from sim.constants import GEMINI_AGENT_DESCRIPTION, GEMINI_CLI_MODELS, GEMINI_SAMPLE_PROMPTS
-from sim.env import _env_bool, _env_float, _env_int
-from sim.identity import random_coralogix_identity
-from sim.state import st
+from sim.common.otel import _gen_ai_dashboard_llm_span_attributes, _stable_uuid, tool_version_for
+from sim.common.constants import GEMINI_AGENT_DESCRIPTION, GEMINI_CLI_MODELS, GEMINI_SAMPLE_PROMPTS
+from sim.common.env import _env_bool, _env_float, _env_int
+from sim.common.identity import random_coralogix_identity
+from sim.common.state import st
 
 log = logging.getLogger(__name__)
 
@@ -248,7 +248,7 @@ def _gemini_installation_id() -> str:
 st.gem_metric_pins: dict[str, tuple[str, str, str, str, str, str]] = {}
 # ``conversation_id`` → ``gen_ai.request.model`` when ``SIM_GEMINI_MODEL`` is unset (stable for session lifetime).
 st.gem_session_models: dict[str, str] = {}
-# Pool for ``_gemini_model_for_conversation``: ``sim.constants.GEMINI_CLI_MODELS``.
+# Pool for ``_gemini_model_for_conversation``: ``sim.common.constants.GEMINI_CLI_MODELS``.
 # ``SIM_GEMINI_CONCURRENT_LONG_SESSIONS`` independent slots: each holds one roster user until its deadline
 # (``SIM_GEMINI_LONG_SESSION_SEC`` or Claude fallback) so many long-lived Gemini sessions overlap in time.
 st.gem_slot_users: list[dict | None] = []

@@ -11,11 +11,11 @@ import uuid
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from sim.claude_meta import _claude_effective_cx_subsystem
-from sim.common import _gen_ai_dashboard_llm_span_attributes, _sim_claude_usage_token_counts, tool_version_for
-from sim.constants import CLAUDE_CODE_AGENT_DESCRIPTION, CLAUDE_CODE_DEFAULT_MODEL, claude_code_gen_ai_system_for_model, claude_prompt_for_session
-from sim.identity import _claude_otlp_span_user_attrs_from_roster, random_claude_user_identity
-from sim.state import st
+from sim.claude.meta import _claude_effective_cx_subsystem
+from sim.common.otel import _gen_ai_dashboard_llm_span_attributes, _sim_claude_usage_token_counts, tool_version_for
+from sim.common.constants import CLAUDE_CODE_AGENT_DESCRIPTION, CLAUDE_CODE_DEFAULT_MODEL, claude_code_gen_ai_system_for_model, claude_prompt_for_session
+from sim.common.identity import _claude_otlp_span_user_attrs_from_roster, random_claude_user_identity
+from sim.common.state import st
 
 def emit_claude_code_user_prompt_span(
     conversation_id: str,

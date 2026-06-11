@@ -1,11 +1,16 @@
-# Local dev: receive OTLP on 4317/4318, forward traces + logs to Coralogix US2.
+# Local Mac: OTLP in + Prometheus scrape from host sim -> Coralogix US2.
 #
 #   export CORALOGIX_PRIVATE_KEY=cxtp_...
-#   docker run --rm -p 4317:4317 -p 4318:4318 \
+#   docker run --rm --name otel-local-cx -p 14317:4317 -p 14318:4318 \
 #     -e CORALOGIX_PRIVATE_KEY \
 #     -v "$PWD/config/otel-collector-local-coralogix.yaml:/etc/otelcol-contrib/config.yaml:ro" \
 #     otel/opentelemetry-collector-contrib:0.115.1 \
 #     --config=/etc/otelcol-contrib/config.yaml
+#
+# Sim (separate terminal; do not set CORALOGIX_PRIVATE_KEY on the sim process):
+#   export OTLP_ENDPOINT=localhost:14317 OTLP_INSECURE=true
+#   export PROMETHEUS_METRICS_PORT=9090 PROMETHEUS_REMOTE_WRITE_ENABLED=false
+#   python app.py
 #
 receivers:
   otlp:
@@ -14,6 +19,14 @@ receivers:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: otel-ai-agent-sim-local
+          scrape_interval: 15s
+          static_configs:
+            - targets:
+                - host.docker.internal:9090
 
 processors:
   batch:
@@ -29,6 +42,12 @@ exporters:
       insecure: false
     headers:
       Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY}
+  prometheusremotewrite/coralogix:
+    endpoint: https://ingress.us2.coralogix.com/prometheus/v1
+    tls:
+      insecure: false
+    headers:
+      Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY}
 
 service:
   pipelines:
@@ -40,3 +59,7 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [debug, otlp/coralogix]
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [batch]
+      exporters: [debug, prometheusremotewrite/coralogix]

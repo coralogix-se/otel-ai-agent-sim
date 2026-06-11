@@ -21,10 +21,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from sim.claude_logs import _cc_claude_log_record_attrs
-from sim.constants import CLAUDE_CODE_DEFAULT_MODEL, claude_api_response_body_json
-from sim.claude_repos import claude_session_repository_names
-from sim.identity import _CORALOGIX_TEAM_USERS
+from sim.claude.logs import _cc_claude_log_record_attrs
+from sim.common.constants import CLAUDE_CODE_DEFAULT_MODEL, claude_api_response_body_json
+from sim.claude.repos import claude_session_repository_names
+from sim.common.identity import _CORALOGIX_TEAM_USERS
 
 _SAMPLE_PROMPT = "Refactor the auth middleware to use structured logging and add unit tests."
 

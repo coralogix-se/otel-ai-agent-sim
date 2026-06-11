@@ -15,11 +15,11 @@ import uuid
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from sim.common import _gen_ai_dashboard_llm_span_attributes, tool_version_for
-from sim.constants import CURSOR_COMPOSER_MODELS, CURSOR_SAMPLE_PROMPTS
-from sim.env import _env_bool, _env_csv_model_pool, _env_float, _env_int
-from sim.identity import _claude_otlp_span_user_attrs_from_roster, random_coralogix_identity
-from sim.state import st
+from sim.common.otel import _gen_ai_dashboard_llm_span_attributes, tool_version_for
+from sim.common.constants import CURSOR_COMPOSER_MODELS, CURSOR_SAMPLE_PROMPTS
+from sim.common.env import _env_bool, _env_csv_model_pool, _env_float, _env_int
+from sim.common.identity import _claude_otlp_span_user_attrs_from_roster, random_coralogix_identity
+from sim.common.state import st
 
 
 def _ct(key: str) -> str:

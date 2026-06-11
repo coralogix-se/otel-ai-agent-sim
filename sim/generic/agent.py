@@ -8,9 +8,9 @@ import uuid
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from sim.common import _gen_ai_dashboard_llm_span_attributes, tool_version_for
-from sim.model_pricing import estimate_llm_cost_usd
-from sim.identity import random_coralogix_identity
+from sim.common.otel import _gen_ai_dashboard_llm_span_attributes, tool_version_for
+from sim.common.model_pricing import estimate_llm_cost_usd
+from sim.common.identity import random_coralogix_identity
 
 # Longest generic workflow: root + planning subtree + N tools + rag + completion + validate.
 _DEEP_TOOL_NAMES = (

@@ -6,8 +6,8 @@ import hashlib
 import os
 import random
 
-from sim.env import _env_float, _env_int
-from sim.identity import _CORALOGIX_TEAM_USERS
+from sim.common.env import _env_float, _env_int
+from sim.common.identity import _CORALOGIX_TEAM_USERS
 
 # Company GitHub repos (managed — in the org scan). Override with ``SIM_CLAUDE_ORG_REPOS``.
 _DEFAULT_ORG_REPOS: tuple[str, ...] = (

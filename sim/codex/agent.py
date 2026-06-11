@@ -11,16 +11,16 @@ import uuid
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from sim.common import (
+from sim.common.otel import (
     _emit_codex_otlp_structured_log,
     _codex_span_service_label_attrs,
     _gen_ai_dashboard_llm_span_attributes,
     tool_version_for,
 )
-from sim.constants import CODEX_AGENT_DESCRIPTION, CODEX_CLI_MODELS, CODEX_SAMPLE_PROMPTS
-from sim.env import _env_bool, _env_csv_model_pool, _env_int
-from sim.identity import random_coralogix_identity
-from sim.state import st
+from sim.common.constants import CODEX_AGENT_DESCRIPTION, CODEX_CLI_MODELS, CODEX_SAMPLE_PROMPTS
+from sim.common.env import _env_bool, _env_csv_model_pool, _env_int
+from sim.common.identity import random_coralogix_identity
+from sim.common.state import st
 
 
 def _codex_model_for_turn(profile: dict) -> str:

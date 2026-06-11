@@ -101,7 +101,7 @@ def claude_user_session_phase_offset(roster_user: dict | None) -> float:
 
 def claude_user_session_rotate_duration_from_env(roster_user: dict | None) -> float:
     """Draw base rotate from env min/max or fixed, then apply per-user scale."""
-    from sim.env import _env_bool, _env_float
+    from sim.common.env import _env_bool, _env_float
     import os
 
     if not _env_bool("SIM_CLAUDE_STABLE_SESSION_PER_USER", True):

@@ -79,7 +79,7 @@ If a cluster-wide Coralogix OpenTelemetry integration scrapes the sim, these val
 | Path | Purpose |
 |------|---------|
 | `app.py` | Simulator entrypoint and wiring |
-| `sim/` | Per-agent emitters and shared helpers |
+| `sim/` | Per-agent packages (`claude/`, `copilot/`, `gemini/`, `codex/`, `cursor/`, `generic/`) plus shared `common/` |
 | `prompb/`, `prometheus_rw.py`, `otlp_metrics.py` | Metrics / remote write helpers |
 | `k8s/codeagentsim/` | Namespace, collector + sim, **multi-exporter** Coralogix fan-out |
 | `k8s/deployment.yaml` | Single-tenant direct-ingest example |

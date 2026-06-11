@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-shot helper to slice app.py into sim/*.py (run from repo root)."""
+"""One-shot helper to slice app.py into sim/<agent>/*.py (run from repo root)."""
 from __future__ import annotations
 
 import re
@@ -81,11 +81,11 @@ import random
 import time
 import uuid
 
-from sim.claude_meta import _claude_effective_cx_subsystem, _claude_telemetry_profile
-from sim.common import tool_version_for, _stable_uuid
-from sim.constants import _CLAUDE_CODE_MODELS
-from sim.env import _env_bool, _env_float, _env_int
-from sim.state import st
+from sim.claude.meta import _claude_effective_cx_subsystem, _claude_telemetry_profile
+from sim.common.otel import tool_version_for, _stable_uuid
+from sim.common.constants import _CLAUDE_CODE_MODELS
+from sim.common.env import _env_bool, _env_float, _env_int
+from sim.common.state import st
 
 '''
 
@@ -95,7 +95,7 @@ write(
     chunk(1749, 1988),
 )
 
-# --- gemini.py ---
+# --- gemini/agent.py ---
 GEMINI_HEADER = '''"""Gemini CLI simulator: spans, OTLP logs, Prometheus (standard label set)."""
 from __future__ import annotations
 
@@ -116,11 +116,11 @@ from opentelemetry.sdk._logs import LogRecord
 from opentelemetry.trace import Status, StatusCode, TraceFlags
 from opentelemetry import trace
 
-from sim.common import _gen_ai_dashboard_llm_span_attributes, _stable_uuid, tool_version_for
-from sim.constants import GEMINI_AGENT_DESCRIPTION, GEMINI_SAMPLE_PROMPTS
-from sim.env import _env_bool, _env_float, _env_int
-from sim.identity import random_coralogix_identity
-from sim.state import st
+from sim.common.otel import _gen_ai_dashboard_llm_span_attributes, _stable_uuid, tool_version_for
+from sim.common.constants import GEMINI_AGENT_DESCRIPTION, GEMINI_SAMPLE_PROMPTS
+from sim.common.env import _env_bool, _env_float, _env_int
+from sim.common.identity import random_coralogix_identity
+from sim.common.state import st
 
 log = logging.getLogger(__name__)
 
@@ -137,9 +137,9 @@ gemini_body = (
     + "\n"
     + chunk(1991, 2487)
 )
-write("sim/gemini.py", GEMINI_HEADER, gemini_body)
+write("sim/gemini/agent.py", GEMINI_HEADER, gemini_body)
 
-# --- codex.py ---
+# --- codex/agent.py ---
 CODEX_HEADER = '''"""OpenAI Codex CLI simulator (run_turn span + structured OTLP logs)."""
 from __future__ import annotations
 
@@ -153,16 +153,16 @@ import uuid
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from sim.common import (
+from sim.common.otel import (
     _emit_codex_otlp_structured_log,
     _codex_span_service_label_attrs,
     _gen_ai_dashboard_llm_span_attributes,
     tool_version_for,
 )
-from sim.constants import CODEX_AGENT_DESCRIPTION, CODEX_SAMPLE_PROMPTS
-from sim.env import _env_bool, _env_int
-from sim.identity import random_coralogix_identity
-from sim.state import st
+from sim.common.constants import CODEX_AGENT_DESCRIPTION, CODEX_SAMPLE_PROMPTS
+from sim.common.env import _env_bool, _env_int
+from sim.common.identity import random_coralogix_identity
+from sim.common.state import st
 
 '''
 
@@ -172,12 +172,12 @@ write(
     chunk(2562, 2854),
 )
 
-# --- constants.py ---
-Path(ROOT / "sim/constants.py").write_text(
+# --- common/constants.py ---
+Path(ROOT / "sim/common/constants.py").write_text(
     '"""Agent marketing descriptions, sample prompts, and model pools (shared)."""\n\n' + chunk(1696, 1746)
 )
 
-# --- generic.py ---
+# --- generic/agent.py ---
 GENERIC_HEADER = '''"""Generic multi-step agent workflow (non-CLI agents: ChatGPT, Copilot, Grok, …)."""
 from __future__ import annotations
 
@@ -188,14 +188,14 @@ import uuid
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from sim.common import _gen_ai_dashboard_llm_span_attributes, tool_version_for
-from sim.identity import random_coralogix_identity
+from sim.common.otel import _gen_ai_dashboard_llm_span_attributes, tool_version_for
+from sim.common.identity import random_coralogix_identity
 
 '''
 
-write("sim/generic.py", GENERIC_HEADER, chunk(2857, 3001))
+write("sim/generic/agent.py", GENERIC_HEADER, chunk(2857, 3001))
 
-# --- claude_spans.py ---
+# --- claude/spans.py ---
 CLAUDE_SPANS_HEADER = '''"""Claude Code OTLP trace spans (optional ``user_prompt``)."""
 from __future__ import annotations
 
@@ -209,14 +209,14 @@ import uuid
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-from sim.claude_meta import _claude_effective_cx_subsystem
-from sim.common import _gen_ai_dashboard_llm_span_attributes, _sim_claude_usage_token_counts, tool_version_for
-from sim.constants import CLAUDE_CODE_AGENT_DESCRIPTION, CLAUDE_CODE_SAMPLE_PROMPTS
-from sim.identity import _claude_otlp_span_user_attrs_from_roster, random_claude_user_identity
-from sim.state import st
+from sim.claude.meta import _claude_effective_cx_subsystem
+from sim.common.otel import _gen_ai_dashboard_llm_span_attributes, _sim_claude_usage_token_counts, tool_version_for
+from sim.common.constants import CLAUDE_CODE_AGENT_DESCRIPTION, CLAUDE_CODE_SAMPLE_PROMPTS
+from sim.common.identity import _claude_otlp_span_user_attrs_from_roster, random_claude_user_identity
+from sim.common.state import st
 
 '''
 
-write("sim/claude_spans.py", CLAUDE_SPANS_HEADER, chunk(2489, 2560))
+write("sim/claude/spans.py", CLAUDE_SPANS_HEADER, chunk(2489, 2560))
 
 print("done.")

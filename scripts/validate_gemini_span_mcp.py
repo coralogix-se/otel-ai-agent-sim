@@ -27,9 +27,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from sim.common import _cli_resource, _gen_ai_dashboard_llm_span_attributes
-from sim.constants import GEMINI_AGENT_DESCRIPTION
-from sim.env import _env_int
+from sim.common.otel import _cli_resource, _gen_ai_dashboard_llm_span_attributes
+from sim.common.constants import GEMINI_AGENT_DESCRIPTION
+from sim.common.env import _env_int
 
 
 def _gemini_turn_prompt_name(conversation_id: str) -> str:

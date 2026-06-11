@@ -21,8 +21,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.trace import TraceFlags
 
-from sim.env import _env_bool, _env_float, _env_int
-from sim.state import st
+from sim.common.env import _env_bool, _env_float, _env_int
+from sim.common.state import st
 
 log = logging.getLogger(__name__)
 
@@ -411,9 +411,9 @@ def _gen_ai_dashboard_llm_span_attributes(
     Span tags for GenAI observability dashboards: ``gen_ai.prompt_price``,
     ``gen_ai.response_price``, token usage, and evaluator score fields.
 
-    When ``model`` is set, prices follow ``sim.model_pricing`` (Opus ≫ Sonnet ≫ Haiku, etc.).
+    When ``model`` is set, prices follow ``sim.common.model_pricing`` (Opus ≫ Sonnet ≫ Haiku, etc.).
     """
-    from sim.model_pricing import estimate_span_prices
+    from sim.common.model_pricing import estimate_span_prices
 
     prompt_price, response_price = estimate_span_prices(
         model or "",

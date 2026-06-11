@@ -23,16 +23,16 @@ from opentelemetry.sdk._logs import LogRecord
 from opentelemetry.trace import Status, StatusCode, TraceFlags
 from opentelemetry._logs.severity import SeverityNumber
 
-from sim.common import (
+from sim.common.otel import (
     _cx_log_record_attrs,
     _gen_ai_dashboard_llm_span_attributes,
     tool_version_for,
 )
-from sim.claude_repos import claude_session_repository_names
-from sim.constants import COPILOT_CLI_AGENT_DESCRIPTION, COPILOT_CLI_MODELS, COPILOT_CLI_SAMPLE_PROMPTS
-from sim.env import _env_bool, _env_csv_model_pool, _env_int
-from sim.identity import _claude_otlp_span_user_attrs_from_roster, random_coralogix_identity
-from sim.state import st
+from sim.claude.repos import claude_session_repository_names
+from sim.common.constants import COPILOT_CLI_AGENT_DESCRIPTION, COPILOT_CLI_MODELS, COPILOT_CLI_SAMPLE_PROMPTS
+from sim.common.env import _env_bool, _env_csv_model_pool, _env_int
+from sim.common.identity import _claude_otlp_span_user_attrs_from_roster, random_coralogix_identity
+from sim.common.state import st
 
 _COPILOT_TOOLS = (
     "read_file",
@@ -113,7 +113,7 @@ def _copilot_enduser_pseudo_id(user_attrs: dict) -> str:
 
 def _copilot_github_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     """USD for ``tags['github.copilot.cost']`` on ``invoke_agent`` (model-aware API-equivalent rates)."""
-    from sim.model_pricing import estimate_llm_cost_usd
+    from sim.common.model_pricing import estimate_llm_cost_usd
 
     return estimate_llm_cost_usd(
         model,
@@ -410,7 +410,7 @@ def emit_copilot_cli_session(
         st.prom_copilot_cache.labels(cx_app, cx_sub, model, "miss").inc(max(0, n_turns - cache_hits))
 
     if st.copilot_collector is not None:
-        from sim.copilot_collector_metrics import record_copilot_collector_session
+        from sim.copilot.collector_metrics import record_copilot_collector_session
 
         record_copilot_collector_session(
             st.copilot_collector,

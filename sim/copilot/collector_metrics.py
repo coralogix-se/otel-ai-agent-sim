@@ -25,7 +25,7 @@ from datetime import date
 from prometheus_client.core import GaugeMetricFamily
 from prometheus_client.registry import Collector
 
-from sim.env import _env_bool, _env_float
+from sim.common.env import _env_bool, _env_float
 
 _ORG_L = ("organization",)
 _USER_L = ("organization", "user_email", "user_login", "user_name")

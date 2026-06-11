@@ -1,7 +1,7 @@
 """Claude Code OTLP log attribute shapes (flat snake_case vs dotted keys)."""
 from __future__ import annotations
 
-from sim.common import _cx_log_record_attrs
+from sim.common.otel import _cx_log_record_attrs
 
 
 def _cc_claude_log_attributes_flat(

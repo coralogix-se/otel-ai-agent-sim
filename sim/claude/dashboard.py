@@ -14,10 +14,10 @@ from opentelemetry._logs.severity import SeverityNumber
 from opentelemetry.sdk._logs import LogRecord
 from opentelemetry.trace import TraceFlags
 
-from sim.claude_logs import _cc_claude_log_record_attrs
-from sim.claude_meta import _claude_telemetry_profile
-from sim.claude_repos import claude_session_repository_names
-from sim.common import (
+from sim.claude.logs import _cc_claude_log_record_attrs
+from sim.claude.meta import _claude_telemetry_profile
+from sim.claude.repos import claude_session_repository_names
+from sim.common.otel import (
     _anthropic_style_account_id,
     _cc_base_for_prometheus_labels,
     _map_cc_base_labels,
@@ -27,13 +27,13 @@ from sim.common import (
     _cc_tool_use_id,
     tool_version_for,
 )
-from sim.constants import (
+from sim.common.constants import (
     claude_api_response_body_json,
     claude_assistant_reply_for_session,
     claude_prompt_for_session,
 )
-from sim.env import _env_bool, _env_float, _env_int
-from sim.identity import (
+from sim.common.env import _env_bool, _env_float, _env_int
+from sim.common.identity import (
     _apply_claude_dotted_email_domain,
     _claude_metric_label_pin_key,
     _claude_otlp_span_user_attrs_from_roster,
@@ -41,7 +41,7 @@ from sim.identity import (
     _claude_roster_core_user,
     _claude_user_identity_flavor,
 )
-from sim.state import st
+from sim.common.state import st
 
 # Claude-style tools for logs + decision metrics (weighted toward common tools).
 _CC_TOOLS = (
@@ -279,7 +279,7 @@ def emit_claude_code_dashboard(
         cache_creation_amt = random.randint(cc_lo, cc_hi)
 
     # Single canonical USD total (micro-dollars) for ``cc_cost`` and log ``cost_usd`` rows (exact sum).
-    from sim.model_pricing import estimate_llm_cost_usd
+    from sim.common.model_pricing import estimate_llm_cost_usd
 
     _est_cost_raw = round(
         estimate_llm_cost_usd(
