@@ -114,6 +114,10 @@ CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES = (
     "Memory leak is in unreleased websocket ping timers; I'll clear intervals on disconnect.",
 )
 
+# Model pools below (Claude, Codex, Cursor, Copilot, Gemini) should be reviewed regularly against
+# each vendor's current model list. Re-add suspended routes (e.g. claude-fable-5, claude-mythos-5)
+# only when the upstream product ships them again.
+
 # Default when ``SIM_CLAUDE_MODEL`` unset and profile has no model (Anthropic API alias).
 CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-4-6"
 
