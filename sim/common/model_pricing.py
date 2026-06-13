@@ -35,9 +35,7 @@ def _r(inp: float, out: float, *, cache_read: float | None = None, cache_write: 
 
 # Explicit ids used in sim pools (and common aliases).
 _EXACT: dict[str, ModelRates] = {
-    # --- Anthropic Claude (Mythos-class + Opus/Sonnet/Haiku) ---
-    "claude-fable-5": _r(10.0, 50.0),
-    "claude-mythos-5": _r(10.0, 50.0),
+    # --- Anthropic Claude (Opus/Sonnet/Haiku) ---
     "claude-opus-4-8": _r(5.0, 25.0),
     "claude-opus-4-7": _r(5.0, 25.0),
     "claude-opus-4-6": _r(5.0, 25.0),
@@ -89,8 +87,6 @@ _EXACT: dict[str, ModelRates] = {
 
 # Longest-prefix / pattern fallbacks (order matters).
 _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
-    ("claude-fable", _r(10.0, 50.0)),
-    ("claude-mythos", _r(10.0, 50.0)),
     ("claude-opus", _r(5.0, 25.0)),
     ("claude-sonnet", _r(3.0, 15.0)),
     ("claude-haiku", _r(1.0, 5.0)),

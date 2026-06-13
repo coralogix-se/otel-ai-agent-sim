@@ -118,9 +118,8 @@ CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES = (
 CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # Claude Code ``/model`` picker + third-party routes (June 2026). ``SIM_CLAUDE_MODEL`` overrides.
+# Excludes suspended Anthropic preview routes (e.g. fable/mythos) until re-enabled upstream.
 _CLAUDE_CODE_MODELS = (
-    "claude-fable-5",
-    "claude-mythos-5",
     "claude-opus-4-8",
     "claude-sonnet-4-6",
     "claude-haiku-4-5",
