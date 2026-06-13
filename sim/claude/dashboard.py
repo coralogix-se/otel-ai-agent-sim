@@ -270,6 +270,7 @@ def emit_claude_code_dashboard(
         cr_lo = max(5000, int(pair_tok * _env_float("SIM_CLAUDE_CACHE_READ_FRAC_MIN", 0.008)))
         cr_hi = max(cr_lo + 1, int(pair_tok * _env_float("SIM_CLAUDE_CACHE_READ_FRAC_MAX", 0.15)))
         cr_hi = min(cr_hi, int(pair_tok * 3) + 1)
+        cr_lo = min(cr_lo, max(0, cr_hi - 1))
         cache_read_amt = random.randint(cr_lo, cr_hi)
     ccn_prob = _env_float("SIM_CLAUDE_CACHE_CREATION_PROB", 0.45)
     cache_creation_amt: int | None = None

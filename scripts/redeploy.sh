@@ -10,6 +10,11 @@
 # If you already ran ``docker login`` to ECR: SKIP_ECR_LOGIN=1 bash scripts/redeploy.sh
 set -euo pipefail
 
+KUBECTL=(kubectl)
+if [[ -n "${KUBECTL_CONTEXT:-}" ]]; then
+  KUBECTL+=(--context "$KUBECTL_CONTEXT")
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ECR_REGISTRY="${ECR_REGISTRY:-827602716714.dkr.ecr.us-west-2.amazonaws.com}"
 IMAGE_NAME="${IMAGE_NAME:-otel-ai-agent-sim}"
@@ -26,7 +31,7 @@ if [[ ! -f "$DK8S" ]]; then
 fi
 if [[ -f "$DK8S" ]]; then
   echo "Applying ${DK8S} (env, labels, image pull policy)..."
-  kubectl apply -f "$DK8S"
+  "${KUBECTL[@]}" apply -f "$DK8S"
 fi
 
 if [[ -n "${SKIP_DOCKER:-}" ]]; then
@@ -67,12 +72,12 @@ else
 fi
 
 echo "Restarting deployment/${DEPLOY} in namespace ${NS}..."
-kubectl rollout restart "deployment/${DEPLOY}" -n "$NS"
-kubectl rollout status "deployment/${DEPLOY}" -n "$NS" --timeout=180s
+"${KUBECTL[@]}" rollout restart "deployment/${DEPLOY}" -n "$NS"
+"${KUBECTL[@]}" rollout status "deployment/${DEPLOY}" -n "$NS" --timeout=180s
 
 if [[ -z "${SKIP_VERIFY:-}" ]]; then
   echo "Running post-rollout verification..."
-  K8S_NAMESPACE="$NS" K8S_DEPLOYMENT="$DEPLOY" bash "${ROOT}/scripts/verify-rollout.sh"
+  K8S_NAMESPACE="$NS" K8S_DEPLOYMENT="$DEPLOY" KUBECTL_CONTEXT="${KUBECTL_CONTEXT:-}" bash "${ROOT}/scripts/verify-rollout.sh"
 else
   echo "SKIP_VERIFY=1: skipping scripts/verify-rollout.sh"
 fi

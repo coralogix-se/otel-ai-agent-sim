@@ -8,6 +8,11 @@
 #   WARMUP_SEC=30 bash scripts/verify-rollout.sh
 set -euo pipefail
 
+KUBECTL=(kubectl)
+if [[ -n "${KUBECTL_CONTEXT:-}" ]]; then
+  KUBECTL+=(--context "$KUBECTL_CONTEXT")
+fi
+
 NS="${K8S_NAMESPACE:-codeagentsim}"
 DEPLOY="${K8S_DEPLOYMENT:-otel-ai-agent-sim}"
 CONTAINER="${SIM_CONTAINER:-sim}"
@@ -16,23 +21,23 @@ LABEL="${APP_LABEL:-app=otel-ai-agent-sim}"
 
 echo "== verify rollout: ${DEPLOY} in ${NS} (warmup ${WARMUP_SEC}s) =="
 
-POD="$(kubectl get pods -n "$NS" -l "$LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+POD="$("${KUBECTL[@]}" get pods -n "$NS" -l "$LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
 if [[ -z "$POD" ]]; then
   echo "FAIL: no pod found for -l ${LABEL} in ${NS}" >&2
   exit 1
 fi
 
-phase="$(kubectl get pod -n "$NS" "$POD" -o jsonpath='{.status.phase}')"
-ready="$(kubectl get pod -n "$NS" "$POD" -o jsonpath='{.status.containerStatuses[?(@.name=="'"$CONTAINER"'")].ready}')"
-restarts="$(kubectl get pod -n "$NS" "$POD" -o jsonpath='{.status.containerStatuses[?(@.name=="'"$CONTAINER"'")].restartCount}')"
-image="$(kubectl get pod -n "$NS" "$POD" -o jsonpath='{.status.containerStatuses[?(@.name=="'"$CONTAINER"'")].imageID}')"
+phase="$("${KUBECTL[@]}" get pod -n "$NS" "$POD" -o jsonpath='{.status.phase}')"
+ready="$("${KUBECTL[@]}" get pod -n "$NS" "$POD" -o jsonpath='{.status.containerStatuses[?(@.name=="'"$CONTAINER"'")].ready}')"
+restarts="$("${KUBECTL[@]}" get pod -n "$NS" "$POD" -o jsonpath='{.status.containerStatuses[?(@.name=="'"$CONTAINER"'")].restartCount}')"
+image="$("${KUBECTL[@]}" get pod -n "$NS" "$POD" -o jsonpath='{.status.containerStatuses[?(@.name=="'"$CONTAINER"'")].imageID}')"
 
 echo "pod=${POD} phase=${phase} ready=${ready} restarts=${restarts}"
 echo "image=${image}"
 
 if [[ "$phase" != "Running" ]]; then
   echo "FAIL: pod phase is ${phase}, want Running" >&2
-  kubectl describe pod -n "$NS" "$POD" | tail -25 >&2
+  "${KUBECTL[@]}" describe pod -n "$NS" "$POD" | tail -25 >&2
   exit 1
 fi
 
@@ -44,25 +49,25 @@ fi
 echo "waiting ${WARMUP_SEC}s to detect crash loop..."
 sleep "$WARMUP_SEC"
 
-restarts_after="$(kubectl get pod -n "$NS" "$POD" -o jsonpath='{.status.containerStatuses[?(@.name=="'"$CONTAINER"'")].restartCount}')"
-ready_after="$(kubectl get pod -n "$NS" "$POD" -o jsonpath='{.status.containerStatuses[?(@.name=="'"$CONTAINER"'")].ready}')"
-phase_after="$(kubectl get pod -n "$NS" "$POD" -o jsonpath='{.status.phase}')"
+restarts_after="$("${KUBECTL[@]}" get pod -n "$NS" "$POD" -o jsonpath='{.status.containerStatuses[?(@.name=="'"$CONTAINER"'")].restartCount}')"
+ready_after="$("${KUBECTL[@]}" get pod -n "$NS" "$POD" -o jsonpath='{.status.containerStatuses[?(@.name=="'"$CONTAINER"'")].ready}')"
+phase_after="$("${KUBECTL[@]}" get pod -n "$NS" "$POD" -o jsonpath='{.status.phase}')"
 
 echo "after warmup: phase=${phase_after} ready=${ready_after} restarts=${restarts_after}"
 
 if [[ "$phase_after" != "Running" || "$ready_after" != "true" ]]; then
   echo "FAIL: pod unhealthy after warmup" >&2
-  kubectl logs -n "$NS" "$POD" -c "$CONTAINER" --tail=60 >&2 || true
+  "${KUBECTL[@]}" logs -n "$NS" "$POD" -c "$CONTAINER" --tail=60 >&2 || true
   exit 1
 fi
 
 if [[ "$restarts_after" != "$restarts" ]]; then
   echo "FAIL: restart count increased ${restarts} -> ${restarts_after} (likely crash after startup)" >&2
-  kubectl logs -n "$NS" "$POD" -c "$CONTAINER" --tail=80 >&2 || true
+  "${KUBECTL[@]}" logs -n "$NS" "$POD" -c "$CONTAINER" --tail=80 >&2 || true
   exit 1
 fi
 
-LOGS="$(kubectl logs -n "$NS" "$POD" -c "$CONTAINER" 2>&1 || true)"
+LOGS="$("${KUBECTL[@]}" logs -n "$NS" "$POD" -c "$CONTAINER" 2>&1 || true)"
 if echo "$LOGS" | grep -qE 'Traceback \(most recent call last\)|NameError:|ImportError:|ModuleNotFoundError:|SyntaxError:'; then
   echo "FAIL: Python error in container logs:" >&2
   echo "$LOGS" | grep -E 'Traceback|Error:|File "/app' | tail -20 >&2
@@ -71,12 +76,12 @@ fi
 
 if ! echo "$LOGS" | grep -q 'AI Agent Simulation started'; then
   echo "FAIL: startup banner missing from logs" >&2
-  kubectl logs -n "$NS" "$POD" -c "$CONTAINER" --tail=40 >&2
+  "${KUBECTL[@]}" logs -n "$NS" "$POD" -c "$CONTAINER" --tail=40 >&2
   exit 1
 fi
 
 echo "probing :9090/metrics inside pod..."
-kubectl exec -n "$NS" "$POD" -c "$CONTAINER" -- python3 - <<'PY'
+"${KUBECTL[@]}" exec -n "$NS" "$POD" -c "$CONTAINER" -- python3 - <<'PY'
 import sys
 import urllib.request
 
