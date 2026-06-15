@@ -169,8 +169,8 @@ spec:
             # Parallel **long** Claude users (same duration N): ``SIM_CLAUDE_CONCURRENT_LONG_SESSIONS`` independent
             # slots (like Gemini); each slot pins one roster row for N seconds — up to that many distinct users at once
             # without shortening N. Slot pick: ``SIM_CLAUDE_SESSION_SLOT_STRATEGY`` = ``random`` (default) or ``round_robin``.
-            # Target: ~60 Claude users in any 45m window, each with ~3–7 ``session.id`` values (jittered rotate).
-            # 60 parallel slots × 2700s user pin; session rotate uniform in [386,900]s ≈ 2700/7 … 2700/3 sessions.
+            # Target: ~18 parallel Claude users (aligned with Gemini/Cursor), one emit per cycle.
+            # 18 slots × 2700s user pin; session rotate uniform in [386,900]s.
             - name: SIM_CLAUDE_LONG_SESSION_SEC
               value: "2700"
             - name: SIM_CLAUDE_SESSION_ID_ROTATE_SEC_MIN
@@ -179,15 +179,15 @@ spec:
               value: "900"
             - name: SIM_CLAUDE_PREFILL_SESSION_SLOTS
               value: "true"
-            # Fan-out: one emit per active slot each Claude cycle (60 users), not batch×50 on one random slot.
+            # Fan-out: one emit per active slot each Claude cycle (was 60× per pick — disabled for balanced overview).
             - name: SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS
-              value: "true"
+              value: "false"
             # Cursor Composer: ``SIM_CURSOR_STABLE_SESSION_PER_USER`` (app default true) + slots below reuse one roster
             # user per slot for ``SIM_CURSOR_LONG_SESSION_SEC`` or (if unset) the same ``SIM_CLAUDE_LONG_SESSION_SEC``
             # window — parallel sessions stay on distinct pinned users. Set ``SIM_CURSOR_LONG_SESSION_SEC=0`` for a new
             # user every emit (legacy). Optional: ``SIM_CURSOR_CONCURRENT_LONG_SESSIONS``, ``SIM_CURSOR_SESSION_SLOT_STRATEGY``.
             - name: SIM_CLAUDE_CONCURRENT_LONG_SESSIONS
-              value: "60"
+              value: "18"
             # - name: SIM_CLAUDE_SESSION_SLOT_STRATEGY
             #   value: "round_robin"
             - name: SIM_CLAUDE_STABLE_SESSION_PER_USER
@@ -282,12 +282,19 @@ spec:
             # - name: SIM_ROSTER_EMAIL_FORMAT
             #   value: legacy
             # Per-session stable mapping to one of 225 fixed @coralogix.com users (see ``random_coralogix_identity``).
+            # Each user is assigned 1–2 coding agents (not all five) when affinity is enabled.
+            - name: SIM_ROSTER_AGENT_AFFINITY
+              value: "true"
+            - name: SIM_ROSTER_MAX_AGENTS_PER_USER
+              value: "2"
             # Relative selection weight per agent (higher = more traces). Others default to 1 in code.
             - name: SIM_WEIGHT_CLAUDE_CODE
-              value: "3"
+              value: "5"
             - name: SIM_WEIGHT_GEMINI_CLI
               value: "5"
             - name: SIM_WEIGHT_CODEX
+              value: "5"
+            - name: SIM_WEIGHT_CURSOR
               value: "5"
             # GitHub Copilot CLI (github-copilot service / invoke_agent spans); default in code is 5 if unset.
             - name: SIM_WEIGHT_COPILOT_CLI

@@ -21,7 +21,13 @@ from opentelemetry import trace
 from sim.common.otel import _gen_ai_dashboard_llm_span_attributes, _stable_uuid, tool_version_for
 from sim.common.constants import GEMINI_AGENT_DESCRIPTION, GEMINI_CLI_MODELS, GEMINI_SAMPLE_PROMPTS
 from sim.common.env import _env_bool, _env_float, _env_int
-from sim.common.identity import random_coralogix_identity
+from sim.common.identity import (
+    _claude_roster_core_user,
+    random_coralogix_identity,
+    random_coralogix_identity_for_agent,
+    roster_core_user_for_agent,
+    roster_indices_for_agent,
+)
 from sim.common.state import st
 
 log = logging.getLogger(__name__)
@@ -284,13 +290,20 @@ def _gemini_roster_user_for_emit() -> dict:
         _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0),
     )
     if dur <= 0:
-        return _claude_roster_core_user(str(uuid.uuid4()))
+        return roster_core_user_for_agent(str(uuid.uuid4()), "gemini_cli")
 
     n_slots = max(1, _env_int("SIM_GEMINI_CONCURRENT_LONG_SESSIONS", 18))
     if len(st.gem_slot_users) != n_slots:
         st.gem_slot_users = [None] * n_slots
         st.gem_slot_deadlines = [0.0] * n_slots
         st.gem_slot_rr = 0
+        if dur > 0:
+            now = time.monotonic()
+            allowed = roster_indices_for_agent("gemini_cli")
+            base = random.randrange(len(allowed))
+            for j in range(n_slots):
+                st.gem_slot_users[j] = roster_core_user_for_agent(f"gemini-prefill:{j}", "gemini_cli")
+                st.gem_slot_deadlines[j] = now + float(dur)
 
     strat = os.environ.get("SIM_GEMINI_SESSION_SLOT_STRATEGY", "random").strip().lower().replace("-", "_")
     if strat in ("round_robin", "rr"):
@@ -301,7 +314,7 @@ def _gemini_roster_user_for_emit() -> dict:
 
     now = time.monotonic()
     if st.gem_slot_users[i] is None or now >= st.gem_slot_deadlines[i]:
-        st.gem_slot_users[i] = _claude_roster_core_user(str(uuid.uuid4()))
+        st.gem_slot_users[i] = roster_core_user_for_agent(str(uuid.uuid4()) + f":gem-slot:{i}", "gemini_cli")
         st.gem_slot_deadlines[i] = now + float(dur)
     return dict(st.gem_slot_users[i])
 
@@ -882,7 +895,7 @@ def emit_gemini_cli_user_prompt_span(conversation_id: str, roster_user: dict | N
     if roster_user is not None:
         user_attrs = _gemini_user_attrs_from_roster(roster_user)
     else:
-        user_attrs = random_coralogix_identity(conversation_id)
+        user_attrs = random_coralogix_identity_for_agent(conversation_id, "gemini_cli")
     inst = _gemini_installation_id()
     metric_sid = _gemini_prometheus_session_id(user_attrs, conversation_id)
     pin_key = _gemini_metric_pin_key(user_attrs, conversation_id)

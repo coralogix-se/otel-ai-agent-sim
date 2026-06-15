@@ -56,6 +56,77 @@ _LAST_NAMES = (
 # Fixed roster (~middle-sized org): same 225 identities for every agent sim (Claude, Gemini, Codex, …).
 _CORALOGIX_TEAM_ROSTER_SIZE = 225
 
+_CLI_AGENT_PRODUCTS = (
+    "claude_code",
+    "gemini_cli",
+    "codex",
+    "cursor",
+    "copilot_cli",
+)
+
+
+def _roster_agent_affinity_enabled() -> bool:
+    return _env_bool("SIM_ROSTER_AGENT_AFFINITY", True)
+
+
+def _roster_max_agents_per_user() -> int:
+    return max(1, min(len(_CLI_AGENT_PRODUCTS), _env_int("SIM_ROSTER_MAX_AGENTS_PER_USER", 2)))
+
+
+def _build_roster_agent_affinity() -> tuple[frozenset[str], ...]:
+    """Each roster row uses 1–N coding agents (deterministic; not all five for every user)."""
+    products = list(_CLI_AGENT_PRODUCTS)
+    n_products = len(products)
+    max_agents = _roster_max_agents_per_user()
+    out: list[frozenset[str]] = []
+    for i in range(_CORALOGIX_TEAM_ROSTER_SIZE):
+        digest = hashlib.sha256(f"coralogix:sim:agent-affinity:{i}".encode()).digest()
+        n_pick = 1 if max_agents <= 1 else 1 + (digest[0] % max_agents)
+        picked: list[str] = []
+        used: set[int] = set()
+        b = 1
+        while len(picked) < n_pick:
+            j = digest[b % len(digest)] % n_products
+            b += 1
+            if j in used:
+                if b > len(digest) + n_products * 4:
+                    break
+                continue
+            used.add(j)
+            picked.append(products[j])
+        if not picked:
+            picked = [products[digest[1] % n_products]]
+        out.append(frozenset(picked))
+    return tuple(out)
+
+
+_ROSTER_AGENT_AFFINITY: tuple[frozenset[str], ...] = _build_roster_agent_affinity()
+
+
+def roster_indices_for_agent(agent_product: str) -> tuple[int, ...]:
+    if not _roster_agent_affinity_enabled():
+        return tuple(range(len(_CORALOGIX_TEAM_USERS)))
+    return tuple(i for i, agents in enumerate(_ROSTER_AGENT_AFFINITY) if agent_product in agents)
+
+
+def roster_core_user_for_agent(session_id: str, agent_product: str) -> dict:
+    allowed = roster_indices_for_agent(agent_product)
+    if not allowed:
+        return dict(_CORALOGIX_TEAM_USERS[0])
+    strat = os.environ.get("SIM_CLAUDE_ROSTER_STRATEGY", "hash").strip().lower().replace("-", "_")
+    if strat in ("round_robin", "rr"):
+        ptr = st.roster_rr_by_agent.get(agent_product, 0)
+        idx = allowed[ptr % len(allowed)]
+        st.roster_rr_by_agent[agent_product] = ptr + 1
+        return dict(_CORALOGIX_TEAM_USERS[idx])
+    base = int(hashlib.sha256((session_id.strip() or "unknown-session").encode()).hexdigest(), 16)
+    idx = allowed[base % len(allowed)]
+    return dict(_CORALOGIX_TEAM_USERS[idx])
+
+
+def random_coralogix_identity_for_agent(session_id: str, agent_product: str) -> dict:
+    return roster_core_user_for_agent(session_id, agent_product)
+
 
 def _coralogix_roster_email_local(
     i: int,
@@ -144,12 +215,7 @@ def _claude_roster_core_user(session_id: str) -> dict:
     - ``hash`` (default): stable per ``session_id`` (``random_coralogix_identity``).
     - ``round_robin`` / ``rr``: cycle ``_CORALOGIX_TEAM_USERS`` so many users get non-zero totals per wall clock.
     """
-    strat = os.environ.get("SIM_CLAUDE_ROSTER_STRATEGY", "hash").strip().lower().replace("-", "_")
-    if strat in ("round_robin", "rr"):
-        idx = st.cc_roster_rr_idx % len(_CORALOGIX_TEAM_USERS)
-        st.cc_roster_rr_idx += 1
-        return dict(_CORALOGIX_TEAM_USERS[idx])
-    return random_coralogix_identity(session_id)
+    return roster_core_user_for_agent(session_id, "claude_code")
 
 
 def _claude_user_identity_flavor(session_id: str, flavor: str) -> dict:
@@ -271,9 +337,11 @@ def _claude_ensure_session_slots() -> int:
         st.cc_slot_rr = 0
         if dur > 0 and _env_bool("SIM_CLAUDE_PREFILL_SESSION_SLOTS", True):
             now = time.monotonic()
-            base = random.randrange(len(_CORALOGIX_TEAM_USERS))
+            allowed = roster_indices_for_agent("claude_code")
+            base = random.randrange(len(allowed))
             for i in range(n_slots):
-                st.cc_slot_users[i] = dict(_CORALOGIX_TEAM_USERS[(base + i) % len(_CORALOGIX_TEAM_USERS)])
+                idx = allowed[(base + i) % len(allowed)]
+                st.cc_slot_users[i] = dict(_CORALOGIX_TEAM_USERS[idx])
                 st.cc_slot_deadlines[i] = now + float(dur)
     if dur > 0:
         now = time.monotonic()

@@ -33,6 +33,11 @@ from sim.claude.user_variance import (
 from sim.codex.agent import _codex_model_for_turn
 from sim.common.otel import _gen_ai_dashboard_llm_span_attributes
 from sim.common.model_pricing import estimate_llm_cost_usd
+from sim.common.identity import (
+    random_coralogix_identity_for_agent,
+    roster_core_user_for_agent,
+    roster_indices_for_agent,
+)
 from sim.cursor.agent import (
     _cursor_roster_user_for_emit,
     _cursor_stable_session_id_from_roster_user,
@@ -814,7 +819,7 @@ def _agent_selection_weight(agent_product: str) -> int:
     """
     defaults = {
         # Slightly favor Claude so token/cost panels see samples without long waits (override with SIM_WEIGHT_*).
-        "claude_code": 6,
+        "claude_code": 5,
         "gemini_cli": 5,
         "codex": 5,
         "cursor": 5,
@@ -1136,7 +1141,7 @@ def _gemini_roster_user_for_emit() -> dict:
         _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0),
     )
     if dur <= 0:
-        return _claude_roster_core_user(str(uuid.uuid4()))
+        return roster_core_user_for_agent(str(uuid.uuid4()), "gemini_cli")
 
     n_slots = max(1, _env_int("SIM_GEMINI_CONCURRENT_LONG_SESSIONS", 18))
     global _gem_slot_users, _gem_slot_deadlines, _gem_slot_rr
@@ -1144,6 +1149,14 @@ def _gemini_roster_user_for_emit() -> dict:
         _gem_slot_users = [None] * n_slots
         _gem_slot_deadlines = [0.0] * n_slots
         _gem_slot_rr = 0
+        if dur > 0:
+            now = time.monotonic()
+            allowed = roster_indices_for_agent("gemini_cli")
+            base = random.randrange(len(allowed))
+            for j in range(n_slots):
+                idx = allowed[(base + j) % len(allowed)]
+                _gem_slot_users[j] = dict(_CORALOGIX_TEAM_USERS[idx])
+                _gem_slot_deadlines[j] = now + float(dur)
 
     strat = os.environ.get("SIM_GEMINI_SESSION_SLOT_STRATEGY", "random").strip().lower().replace("-", "_")
     if strat in ("round_robin", "rr"):
@@ -1154,7 +1167,7 @@ def _gemini_roster_user_for_emit() -> dict:
 
     now = time.monotonic()
     if _gem_slot_users[i] is None or now >= _gem_slot_deadlines[i]:
-        _gem_slot_users[i] = _claude_roster_core_user(str(uuid.uuid4()))
+        _gem_slot_users[i] = roster_core_user_for_agent(str(uuid.uuid4()) + f":gem-slot:{i}", "gemini_cli")
         _gem_slot_deadlines[i] = now + float(dur)
     return dict(_gem_slot_users[i])
 
@@ -1877,19 +1890,8 @@ def _apply_claude_dotted_email_domain(user_attrs: dict) -> None:
 
 
 def _claude_roster_core_user(session_id: str) -> dict:
-    """
-    Pick one roster row for Claude Code metrics/logs.
-
-    - ``hash`` (default): stable per ``session_id`` (``random_coralogix_identity``).
-    - ``round_robin`` / ``rr``: cycle ``_CORALOGIX_TEAM_USERS`` so many users get non-zero totals per wall clock.
-    """
-    strat = os.environ.get("SIM_CLAUDE_ROSTER_STRATEGY", "hash").strip().lower().replace("-", "_")
-    if strat in ("round_robin", "rr"):
-        global _cc_roster_rr_idx
-        idx = _cc_roster_rr_idx % len(_CORALOGIX_TEAM_USERS)
-        _cc_roster_rr_idx += 1
-        return dict(_CORALOGIX_TEAM_USERS[idx])
-    return random_coralogix_identity(session_id)
+    """Pick one roster row for Claude Code (respects per-user agent affinity when enabled)."""
+    return roster_core_user_for_agent(session_id, "claude_code")
 
 
 def _claude_user_identity_flavor(session_id: str, flavor: str) -> dict:
@@ -2013,9 +2015,11 @@ def _claude_ensure_session_slots() -> int:
         _cc_slot_rr = 0
         if dur > 0 and _env_bool("SIM_CLAUDE_PREFILL_SESSION_SLOTS", True):
             now = time.monotonic()
-            base = random.randrange(len(_CORALOGIX_TEAM_USERS))
+            allowed = roster_indices_for_agent("claude_code")
+            base = random.randrange(len(allowed))
             for i in range(n_slots):
-                _cc_slot_users[i] = dict(_CORALOGIX_TEAM_USERS[(base + i) % len(_CORALOGIX_TEAM_USERS)])
+                idx = allowed[(base + i) % len(allowed)]
+                _cc_slot_users[i] = dict(_CORALOGIX_TEAM_USERS[idx])
                 _cc_slot_deadlines[i] = now + float(dur)
     if dur > 0:
         now = time.monotonic()
@@ -2120,7 +2124,7 @@ def emit_gemini_cli_user_prompt_span(conversation_id: str, roster_user: dict | N
     if roster_user is not None:
         user_attrs = _gemini_user_attrs_from_roster(roster_user)
     else:
-        user_attrs = random_coralogix_identity(conversation_id)
+        user_attrs = random_coralogix_identity_for_agent(conversation_id, "gemini_cli")
     inst = _gemini_installation_id()
     metric_sid = _gemini_prometheus_session_id(user_attrs, conversation_id)
     pin_key = _gemini_metric_pin_key(user_attrs, conversation_id)
@@ -2763,7 +2767,7 @@ def emit_codex_user_prompt_span(conversation_id: str, profile: dict) -> None:
     cx_sub = os.environ.get("CODEX_CX_SUBSYSTEM_NAME", "codex-sessions")
     model = _codex_model_for_turn(profile)
     duration_s = random.uniform(2.0, 5.5)
-    user_attrs = random_coralogix_identity(conversation_id)
+    user_attrs = random_coralogix_identity_for_agent(conversation_id, "codex")
     user_email = user_attrs["user.email"]
 
     with codex_tracer.start_as_current_span(
@@ -4027,7 +4031,7 @@ def main() -> None:
             gid = session_id
             pru: dict | None = None
             if _env_bool("SIM_COPILOT_STABLE_SESSION_PER_USER", True):
-                pru = _cursor_roster_user_for_emit()
+                pru = roster_core_user_for_agent(session_id, "copilot_cli")
                 gid = _cursor_stable_session_id_from_roster_user(pru)
             emit_copilot_cli_session(gid, profile, roster_user=pru)
             return

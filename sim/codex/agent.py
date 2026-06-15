@@ -19,7 +19,7 @@ from sim.common.otel import (
 )
 from sim.common.constants import CODEX_AGENT_DESCRIPTION, CODEX_CLI_MODELS, CODEX_SAMPLE_PROMPTS
 from sim.common.env import _env_bool, _env_csv_model_pool, _env_int
-from sim.common.identity import random_coralogix_identity
+from sim.common.identity import random_coralogix_identity_for_agent
 from sim.common.state import st
 
 
@@ -122,7 +122,7 @@ def emit_codex_user_prompt_span(conversation_id: str, profile: dict) -> None:
     cx_sub = os.environ.get("CODEX_CX_SUBSYSTEM_NAME", "codex-sessions")
     model = _codex_model_for_turn(profile)
     duration_s = random.uniform(2.0, 5.5)
-    user_attrs = random_coralogix_identity(conversation_id)
+    user_attrs = random_coralogix_identity_for_agent(conversation_id, "codex")
     user_email = user_attrs["user.email"]
 
     with codex_tracer.start_as_current_span(

@@ -18,7 +18,12 @@ from opentelemetry.trace import Status, StatusCode
 from sim.common.otel import _gen_ai_dashboard_llm_span_attributes, tool_version_for
 from sim.common.constants import CURSOR_COMPOSER_MODELS, CURSOR_SAMPLE_PROMPTS
 from sim.common.env import _env_bool, _env_csv_model_pool, _env_float, _env_int
-from sim.common.identity import _claude_otlp_span_user_attrs_from_roster, random_coralogix_identity
+from sim.common.identity import (
+    _claude_otlp_span_user_attrs_from_roster,
+    random_coralogix_identity_for_agent,
+    roster_core_user_for_agent,
+    roster_indices_for_agent,
+)
 from sim.common.state import st
 
 
@@ -56,13 +61,20 @@ def _cursor_roster_user_for_emit() -> dict:
         _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0),
     )
     if dur <= 0:
-        return random_coralogix_identity(str(uuid.uuid4()))
+        return roster_core_user_for_agent(str(uuid.uuid4()), "cursor")
 
     n_slots = max(1, _env_int("SIM_CURSOR_CONCURRENT_LONG_SESSIONS", 18))
     if len(st.cursor_slot_users) != n_slots:
         st.cursor_slot_users = [None] * n_slots
         st.cursor_slot_deadlines = [0.0] * n_slots
         st.cursor_slot_rr = 0
+        if dur > 0:
+            now = time.monotonic()
+            allowed = roster_indices_for_agent("cursor")
+            base = random.randrange(len(allowed))
+            for j in range(n_slots):
+                st.cursor_slot_users[j] = roster_core_user_for_agent(f"cursor-prefill:{j}", "cursor")
+                st.cursor_slot_deadlines[j] = now + float(dur)
 
     strat = os.environ.get("SIM_CURSOR_SESSION_SLOT_STRATEGY", "random").strip().lower().replace("-", "_")
     if strat in ("round_robin", "rr"):
@@ -73,7 +85,7 @@ def _cursor_roster_user_for_emit() -> dict:
 
     now = time.monotonic()
     if st.cursor_slot_users[i] is None or now >= st.cursor_slot_deadlines[i]:
-        st.cursor_slot_users[i] = random_coralogix_identity(str(uuid.uuid4()))
+        st.cursor_slot_users[i] = roster_core_user_for_agent(str(uuid.uuid4()) + f":cursor-slot:{i}", "cursor")
         st.cursor_slot_deadlines[i] = now + float(dur)
     return dict(st.cursor_slot_users[i])
 
@@ -131,7 +143,7 @@ def emit_cursor_composer_session(
     if roster_user is not None:
         user_attrs = _claude_otlp_span_user_attrs_from_roster(roster_user)
     else:
-        user_attrs = random_coralogix_identity(conversation_id)
+        user_attrs = random_coralogix_identity_for_agent(conversation_id, "cursor")
     user_email = user_attrs["user.email"]
     session_id, conv_id = _conversation_and_session_ids(conversation_id)
 

@@ -219,7 +219,7 @@ def _agent_selection_weight(agent_product: str) -> int:
     """
     defaults = {
         # Slightly favor Claude so token/cost panels see samples without long waits (override with SIM_WEIGHT_*).
-        "claude_code": 6,
+        "claude_code": 5,
         "gemini_cli": 5,
         "codex": 5,
         "cursor": 5,

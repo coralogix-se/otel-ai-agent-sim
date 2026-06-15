@@ -90,6 +90,9 @@ class SimState:
     cursor_slot_deadlines: list = []
     cursor_slot_rr: int = 0
 
+    # Per-agent round-robin pointers when ``SIM_ROSTER_AGENT_AFFINITY`` filters the roster.
+    roster_rr_by_agent: dict = {}
+
     # Claude roster / session (legacy globals from monolith)
     cc_roster_rr_idx: int = 0
     cc_long_session_id: str | None = None

@@ -31,7 +31,7 @@ from sim.common.otel import (
 from sim.claude.repos import claude_session_repository_names
 from sim.common.constants import COPILOT_CLI_AGENT_DESCRIPTION, COPILOT_CLI_MODELS, COPILOT_CLI_SAMPLE_PROMPTS
 from sim.common.env import _env_bool, _env_csv_model_pool, _env_int
-from sim.common.identity import _claude_otlp_span_user_attrs_from_roster, random_coralogix_identity
+from sim.common.identity import _claude_otlp_span_user_attrs_from_roster, random_coralogix_identity_for_agent
 from sim.common.state import st
 
 _COPILOT_TOOLS = (
@@ -202,7 +202,7 @@ def emit_copilot_cli_session(
     if roster_user is not None:
         user_attrs = _claude_otlp_span_user_attrs_from_roster(roster_user)
     else:
-        user_attrs = random_coralogix_identity(conversation_id)
+        user_attrs = random_coralogix_identity_for_agent(conversation_id, "copilot_cli")
     pseudo_id = _copilot_enduser_pseudo_id(user_attrs)
     prompt = random.choice(COPILOT_CLI_SAMPLE_PROMPTS)
 
