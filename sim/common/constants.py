@@ -115,14 +115,15 @@ CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES = (
 )
 
 # Model pools below (Claude, Codex, Cursor, Copilot, Gemini) should be reviewed regularly against
-# each vendor's current model list. Re-add suspended routes (e.g. claude-fable-5, claude-mythos-5)
-# only when the upstream product ships them again.
+# each vendor's current model list. Exclude suspended Anthropic routes (claude-fable-5,
+# claude-mythos-5) until Anthropic re-enables them upstream.
 
 # Default when ``SIM_CLAUDE_MODEL`` unset and profile has no model (Anthropic API alias).
 CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-4-6"
 
-# Claude Code ``/model`` picker + third-party routes (June 2026). ``SIM_CLAUDE_MODEL`` overrides.
-# Excludes suspended Anthropic preview routes (e.g. fable/mythos) until re-enabled upstream.
+# Claude Code ``/model`` aliases + common third-party routes (June 2026).
+# Anthropic: https://code.claude.com/docs/en/model-config
+# ``SIM_CLAUDE_MODEL`` overrides.
 _CLAUDE_CODE_MODELS = (
     "claude-opus-4-8",
     "claude-sonnet-4-6",
@@ -167,12 +168,11 @@ CODEX_SAMPLE_PROMPTS = (
 # Codex CLI default (OpenAI recommends ``gpt-5.5`` — https://developers.openai.com/codex/models).
 CODEX_DEFAULT_MODEL = "gpt-5.5"
 
-# Codex CLI pool; excludes retired ``o4-mini`` / ``gpt-5-codex`` and deprecated ``gpt-5.*-codex`` tiers.
+# Codex CLI pool (https://developers.openai.com/codex/models). ``gpt-5.3-codex`` deprecated for ChatGPT sign-in.
 CODEX_CLI_MODELS = (
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
-    "gpt-5.3-codex",
     "gpt-5.3-codex-spark",
 )
 
@@ -180,19 +180,20 @@ CODEX_CLI_MODELS = (
 CURSOR_DEFAULT_MODEL = "claude-sonnet-4-6"
 
 CURSOR_COMPOSER_MODELS = (
-    "composer-2",
+    "composer-2.5",
+    "composer-2.5-fast",
     "claude-sonnet-4-6",
-    "claude-sonnet-4-5",
     "claude-opus-4-8",
     "claude-opus-4-7",
-    "claude-opus-4-6",
-    "claude-haiku-4-5-20251001",
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
+    "claude-haiku-4-5",
+    "gemini-3.1-pro",
     "gemini-3.5-flash",
+    "gemini-3-flash",
     "gpt-5.5",
-    "gpt-5.4",
+    "gpt-5.3-codex",
     "gpt-5.4-mini",
+    "grok-4.3",
+    "grok-build-0.1",
 )
 
 CURSOR_SAMPLE_PROMPTS = (
@@ -226,14 +227,14 @@ COPILOT_CLI_MODELS = (
     "gpt-5.3-codex",
     "gpt-5-mini",
     "claude-sonnet-4-6",
+    "claude-sonnet-4-5",
     "claude-opus-4-8",
     "claude-opus-4-7",
     "claude-opus-4-6",
+    "claude-opus-4-5",
     "claude-haiku-4-5",
-    "gemini-2.5-pro",
+    "gemini-3.1-pro-preview",
     "gemini-3.5-flash",
-    "gemini-3-flash-preview",
-    "mai-code-1-flash",
 )
 
 # Gemini CLI model ids (https://geminicli.com/docs/reference/configuration/).
@@ -247,6 +248,9 @@ GEMINI_CLI_MODELS = (
     "gemini-3-flash-preview",
     "gemini-3.1-pro-preview",
     "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
 )
 
 

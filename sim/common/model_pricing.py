@@ -75,13 +75,20 @@ _EXACT: dict[str, ModelRates] = {
     "gemini-2.5-flash": _r(0.15, 0.60),
     "gemini-2.5-flash-lite": _r(0.10, 0.40),
     "gemini-2.0-flash": _r(0.10, 0.40),
+    "gemini-3-flash": _r(0.50, 3.00),
+    "gemini-3.1-pro": _r(2.00, 12.00),
+    "gemma-4-31b-it": _r(0.20, 0.80),
+    "gemma-4-26b-a4b-it": _r(0.20, 0.80),
     # --- Copilot / misc routed ids ---
     "mai-code-1-flash": _r(0.75, 4.50),
     "raptor-mini": _r(0.75, 4.50),
-    "composer-2": _r(2.50, 15.0),  # Cursor-native (API-equivalent estimate)
-    "composer-2.5-fast": _r(2.50, 15.0),
+    "composer-2": _r(0.50, 2.50),  # legacy Cursor-native
+    "composer-2.5": _r(0.50, 2.50),
+    "composer-2.5-fast": _r(3.00, 15.00),
     # --- Third-party models routable via Claude Code ---
     "grok-4.3": _r(1.25, 2.50, cache_read=0.20),
+    "grok-4.20": _r(2.00, 6.00, cache_read=0.20),
+    "grok-build-0.1": _r(1.00, 2.00, cache_read=0.20),
     "qwen3.7-max": _r(2.50, 7.50, cache_read=0.25),
 }
 
@@ -100,7 +107,10 @@ _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
     ("gemini-3.5", _r(1.00, 6.00)),
     ("gemini-3.1-pro", _r(2.00, 12.00)),
     ("gemini-3-pro", _r(2.00, 12.00)),
+    ("gemini-3.1-pro", _r(2.00, 12.00)),
     ("gemini-3-flash", _r(0.50, 3.00)),
+    ("gemma-4", _r(0.20, 0.80)),
+    ("grok-build", _r(1.00, 2.00, cache_read=0.20)),
     ("gemini-3.1-flash", _r(0.10, 0.40)),
     ("gemini-2.5-pro", _r(1.25, 10.00)),
     ("gemini-2.5-flash-lite", _r(0.10, 0.40)),
