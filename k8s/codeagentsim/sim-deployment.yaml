@@ -244,10 +244,10 @@ spec:
             # Session/repo dashboard: ``claude_code_session_repo_info{session_id,repository_name}`` +
             # ``claude_code.user_prompt`` logs with ``prompt`` + ``claude_code.api_response_body``.
             # Default repo mix (non-rogue): ~85% managed, ~5% unmanaged, ~10% unknown (``SIM_CLAUDE_*_REPO_FRAC``).
-            # Managed repos (6): company GitHub org. Unmanaged (5): external/personal projects.
+            # Managed repos (6): fictional company GitHub org. Unmanaged (5): fictional external projects.
             # Rogue users (roster indices 17,42,88): ~85% unmanaged repos + 4–8× token/cost multiplier.
             # - name: SIM_CLAUDE_ORG_REPOS
-            #   value: "coralogix/cx-web-workspace,coralogix/security-token-service,..."
+            #   value: "coralogix/platform-web-workspace,coralogix/identity-token-service,..."
             # - name: SIM_CLAUDE_ROGUE_USER_INDICES
             #   value: "17,42,88"
             # - name: SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MIN

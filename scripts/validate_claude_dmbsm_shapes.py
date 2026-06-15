@@ -157,7 +157,7 @@ def dmbsm_mcp_cookbook() -> dict:
             {
                 "tool": "query_metrics_range",
                 "query": 'max by (session_id, repository_name) (max_over_time(claude_code_session_repo_info{job="otel-ai-agent-sim"}[1h]))',
-                "note": "Dashboard join key; repository_name values include coralogix/*, alexkruc/dotfiles, unknown",
+                "note": "Dashboard join key; repository_name values include fictional coralogix/*, jchen/dotfiles, unknown",
             },
             {
                 "tool": "query_metrics_range",

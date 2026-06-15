@@ -9,23 +9,24 @@ import random
 from sim.common.env import _env_float, _env_int
 from sim.common.identity import _CORALOGIX_TEAM_USERS
 
-# Company GitHub repos (managed — in the org scan). Override with ``SIM_CLAUDE_ORG_REPOS``.
+# Fictional company GitHub repos (managed — in the org scan). Plausible shape only; not real repos.
+# Override with ``SIM_CLAUDE_ORG_REPOS``.
 _DEFAULT_ORG_REPOS: tuple[str, ...] = (
-    "coralogix/cx-web-workspace",
-    "coralogix/security-token-service",
-    "coralogix/ai-agent-instrumentation",
-    "coralogix/dataprime-query-engine",
-    "coralogix/eng-pipeline-handler",
-    "coralogix/onlineboutique",
+    "coralogix/platform-web-workspace",
+    "coralogix/identity-token-service",
+    "coralogix/agent-telemetry-hooks",
+    "coralogix/analytics-query-engine",
+    "coralogix/deploy-pipeline-handler",
+    "coralogix/microshop-demo",
 )
 
-# External / personal repos (unmanaged — not in org scan). Override with ``SIM_CLAUDE_UNMANAGED_REPOS``.
+# Fictional external / personal repos (unmanaged — not in org scan). Override with ``SIM_CLAUDE_UNMANAGED_REPOS``.
 _UNMANAGED_REPOS: tuple[str, ...] = (
-    "alexkruc/dotfiles",
-    "obra/superpowers",
-    "prometheus/prometheus",
-    "open-telemetry/opentelemetry-ebpf-profiler",
-    "kolov/ai-agents",
+    "jchen/dotfiles",
+    "devkits/super-cli",
+    "metrics/collector-core",
+    "observability/trace-profiler",
+    "labs/multi-agent-runner",
 )
 
 # Roster indices pinned as “rogue” users: heavy unmanaged-repo use + elevated spend (stable across runs).

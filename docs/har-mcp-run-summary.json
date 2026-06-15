@@ -97,9 +97,9 @@
       "source logs | filter $l.applicationname == 'claude-code' | filter $l.subsystemname == 'claude-code-sessions' | limit 10"
     ],
     "repository_name_examples": [
-      "coralogix/cx-web-workspace",
-      "coralogix/eng-pipeline-handler",
-      "alexkruc/dotfiles",
+      "coralogix/platform-web-workspace",
+      "coralogix/deploy-pipeline-handler",
+      "jchen/dotfiles",
       "unknown"
     ]
   }
