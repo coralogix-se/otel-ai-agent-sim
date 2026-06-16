@@ -7,6 +7,8 @@ Resource ``service.name=github-copilot``. Span tags aligned with Coralogix AI Ce
   ``gen_ai.usage.*`` on ``invoke_agent``.
 - cx498 repo panels: ``github.copilot.git.*``, ``github.copilot.nano_aiu``, ``$d.process.tags['user.email']``
   (via per-session Resource), ``gen_ai.response.model`` on ``chat``.
+- cx498 session breakdown: ``gen_ai.conversation.id``, ``gen_ai.input.messages`` / ``gen_ai.output.messages``
+  on ``chat`` (GenAI JSON message shape for ``sessionsWithMessages`` / AI analysis).
 
 See https://code.visualstudio.com/docs/agents/guides/monitoring-agents
 """
@@ -14,6 +16,7 @@ See https://code.visualstudio.com/docs/agents/guides/monitoring-agents
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import random
 import socket
@@ -53,6 +56,14 @@ _RESPONSE_MODEL_SUFFIXES: tuple[str, ...] = (
     "2024-08-06",
     "2025-04-14",
     "2025-06-01",
+)
+
+_COPILOT_ASSISTANT_REPLIES: tuple[str, ...] = (
+    "I'll scan the repo for failing tests and propose a patch.",
+    "Here's a concise fix for the handler plus an updated unit test.",
+    "I found the root cause in the telemetry hook — applying a small refactor.",
+    "Summarizing the diff and suggested next steps for this Copilot CLI session.",
+    "Running the targeted grep and read_file steps, then I'll suggest edits.",
 )
 
 
@@ -153,6 +164,30 @@ def _copilot_github_cost_usd(model: str, input_tokens: int, output_tokens: int) 
 def _copilot_nano_aiu(cost_usd: float) -> int:
     """cx498 dashboards divide ``github.copilot.nano_aiu`` by 1e9 for session/user cost."""
     return int(round(max(0.0, cost_usd) * 1_000_000_000))
+
+
+def _copilot_gen_ai_messages_json(role: str, text: str) -> str:
+    """GenAI opt-in message JSON (``role`` + ``parts[].type=text``) for cx498 session analysis."""
+    return json.dumps(
+        [{"role": role, "parts": [{"type": "text", "content": text}]}],
+        separators=(",", ":"),
+    )
+
+
+def _copilot_chat_message_attrs(prompt: str, turn: int) -> dict[str, str]:
+    """
+    ``gen_ai.input.messages`` / ``gen_ai.output.messages`` on ``chat`` spans.
+
+    Powers ``sessionsWithMessages`` and per-session AI analysis in the Copilot CLI dashboard.
+    """
+    if not _env_bool("SIM_COPILOT_CAPTURE_MESSAGES", True):
+        return {}
+    user_text = prompt if turn == 0 else f"Continue: {prompt[:160]}"
+    assistant_text = random.choice(_COPILOT_ASSISTANT_REPLIES)
+    return {
+        "gen_ai.input.messages": _copilot_gen_ai_messages_json("user", user_text),
+        "gen_ai.output.messages": _copilot_gen_ai_messages_json("assistant", assistant_text),
+    }
 
 
 def _copilot_response_model(request_model: str, conversation_id: str, turn: int) -> str:
@@ -349,6 +384,7 @@ def emit_copilot_cli_session(
                 ttft_ms = random.randint(80, 2200)
                 finish_reason = random.choice(("stop", "tool_calls", "length"))
                 response_model = _copilot_response_model(model, conversation_id, turn)
+                message_attrs = _copilot_chat_message_attrs(prompt, turn)
 
                 with tracer.start_as_current_span(
                     "chat",
@@ -358,6 +394,7 @@ def emit_copilot_cli_session(
                     chat_sp.set_attributes(
                         {
                             **user_attrs,
+                            **message_attrs,
                             "enduser.pseudo.id": pseudo_id,
                             "agent.product": "copilot_cli",
                             "gen_ai.system": "azure.openai",
@@ -366,6 +403,7 @@ def emit_copilot_cli_session(
                             "gen_ai.request.model": model,
                             "gen_ai.response.model": response_model,
                             "gen_ai.session.id": conversation_id,
+                            "gen_ai.conversation.id": conversation_id,
                             **_gen_ai_dashboard_llm_span_attributes(
                                 inp, out, operation_name="chat", model=model
                             ),
@@ -429,6 +467,7 @@ def emit_copilot_cli_session(
                                 "gen_ai.tool.status": ("success" if ok else "error"),
                                 "gen_ai.request.model": model,
                                 "gen_ai.session.id": conversation_id,
+                                "gen_ai.conversation.id": conversation_id,
                                 "cx.application.name": cx_app,
                                 "cx.subsystem.name": cx_sub,
                                 "otel.library.name": "github-copilot",

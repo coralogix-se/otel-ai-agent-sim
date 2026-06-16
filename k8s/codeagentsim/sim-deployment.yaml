@@ -129,6 +129,8 @@ spec:
             #   value: "true"
             # - name: SIM_COPILOT_PROCESS_USER_EMAIL
             #   value: "true"
+            # - name: SIM_COPILOT_CAPTURE_MESSAGES
+            #   value: "true"
             # - name: PROMETHEUS_RW_JOB
             #   value: copilot-cli-hook
             # - name: SIM_COPILOT_REPO_CX_APPLICATION_NAME
