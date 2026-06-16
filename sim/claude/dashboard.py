@@ -32,6 +32,7 @@ from sim.common.constants import (
     claude_assistant_reply_for_session,
     claude_prompt_for_session,
 )
+from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.env import _env_bool, _env_float, _env_int
 from sim.common.identity import (
     _apply_claude_dotted_email_domain,
@@ -263,20 +264,26 @@ def emit_claude_code_dashboard(
         base_prom = _cc_base_for_prometheus_labels(session_id, base)
         lbs = [_map_cc_base_labels(base_prom, cx_app, cx_sub_flat)]
 
-    pair_tok = int(input_tokens) + int(output_tokens)
-    cr_prob = _env_float("SIM_CLAUDE_CACHE_READ_PROB", 0.92)
-    cache_read_amt: int | None = None
-    if random.random() < cr_prob:
-        cr_lo = max(5000, int(pair_tok * _env_float("SIM_CLAUDE_CACHE_READ_FRAC_MIN", 0.008)))
-        cr_hi = max(cr_lo + 1, int(pair_tok * _env_float("SIM_CLAUDE_CACHE_READ_FRAC_MAX", 0.15)))
-        cr_hi = min(cr_hi, int(pair_tok * 3) + 1)
-        cr_lo = min(cr_lo, max(0, cr_hi - 1))
-        cache_read_amt = random.randint(cr_lo, cr_hi)
-    ccn_prob = _env_float("SIM_CLAUDE_CACHE_CREATION_PROB", 0.45)
+    billable_input, cache_read_amt_i, _cache_hit = sim_prompt_cache_token_split(
+        input_tokens,
+        turn_index=0,
+        hit_prob_env="SIM_CLAUDE_CACHE_READ_PROB",
+        hit_prob_default=0.96,
+        frac_min_env="SIM_CLAUDE_CACHE_READ_FRAC_MIN",
+        frac_max_env="SIM_CLAUDE_CACHE_READ_FRAC_MAX",
+        frac_min_default=0.88,
+        frac_max_default=0.96,
+        first_turn_miss=False,
+    )
+    cache_read_amt: int | None = cache_read_amt_i if cache_read_amt_i > 0 else None
+    ccn_prob = _env_float("SIM_CLAUDE_CACHE_CREATION_PROB", 0.10)
     cache_creation_amt: int | None = None
     if random.random() < ccn_prob:
-        cc_lo = max(500, int(pair_tok * _env_float("SIM_CLAUDE_CACHE_CREATION_FRAC_MIN", 0.0005)))
-        cc_hi = max(cc_lo + 1, int(pair_tok * _env_float("SIM_CLAUDE_CACHE_CREATION_FRAC_MAX", 0.04)))
+        cc_lo = max(500, int(input_tokens * _env_float("SIM_CLAUDE_CACHE_CREATION_FRAC_MIN", 0.82)))
+        cc_hi = max(
+            cc_lo + 1,
+            int(input_tokens * _env_float("SIM_CLAUDE_CACHE_CREATION_FRAC_MAX", 0.98)),
+        )
         cache_creation_amt = random.randint(cc_lo, cc_hi)
 
     # Single canonical USD total (micro-dollars) for ``cc_cost`` and log ``cost_usd`` rows (exact sum).
@@ -285,7 +292,7 @@ def emit_claude_code_dashboard(
     _est_cost_raw = round(
         estimate_llm_cost_usd(
             model,
-            input_tokens,
+            billable_input,
             output_tokens,
             cache_read_tokens=int(cache_read_amt or 0),
             cache_creation_tokens=int(cache_creation_amt or 0),
@@ -340,7 +347,7 @@ def emit_claude_code_dashboard(
 
     for lb in lbs:
         cc_session.labels(**lb).inc()
-        _cc_token_inc(lb, "input", model, input_tokens)
+        _cc_token_inc(lb, "input", model, billable_input)
         _cc_token_inc(lb, "output", model, output_tokens)
         if cache_read_amt is not None:
             _cc_token_inc(lb, "cacheRead", model, cache_read_amt)
@@ -429,7 +436,7 @@ def emit_claude_code_dashboard(
 
     # One log row per turn by default so token fields match Prometheus increments without summing partitions.
     n_api = max(1, _env_int("SIM_CLAUDE_API_REQUEST_LOG_PARTITIONS", 1))
-    inp_parts = _partition_nonneg_repair(input_tokens, n_api)
+    inp_parts = _partition_nonneg_repair(billable_input, n_api)
     out_parts = _partition_nonneg_repair(output_tokens, n_api)
     cr_tot = int(cache_read_amt) if cache_read_amt is not None else 0
     cc_tot = int(cache_creation_amt) if cache_creation_amt is not None else 0

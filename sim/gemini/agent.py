@@ -20,6 +20,7 @@ from opentelemetry import trace
 
 from sim.common.otel import _gen_ai_dashboard_llm_span_attributes, _stable_uuid, tool_version_for
 from sim.common.constants import GEMINI_AGENT_DESCRIPTION, GEMINI_CLI_MODELS, GEMINI_SAMPLE_PROMPTS
+from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.env import _env_bool, _env_float, _env_int
 from sim.common.identity import (
     _claude_roster_core_user,
@@ -491,13 +492,14 @@ def _sim_gemini_usage_tokens() -> tuple[int, int, int]:
         out_lo,
         min(out_cap, int(inp * random.uniform(0.035, out_frac_hi))),
     )
-    cache = 0
-    if random.random() < float(os.environ.get("SIM_GEMINI_CACHE_HIT_PROB", "0.82")):
-        c_lo = max(400, inp // 6)
-        c_frac = min(0.98, max(0.08, float(os.environ.get("SIM_GEMINI_CACHE_FRAC_MAX", "0.92"))))
-        c_hi = min(240_000, max(c_lo + 200, int(inp * c_frac)))
-        cache = random.randint(c_lo, c_hi)
-    return inp, out, cache
+    billable_in, cache, _hit = sim_prompt_cache_token_split(
+        inp,
+        turn_index=0,
+        hit_prob_env="SIM_GEMINI_CACHE_HIT_PROB",
+        hit_prob_default=_env_float("SIM_PROMPT_CACHE_HIT_RATE", 0.96),
+        first_turn_miss=False,
+    )
+    return billable_in, out, cache
 
 
 def _gemini_thought_token_count(model: str, inp: int, out: int) -> int:
