@@ -24,7 +24,7 @@ from opentelemetry import trace
 from opentelemetry.sdk._logs import LogRecord
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExportResult
 from opentelemetry.trace import Status, StatusCode, TraceFlags
 from opentelemetry._logs.severity import SeverityNumber
 
@@ -54,6 +54,22 @@ _RESPONSE_MODEL_SUFFIXES: tuple[str, ...] = (
     "2025-04-14",
     "2025-06-01",
 )
+
+
+class _SharedSpanExporter:
+    """Wrap the process-wide OTLP exporter so per-session providers can shut down safely."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    def export(self, spans):  # noqa: ANN001 — OTel SpanExporter protocol
+        return self._inner.export(spans)
+
+    def shutdown(self, timeout_millis: int = 30000) -> SpanExportResult:
+        return SpanExportResult.SUCCESS
+
+    def force_flush(self, timeout_millis: int = 30000) -> SpanExportResult:
+        return self._inner.force_flush(timeout_millis)
 
 
 def _copilot_repo_metric_labels(
@@ -226,7 +242,7 @@ def _copilot_session_tracer(user_email: str) -> tuple[trace.Tracer, TracerProvid
 
     session_res = base_res.merge(Resource.create({"user.email": user_email}))
     session_tp = TracerProvider(resource=session_res)
-    session_tp.add_span_processor(BatchSpanProcessor(exporter))
+    session_tp.add_span_processor(BatchSpanProcessor(_SharedSpanExporter(exporter)))
     return session_tp.get_tracer(scope_nm, ver), session_tp
 
 
@@ -489,4 +505,5 @@ def emit_copilot_cli_session(
         )
     finally:
         if session_tp is not None:
+            session_tp.force_flush()
             session_tp.shutdown()
