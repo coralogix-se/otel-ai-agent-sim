@@ -3201,6 +3201,8 @@ def main() -> None:
         span_exporter if _env_bool("SIM_COPILOT_OTLP_TRACES_ENABLED", True) else _NoopSpanExporter()
     )
     tp_github_copilot.add_span_processor(BatchSpanProcessor(copilot_span_out))
+    st.copilot_trace_base_resource = copilot_res
+    st.copilot_span_exporter = copilot_span_out
 
     global _sim_cli
     _sim_cli = SimCliTracerProviders(tp_gemini, tp_codex, tp_claude, tp_cursor, tp_github_copilot)

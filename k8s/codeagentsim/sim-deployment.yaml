@@ -124,6 +124,11 @@ spec:
             # - name: SIM_COPILOT_COLLECTOR_IDE_MIX
             #   value: "vscode:0.5,jetbrains:0.25,visualstudio:0.12,neovim:0.08,Copilot CLI:0.05"
             # Repo/session hook gauge (cxai-demo: ``copilot_cli_session_repo_info``; set job for PromQL filters):
+            # cx498 repo panels use span tags (``github.copilot.git.*``) + ``SIM_COPILOT_PROCESS_USER_EMAIL`` (default on).
+            # - name: SIM_COPILOT_GIT_SPAN_ATTRS
+            #   value: "true"
+            # - name: SIM_COPILOT_PROCESS_USER_EMAIL
+            #   value: "true"
             # - name: PROMETHEUS_RW_JOB
             #   value: copilot-cli-hook
             # - name: SIM_COPILOT_REPO_CX_APPLICATION_NAME

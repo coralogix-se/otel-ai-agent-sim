@@ -53,6 +53,9 @@ class SimState:
     gemini_otlp_logger: Any = None
     copilot_log_provider: Any = None
     copilot_otlp_logger: Any = None
+    # Per-session Copilot trace Resource base + exporter (``user.email`` merged per session).
+    copilot_trace_base_resource: Any = None
+    copilot_span_exporter: Any = None
     # Primary Claude LoggerProvider (``set_logger_provider``); dashboard ``force_flush`` target.
     claude_primary_log_provider: Any = None
     # Second provider when ``SIM_CLAUDE_TELEMETRY_PROFILE=both`` (dotted pipeline Resource).

@@ -6,7 +6,7 @@ import hashlib
 import os
 import random
 
-from sim.common.env import _env_float, _env_int
+from sim.common.env import _env_bool, _env_float, _env_int
 from sim.common.identity import _CORALOGIX_TEAM_USERS
 
 # Fictional company GitHub repos (managed — in the org scan). Plausible shape only; not real repos.
@@ -154,3 +154,52 @@ def claude_session_repository_names(
         if name not in names:
             names.append(name)
     return names or [_pick_repo_name("managed", rng)]
+
+
+_COPILOT_GIT_BRANCHES: tuple[str, ...] = (
+    "main",
+    "master",
+    "develop",
+    "release/1.2",
+    "feature/agent-hooks",
+)
+
+
+def copilot_git_otel_attrs_from_repo_short(repo_short: str) -> dict[str, str]:
+    """
+    VS Code Copilot ``github.copilot.git.*`` span tags for cx498 repo dashboards.
+
+    ``github.copilot.git.repository`` is the remote URL (not ``org/repo``). ``github.copilot.github.org``
+    is set for managed GitHub org remotes only.
+    """
+    if not repo_short or repo_short == "unknown":
+        return {}
+
+    rng = random.Random(hashlib.sha256(f"copilot:git:{repo_short}".encode()).digest())
+    branch = rng.choice(_COPILOT_GIT_BRANCHES)
+    commit = hashlib.sha256(f"copilot:commit:{repo_short}".encode()).hexdigest()[:40]
+    attrs: dict[str, str] = {
+        "github.copilot.git.branch": branch,
+        "github.copilot.git.commit_sha": commit,
+        "github.copilot.agent.type": "builtin",
+    }
+    if "/" in repo_short:
+        org, repo = repo_short.split("/", 1)
+        attrs["github.copilot.git.repository"] = f"https://github.com/{org}/{repo}.git"
+        attrs["github.copilot.github.org"] = org
+    else:
+        attrs["github.copilot.git.repository"] = f"https://github.com/{repo_short}.git"
+    return attrs
+
+
+def copilot_primary_session_git_attrs(
+    session_id: str,
+    roster_user: dict | None,
+) -> dict[str, str]:
+    """Primary repo git context for one Copilot ``invoke_agent`` root span."""
+    if not _env_bool("SIM_COPILOT_GIT_SPAN_ATTRS", True):
+        return {}
+    repo_names = claude_session_repository_names(session_id, roster_user, n_repos=1)
+    if not repo_names:
+        return {}
+    return copilot_git_otel_attrs_from_repo_short(repo_names[0])
