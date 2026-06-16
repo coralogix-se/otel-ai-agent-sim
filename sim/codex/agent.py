@@ -11,6 +11,7 @@ import uuid
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
+from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.otel import (
     _emit_codex_otlp_structured_log,
     _codex_span_service_label_attrs,
@@ -18,7 +19,7 @@ from sim.common.otel import (
     tool_version_for,
 )
 from sim.common.constants import CODEX_AGENT_DESCRIPTION, CODEX_CLI_MODELS, CODEX_SAMPLE_PROMPTS
-from sim.common.env import _env_bool, _env_csv_model_pool, _env_int
+from sim.common.env import _env_bool, _env_csv_model_pool, _env_float, _env_int
 from sim.common.identity import random_coralogix_identity_for_agent
 from sim.common.state import st
 
@@ -75,13 +76,15 @@ def _emit_codex_sse_response_completed_logs(
     ts0 = time.time_ns()
     n = random.randint(1, 2)
     for i in range(n):
-        inp = random.randint(400, 12_000)
-        out = random.randint(50, 4000)
-        cached = random.randint(0, 3000)
-        if i > 0:
-            inp = random.randint(200, 2000)
-            out = random.randint(30, 1500)
-            cached = random.randint(0, 800)
+        total_in = random.randint(400, 12_000) if i == 0 else random.randint(200, 2000)
+        out = random.randint(50, 4000) if i == 0 else random.randint(30, 1500)
+        billable_in, cached, _hit = sim_prompt_cache_token_split(
+            total_in,
+            turn_index=i,
+            hit_prob_env="SIM_CODEX_CACHE_HIT_RATE",
+            hit_prob_default=0.96,
+            first_turn_miss=_env_bool("SIM_PROMPT_CACHE_FIRST_TURN_MISS", False),
+        )
         duration_ms = random.randint(120, 4200)
         _emit_codex_otlp_structured_log(
             body="codex.sse_event",
@@ -92,7 +95,7 @@ def _emit_codex_sse_response_completed_logs(
                 "success": True,
                 "duration_ms": duration_ms,
                 "model": model,
-                "input_token_count": inp,
+                "input_token_count": billable_in,
                 "output_token_count": out,
                 "cached_token_count": cached,
                 "conversation.id": conversation_id,

@@ -29,8 +29,9 @@ from sim.common.otel import (
     tool_version_for,
 )
 from sim.claude.repos import claude_session_repository_names
+from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.constants import COPILOT_CLI_AGENT_DESCRIPTION, COPILOT_CLI_MODELS, COPILOT_CLI_SAMPLE_PROMPTS
-from sim.common.env import _env_bool, _env_csv_model_pool, _env_int
+from sim.common.env import _env_bool, _env_csv_model_pool, _env_float, _env_int
 from sim.common.identity import _claude_otlp_span_user_attrs_from_roster, random_coralogix_identity_for_agent
 from sim.common.state import st
 
@@ -111,7 +112,13 @@ def _copilot_enduser_pseudo_id(user_attrs: dict) -> str:
     return email
 
 
-def _copilot_github_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+def _copilot_github_cost_usd(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    cache_read_tokens: int = 0,
+) -> float:
     """USD for ``tags['github.copilot.cost']`` on ``invoke_agent`` (model-aware API-equivalent rates)."""
     from sim.common.model_pricing import estimate_llm_cost_usd
 
@@ -119,6 +126,7 @@ def _copilot_github_cost_usd(model: str, input_tokens: int, output_tokens: int) 
         model,
         input_tokens,
         output_tokens,
+        cache_read_tokens=cache_read_tokens,
         jitter_usd=random.uniform(0.0, 1e-6),
     )
 
@@ -263,17 +271,23 @@ def emit_copilot_cli_session(
         session_productivity_ok = False
 
         for turn in range(n_turns):
-            inp = random.randint(800, 14_000)
+            prompt_tokens = random.randint(800, 14_000)
             out = random.randint(120, 6000)
-            total_in += inp
+            billable_in, cache_read_in, cached = sim_prompt_cache_token_split(
+                prompt_tokens,
+                turn_index=turn,
+                hit_prob_env="SIM_COPILOT_CACHE_HIT_RATE",
+                hit_prob_default=_env_float("SIM_PROMPT_CACHE_HIT_RATE", 0.96),
+                first_turn_miss=_env_bool("SIM_PROMPT_CACHE_FIRST_TURN_MISS", False),
+            )
+            total_in += billable_in
             total_out += out
+            total_cache_read_in += cache_read_in
             is_premium = random.random() < float(os.environ.get("SIM_COPILOT_PREMIUM_RATE", "0.22"))
             if is_premium:
                 premium_req += 1
-            cached = random.random() < float(os.environ.get("SIM_COPILOT_CACHE_HIT_RATE", "0.18"))
             if cached:
                 cache_hits += 1
-                total_cache_read_in += int(inp * random.uniform(0.12, 0.48))
 
             chat_duration_s = random.uniform(0.8, 8.0)
             ttft_ms = random.randint(80, 2200)
@@ -295,7 +309,7 @@ def emit_copilot_cli_session(
                         "gen_ai.request.model": model,
                         "gen_ai.session.id": conversation_id,
                         **_gen_ai_dashboard_llm_span_attributes(
-                            inp, out, operation_name="chat", model=model
+                            billable_in, out, operation_name="chat", model=model
                         ),
                         "gen_ai.response.finish_reasons": finish_reason,
                         "copilot.request.tier": ("premium" if is_premium else "standard"),
@@ -314,8 +328,9 @@ def emit_copilot_cli_session(
                         "event.name": "gen_ai.client.inference.operation.details",
                         "gen_ai.operation.name": "chat",
                         "gen_ai.request.model": model,
-                        "gen_ai.usage.input_tokens": inp,
+                        "gen_ai.usage.input_tokens": billable_in,
                         "gen_ai.usage.output_tokens": out,
+                        "gen_ai.usage.cache_read.input_tokens": cache_read_in,
                         "duration_ms": int(chat_duration_s * 1000),
                         "finish_reason": finish_reason,
                         "gen_ai.response.finish_reasons": finish_reason,
@@ -388,7 +403,12 @@ def emit_copilot_cli_session(
                 st.prom_copilot_edit.labels(cx_app, cx_sub, "accepted" if productivity_ok else "rejected").inc()
 
         wall_s = max(0.01, time.perf_counter() - wall_start)
-        session_cost_usd = _copilot_github_cost_usd(model, total_in, total_out)
+        session_cost_usd = _copilot_github_cost_usd(
+            model,
+            total_in,
+            total_out,
+            cache_read_tokens=total_cache_read_in,
+        )
         root.set_attribute("gen_ai.usage.input_tokens", total_in)
         root.set_attribute("gen_ai.usage.output_tokens", total_out)
         root.set_attribute("gen_ai.usage.cache_read.input_tokens", total_cache_read_in)
