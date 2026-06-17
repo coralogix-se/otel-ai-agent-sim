@@ -164,15 +164,16 @@ CODEX_SAMPLE_PROMPTS = (
 # Codex CLI default (OpenAI recommends ``gpt-5.5`` — https://developers.openai.com/codex/models).
 CODEX_DEFAULT_MODEL = "gpt-5.5"
 
-# Codex CLI pool (https://developers.openai.com/codex/models). ``gpt-5.3-codex`` deprecated for ChatGPT sign-in.
+# Codex CLI pool (https://developers.openai.com/codex/models). OpenAI recommends gpt-5.5,
+# gpt-5.4-mini, and gpt-5.3-codex-spark for ChatGPT sign-in; ``gpt-5.3-codex`` is deprecated.
 CODEX_CLI_MODELS = (
     "gpt-5.5",
-    "gpt-5.4",
     "gpt-5.4-mini",
     "gpt-5.3-codex-spark",
 )
 
-# Cursor Composer: third-party + Cursor-native models (see https://cursor.com/docs/models).
+# Cursor Composer: Cursor-native + API-pool models (https://cursor.com/docs/models).
+# ``composer-2.5-fast`` is the default interactive tier; ``composer-2.5`` is the standard tier.
 CURSOR_DEFAULT_MODEL = "claude-sonnet-4-6"
 
 CURSOR_COMPOSER_MODELS = (
@@ -181,11 +182,13 @@ CURSOR_COMPOSER_MODELS = (
     "claude-sonnet-4-6",
     "claude-opus-4-8",
     "claude-opus-4-7",
+    "claude-opus-4-6",
     "claude-haiku-4-5",
     "gemini-3.1-pro",
     "gemini-3.5-flash",
     "gemini-3-flash",
     "gpt-5.5",
+    "gpt-5.4",
     "gpt-5.3-codex",
     "gpt-5.4-mini",
     "grok-4.3",
@@ -214,6 +217,7 @@ COPILOT_CLI_SAMPLE_PROMPTS = (
 )
 
 # Copilot CLI GA models (https://docs.github.com/en/copilot/reference/ai-models/supported-models).
+# Exclude ``claude-fable-5`` (suspended) and ``gpt-5.4-nano`` (Codex VS Code extension only).
 COPILOT_DEFAULT_MODEL = "gpt-5.5"
 
 COPILOT_CLI_MODELS = (
@@ -229,11 +233,15 @@ COPILOT_CLI_MODELS = (
     "claude-opus-4-6",
     "claude-opus-4-5",
     "claude-haiku-4-5",
+    "gemini-2.5-pro",
     "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
     "gemini-3.5-flash",
+    "mai-code-1-flash",
 )
 
-# Gemini CLI model ids (https://geminicli.com/docs/reference/configuration/).
+# Gemini CLI model ids (https://geminicli.com/docs/reference/configuration/ ``model`` aliases).
+# ``gemini-3.1-flash-lite`` is the stable id; ``gemini-3.1-flash-lite-preview`` is an alias only.
 GEMINI_DEFAULT_MODEL = "gemini-2.5-pro"
 
 GEMINI_CLI_MODELS = (
