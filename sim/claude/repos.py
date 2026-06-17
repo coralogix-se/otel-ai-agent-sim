@@ -192,14 +192,61 @@ def copilot_git_otel_attrs_from_repo_short(repo_short: str) -> dict[str, str]:
     return attrs
 
 
+def _partition_turns_across_repos(n_turns: int, n_repos: int) -> list[int]:
+    """Split chat turns across repos (at least one turn per repo when possible)."""
+    n_repos = max(1, n_repos)
+    n_turns = max(1, n_turns)
+    if n_repos == 1:
+        return [n_turns]
+    if n_turns <= n_repos:
+        return [1 if i < n_turns else 0 for i in range(n_repos)]
+    parts = [1] * n_repos
+    for _ in range(n_turns - n_repos):
+        parts[random.randint(0, n_repos - 1)] += 1
+    return parts
+
+
+def copilot_session_git_repo_segments(
+    session_id: str,
+    roster_user: dict | None,
+    n_turns: int,
+) -> list[tuple[str, dict[str, str], int]]:
+    """
+    Per-repo ``invoke_agent`` segments for cx498 ``sessionRepoUserInfo``.
+
+    The dashboard groups ``invoke_agent`` spans by ``gen_ai.conversation.id`` and
+    ``github.copilot.git.repository``; multiple repos in one session require multiple
+    ``invoke_agent`` spans sharing the same conversation id.
+    """
+    if not _env_bool("SIM_COPILOT_GIT_SPAN_ATTRS", True):
+        return [("", {}, max(1, n_turns))]
+
+    repo_names = claude_session_repository_names(session_id, roster_user)
+    if not repo_names:
+        return [("", {}, max(1, n_turns))]
+
+    if not _env_bool("SIM_COPILOT_MULTI_REPO_SPANS", True) or len(repo_names) == 1:
+        return [(repo_names[0], copilot_git_otel_attrs_from_repo_short(repo_names[0]), max(1, n_turns))]
+
+    turn_parts = _partition_turns_across_repos(max(1, n_turns), len(repo_names))
+    segments: list[tuple[str, dict[str, str], int]] = []
+    for repo_name, seg_turns in zip(repo_names, turn_parts):
+        if seg_turns <= 0:
+            continue
+        segments.append((repo_name, copilot_git_otel_attrs_from_repo_short(repo_name), seg_turns))
+    if segments:
+        return segments
+    return [(repo_names[0], copilot_git_otel_attrs_from_repo_short(repo_names[0]), max(1, n_turns))]
+
+
 def copilot_primary_session_git_attrs(
     session_id: str,
     roster_user: dict | None,
 ) -> dict[str, str]:
-    """Primary repo git context for one Copilot ``invoke_agent`` root span."""
-    if not _env_bool("SIM_COPILOT_GIT_SPAN_ATTRS", True):
-        return {}
-    repo_names = claude_session_repository_names(session_id, roster_user, n_repos=1)
-    if not repo_names:
-        return {}
-    return copilot_git_otel_attrs_from_repo_short(repo_names[0])
+    """Primary repo git context for a single Copilot ``invoke_agent`` span."""
+    segments = copilot_session_git_repo_segments(
+        session_id,
+        roster_user,
+        n_turns=1,
+    )
+    return segments[0][1] if segments else {}

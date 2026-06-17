@@ -115,30 +115,26 @@ CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES = (
 )
 
 # Model pools below (Claude, Codex, Cursor, Copilot, Gemini) should be reviewed regularly against
-# each vendor's current model list. Exclude suspended Anthropic routes (claude-fable-5,
-# claude-mythos-5) until Anthropic re-enables them upstream.
+# each vendor's current model list. Do not simulate suspended Anthropic routes (``fable``, ``mythos``,
+# ``claude-fable-5``, ``claude-mythos-5``) — globally disabled since Jun 2026 export-control order.
 
-# Default when ``SIM_CLAUDE_MODEL`` unset and profile has no model (Anthropic API alias).
-CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-4-6"
+# Default when ``SIM_CLAUDE_MODEL`` unset and profile has no model (Claude Code ``/model`` alias).
+CLAUDE_CODE_DEFAULT_MODEL = "sonnet"
 
-# Claude Code ``/model`` aliases + common third-party routes (June 2026).
-# Anthropic: https://code.claude.com/docs/en/model-config
-# ``SIM_CLAUDE_MODEL`` overrides.
+# Claude Code ``/model`` tier aliases (https://code.claude.com/docs/en/model-config).
+# Telemetry uses these short names, not resolved ``claude-*`` IDs. ``SIM_CLAUDE_MODEL`` overrides.
 _CLAUDE_CODE_MODELS = (
-    "claude-opus-4-8",
-    "claude-sonnet-4-6",
-    "claude-haiku-4-5",
-    "gpt-5.5",
-    "gemini-3.1-pro-preview",
-    "gemini-3.5-flash",
-    "grok-4.3",
-    "qwen3.7-max",
+    "opus",
+    "sonnet",
+    "haiku",
 )
 
 
 def claude_code_gen_ai_system_for_model(model: str) -> str:
-    """``gen_ai.system`` for Claude Code spans when routing Anthropic or third-party models."""
+    """``gen_ai.system`` for Claude Code spans (Anthropic; ``SIM_CLAUDE_MODEL`` may override)."""
     key = (model or "").strip().lower()
+    if key in ("sonnet", "opus", "haiku", "default", "opusplan"):
+        return "anthropic"
     if key.startswith("claude-"):
         return "anthropic"
     if key.startswith("gpt-"):

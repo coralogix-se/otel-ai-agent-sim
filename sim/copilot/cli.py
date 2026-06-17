@@ -36,7 +36,7 @@ from sim.common.otel import (
     _gen_ai_dashboard_llm_span_attributes,
     tool_version_for,
 )
-from sim.claude.repos import claude_session_repository_names, copilot_primary_session_git_attrs
+from sim.claude.repos import claude_session_repository_names, copilot_session_git_repo_segments
 from sim.common.constants import COPILOT_CLI_AGENT_DESCRIPTION, COPILOT_CLI_MODELS, COPILOT_CLI_SAMPLE_PROMPTS
 from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.env import _env_bool, _env_csv_model_pool, _env_float, _env_int
@@ -296,9 +296,9 @@ def emit_copilot_cli_session(
     roster_user: dict | None = None,
 ) -> None:
     """
-    Terminal Copilot CLI session: root ``invoke_agent`` on ``github-copilot`` with nested ``chat`` /
-    ``execute_tool`` spans, OTLP logs (session.start, tool.call, inference details), and
-    ``copilot_chat_*`` Prometheus counters/histograms.
+    Terminal Copilot CLI session: one or more ``invoke_agent`` roots (multi-repo sessions emit
+    one root per repo, shared ``gen_ai.conversation.id``) with nested ``chat`` / ``execute_tool``
+    spans, OTLP logs, and ``copilot_chat_*`` Prometheus counters/histograms.
     """
     if st.sim_cli is None:
         raise RuntimeError("CLI trace providers not initialized")
@@ -313,222 +313,247 @@ def emit_copilot_cli_session(
         user_attrs = random_coralogix_identity_for_agent(conversation_id, "copilot_cli")
     user_email = str(user_attrs.get("user.email", "") or "unknown@coralogix.com")
     pseudo_id = _copilot_enduser_pseudo_id(user_attrs)
-    git_attrs = copilot_primary_session_git_attrs(conversation_id, roster_user)
     prompt = random.choice(COPILOT_CLI_SAMPLE_PROMPTS)
 
     n_turns = max(1, _env_int("SIM_COPILOT_CHAT_ROUNDS", 2))
+    repo_segments = copilot_session_git_repo_segments(conversation_id, roster_user, n_turns)
     wall_start = time.perf_counter()
 
     tracer, session_tp = _copilot_session_tracer(user_email)
     try:
-        with tracer.start_as_current_span(
-            "invoke_agent",
-            kind=trace.SpanKind.INTERNAL,
-        ) as root:
-            root.set_status(Status(StatusCode.OK))
-            root.set_attributes(
-                {
-                    **user_attrs,
-                    **git_attrs,
-                    "enduser.pseudo.id": pseudo_id,
-                    "agent.product": "copilot_cli",
-                    "sim.agent_tool_version": ver,
-                    "otel.library.name": "github-copilot",
-                    "otel.library.version": ver,
-                    "otel.scope.name": scope_nm,
-                    "otel.scope.version": ver,
-                    "gen_ai.system": "azure.openai",
-                    "gen_ai.provider.name": "github.copilot",
-                    "gen_ai.agent.name": "copilotcli",
-                    "gen_ai.agent.description": COPILOT_CLI_AGENT_DESCRIPTION,
-                    "gen_ai.session.id": conversation_id,
-                    "gen_ai.conversation.id": conversation_id,
-                    "gen_ai.operation.name": "invoke_agent",
-                    "gen_ai.request.model": model,
-                    "cx.application.name": cx_app,
-                    "cx.subsystem.name": cx_sub,
-                    "session.id": conversation_id,
-                    "process.runtime.name": "python",
-                    "process.runtime.version": sys.version.split()[0],
-                    "host.name": os.environ.get("HOSTNAME", socket.gethostname()),
-                    "process.pid": str(os.getpid()),
-                }
-            )
-            ctx_root = root.get_span_context()
-            _emit_copilot_otlp_log(
-                body="copilot_chat.session.start",
-                attributes={
-                    "event.name": "copilot_chat.session.start",
-                    "gen_ai.agent.name": "copilotcli",
-                    "gen_ai.request.model": model,
-                    **_copilot_log_conversation_attrs(conversation_id, include_session_id=True),
-                },
-                trace_id=ctx_root.trace_id,
-                span_id=ctx_root.span_id,
-            )
+        total_in = 0
+        total_out = 0
+        total_cache_read_in = 0
+        premium_req = 0
+        cache_hits = 0
+        n_tools_total = 0
+        session_productivity_ok = False
+        session_start_logged = False
+        turn_global = 0
 
-            total_in = 0
-            total_out = 0
-            total_cache_read_in = 0
-            premium_req = 0
-            cache_hits = 0
-            n_tools_total = 0
-            session_productivity_ok = False
-
-            for turn in range(n_turns):
-                prompt_tokens = random.randint(800, 14_000)
-                out = random.randint(120, 6000)
-                billable_in, cache_read_in, cached = sim_prompt_cache_token_split(
-                    prompt_tokens,
-                    turn_index=turn,
-                    hit_prob_env="SIM_COPILOT_CACHE_HIT_RATE",
-                    hit_prob_default=_env_float("SIM_PROMPT_CACHE_HIT_RATE", 0.96),
-                    first_turn_miss=_env_bool("SIM_PROMPT_CACHE_FIRST_TURN_MISS", False),
+        for _repo_short, git_attrs, seg_turns in repo_segments:
+            with tracer.start_as_current_span(
+                "invoke_agent",
+                kind=trace.SpanKind.INTERNAL,
+            ) as root:
+                root.set_status(Status(StatusCode.OK))
+                root.set_attributes(
+                    {
+                        **user_attrs,
+                        **git_attrs,
+                        "enduser.pseudo.id": pseudo_id,
+                        "agent.product": "copilot_cli",
+                        "sim.agent_tool_version": ver,
+                        "otel.library.name": "github-copilot",
+                        "otel.library.version": ver,
+                        "otel.scope.name": scope_nm,
+                        "otel.scope.version": ver,
+                        "gen_ai.system": "azure.openai",
+                        "gen_ai.provider.name": "github.copilot",
+                        "gen_ai.agent.name": "copilotcli",
+                        "gen_ai.agent.description": COPILOT_CLI_AGENT_DESCRIPTION,
+                        "gen_ai.session.id": conversation_id,
+                        "gen_ai.conversation.id": conversation_id,
+                        "gen_ai.operation.name": "invoke_agent",
+                        "gen_ai.request.model": model,
+                        "cx.application.name": cx_app,
+                        "cx.subsystem.name": cx_sub,
+                        "session.id": conversation_id,
+                        "process.runtime.name": "python",
+                        "process.runtime.version": sys.version.split()[0],
+                        "host.name": os.environ.get("HOSTNAME", socket.gethostname()),
+                        "process.pid": str(os.getpid()),
+                    }
                 )
-                total_in += billable_in
-                total_out += out
-                total_cache_read_in += cache_read_in
-                is_premium = random.random() < float(os.environ.get("SIM_COPILOT_PREMIUM_RATE", "0.22"))
-                if is_premium:
-                    premium_req += 1
-                if cached:
-                    cache_hits += 1
-
-                chat_duration_s = random.uniform(0.8, 8.0)
-                ttft_ms = random.randint(80, 2200)
-                finish_reason = random.choice(("stop", "tool_calls", "length"))
-                response_model = _copilot_response_model(model, conversation_id, turn)
-                message_attrs = _copilot_chat_message_attrs(prompt, turn)
-
-                with tracer.start_as_current_span(
-                    "chat",
-                    kind=trace.SpanKind.INTERNAL,
-                ) as chat_sp:
-                    chat_sp.set_status(Status(StatusCode.OK))
-                    chat_sp.set_attributes(
-                        {
-                            **user_attrs,
-                            **message_attrs,
-                            "enduser.pseudo.id": pseudo_id,
-                            "agent.product": "copilot_cli",
-                            "gen_ai.system": "azure.openai",
-                            "gen_ai.provider.name": "github.copilot",
-                            "gen_ai.operation.name": "chat",
-                            "gen_ai.request.model": model,
-                            "gen_ai.response.model": response_model,
-                            "gen_ai.session.id": conversation_id,
-                            "gen_ai.conversation.id": conversation_id,
-                            **_gen_ai_dashboard_llm_span_attributes(
-                                billable_in, out, operation_name="chat", model=model
-                            ),
-                            "gen_ai.response.finish_reasons": finish_reason,
-                            "copilot.request.tier": ("premium" if is_premium else "standard"),
-                            "copilot.cache.status": ("hit" if cached else "miss"),
-                            "cx.application.name": cx_app,
-                            "cx.subsystem.name": cx_sub,
-                            "otel.library.name": "github-copilot",
-                            "otel.scope.name": scope_nm,
-                        }
-                    )
-                    ctx_chat = chat_sp.get_span_context()
-                    time.sleep(chat_duration_s * random.uniform(0.08, 0.18))
+                ctx_root = root.get_span_context()
+                if not session_start_logged:
                     _emit_copilot_otlp_log(
-                        body="gen_ai.client.inference.operation.details",
+                        body="copilot_chat.session.start",
                         attributes={
-                            "event.name": "gen_ai.client.inference.operation.details",
-                            "gen_ai.operation.name": "chat",
+                            "event.name": "copilot_chat.session.start",
+                            "gen_ai.agent.name": "copilotcli",
                             "gen_ai.request.model": model,
-                            "gen_ai.response.model": response_model,
-                            "gen_ai.usage.input_tokens": billable_in,
-                            "gen_ai.usage.output_tokens": out,
-                            "gen_ai.usage.cache_read.input_tokens": cache_read_in,
-                            "duration_ms": int(chat_duration_s * 1000),
-                            "finish_reason": finish_reason,
-                            "gen_ai.response.finish_reasons": finish_reason,
-                            **_copilot_log_conversation_attrs(conversation_id),
-                            "copilot.request.tier": ("premium" if is_premium else "standard"),
+                            **_copilot_log_conversation_attrs(conversation_id, include_session_id=True),
                         },
-                        trace_id=ctx_chat.trace_id,
-                        span_id=ctx_chat.span_id,
+                        trace_id=ctx_root.trace_id,
+                        span_id=ctx_root.span_id,
                     )
+                    session_start_logged = True
 
-                if st.prom_copilot_ttft is not None:
-                    st.prom_copilot_ttft.labels(cx_app, cx_sub, model).observe(ttft_ms / 1000.0)
+                seg_in = 0
+                seg_out = 0
+                seg_cache_read_in = 0
 
-                if st.prom_copilot_chat_dur is not None:
-                    st.prom_copilot_chat_dur.labels(cx_app, cx_sub, model).observe(chat_duration_s)
+                for _ in range(seg_turns):
+                    prompt_tokens = random.randint(800, 14_000)
+                    out = random.randint(120, 6000)
+                    billable_in, cache_read_in, cached = sim_prompt_cache_token_split(
+                        prompt_tokens,
+                        turn_index=turn_global,
+                        hit_prob_env="SIM_COPILOT_CACHE_HIT_RATE",
+                        hit_prob_default=_env_float("SIM_PROMPT_CACHE_HIT_RATE", 0.96),
+                        first_turn_miss=_env_bool("SIM_PROMPT_CACHE_FIRST_TURN_MISS", False),
+                    )
+                    seg_in += billable_in
+                    seg_out += out
+                    seg_cache_read_in += cache_read_in
+                    total_in += billable_in
+                    total_out += out
+                    total_cache_read_in += cache_read_in
+                    is_premium = random.random() < float(os.environ.get("SIM_COPILOT_PREMIUM_RATE", "0.22"))
+                    if is_premium:
+                        premium_req += 1
+                    if cached:
+                        cache_hits += 1
 
-                n_tools = random.randint(1, 3)
-                n_tools_total += n_tools
-                for _ in range(n_tools):
-                    tool = random.choice(_COPILOT_TOOLS)
-                    tool_ms = random.randint(12, 3200)
-                    ok = random.random() > 0.05
+                    chat_duration_s = random.uniform(0.8, 8.0)
+                    ttft_ms = random.randint(80, 2200)
+                    finish_reason = random.choice(("stop", "tool_calls", "length"))
+                    response_model = _copilot_response_model(model, conversation_id, turn_global)
+                    message_attrs = _copilot_chat_message_attrs(prompt, turn_global)
+
                     with tracer.start_as_current_span(
-                        "execute_tool",
+                        "chat",
                         kind=trace.SpanKind.INTERNAL,
-                    ) as tool_sp:
-                        tool_sp.set_status(
-                            Status(StatusCode.OK if ok else StatusCode.ERROR, None if ok else "tool_error")
-                        )
-                        tool_sp.set_attributes(
+                    ) as chat_sp:
+                        chat_sp.set_status(Status(StatusCode.OK))
+                        chat_sp.set_attributes(
                             {
                                 **user_attrs,
+                                **git_attrs,
+                                **message_attrs,
                                 "enduser.pseudo.id": pseudo_id,
                                 "agent.product": "copilot_cli",
-                                "gen_ai.operation.name": "execute_tool",
-                                "gen_ai.tool.name": tool,
-                                "gen_ai.tool.type": "function",
-                                "gen_ai.tool.status": ("success" if ok else "error"),
+                                "gen_ai.system": "azure.openai",
+                                "gen_ai.provider.name": "github.copilot",
+                                "gen_ai.operation.name": "chat",
                                 "gen_ai.request.model": model,
+                                "gen_ai.response.model": response_model,
                                 "gen_ai.session.id": conversation_id,
                                 "gen_ai.conversation.id": conversation_id,
+                                **_gen_ai_dashboard_llm_span_attributes(
+                                    billable_in, out, operation_name="chat", model=model
+                                ),
+                                "gen_ai.response.finish_reasons": finish_reason,
+                                "copilot.request.tier": ("premium" if is_premium else "standard"),
+                                "copilot.cache.status": ("hit" if cached else "miss"),
                                 "cx.application.name": cx_app,
                                 "cx.subsystem.name": cx_sub,
                                 "otel.library.name": "github-copilot",
                                 "otel.scope.name": scope_nm,
                             }
                         )
-                        ctx_tool = tool_sp.get_span_context()
-                        time.sleep(tool_ms / 1000.0 * random.uniform(0.05, 0.25))
+                        ctx_chat = chat_sp.get_span_context()
+                        time.sleep(chat_duration_s * random.uniform(0.08, 0.18))
                         _emit_copilot_otlp_log(
-                            body="copilot_chat.tool.call",
+                            body="gen_ai.client.inference.operation.details",
                             attributes={
-                                "event.name": "copilot_chat.tool.call",
-                                "gen_ai.tool.name": tool,
-                                "success": ok,
-                                "duration_ms": tool_ms,
+                                "event.name": "gen_ai.client.inference.operation.details",
+                                "gen_ai.operation.name": "chat",
+                                "gen_ai.request.model": model,
+                                "gen_ai.response.model": response_model,
+                                "gen_ai.usage.input_tokens": billable_in,
+                                "gen_ai.usage.output_tokens": out,
+                                "gen_ai.usage.cache_read.input_tokens": cache_read_in,
+                                "duration_ms": int(chat_duration_s * 1000),
+                                "finish_reason": finish_reason,
+                                "gen_ai.response.finish_reasons": finish_reason,
                                 **_copilot_log_conversation_attrs(conversation_id),
+                                "copilot.request.tier": ("premium" if is_premium else "standard"),
                             },
-                            trace_id=ctx_tool.trace_id,
-                            span_id=ctx_tool.span_id,
+                            trace_id=ctx_chat.trace_id,
+                            span_id=ctx_chat.span_id,
                         )
 
-                    if st.prom_copilot_tool is not None:
-                        st.prom_copilot_tool.labels(cx_app, cx_sub, tool, "success" if ok else "error").inc()
-                    if st.prom_copilot_tool_dur is not None:
-                        st.prom_copilot_tool_dur.labels(cx_app, cx_sub, tool).observe(tool_ms / 1000.0)
+                    if st.prom_copilot_ttft is not None:
+                        st.prom_copilot_ttft.labels(cx_app, cx_sub, model).observe(ttft_ms / 1000.0)
 
-                productivity_ok = random.random() < float(os.environ.get("SIM_COPILOT_PRODUCTIVITY_ACCEPT_RATE", "0.74"))
-                session_productivity_ok = session_productivity_ok or productivity_ok
-                if st.prom_copilot_edit is not None:
-                    st.prom_copilot_edit.labels(cx_app, cx_sub, "accepted" if productivity_ok else "rejected").inc()
+                    if st.prom_copilot_chat_dur is not None:
+                        st.prom_copilot_chat_dur.labels(cx_app, cx_sub, model).observe(chat_duration_s)
 
-            wall_s = max(0.01, time.perf_counter() - wall_start)
-            session_cost_usd = _copilot_github_cost_usd(
-                model,
-                total_in,
-                total_out,
-                cache_read_tokens=total_cache_read_in,
-            )
-            root.set_attribute("gen_ai.usage.input_tokens", total_in)
-            root.set_attribute("gen_ai.usage.output_tokens", total_out)
-            root.set_attribute("gen_ai.usage.cache_read.input_tokens", total_cache_read_in)
-            root.set_attribute("github.copilot.cost", session_cost_usd)
-            root.set_attribute("github.copilot.nano_aiu", _copilot_nano_aiu(session_cost_usd))
+                    n_tools = random.randint(1, 3)
+                    n_tools_total += n_tools
+                    for _ in range(n_tools):
+                        tool = random.choice(_COPILOT_TOOLS)
+                        tool_ms = random.randint(12, 3200)
+                        ok = random.random() > 0.05
+                        with tracer.start_as_current_span(
+                            "execute_tool",
+                            kind=trace.SpanKind.INTERNAL,
+                        ) as tool_sp:
+                            tool_sp.set_status(
+                                Status(StatusCode.OK if ok else StatusCode.ERROR, None if ok else "tool_error")
+                            )
+                            tool_sp.set_attributes(
+                                {
+                                    **user_attrs,
+                                    **git_attrs,
+                                    "enduser.pseudo.id": pseudo_id,
+                                    "agent.product": "copilot_cli",
+                                    "gen_ai.operation.name": "execute_tool",
+                                    "gen_ai.tool.name": tool,
+                                    "gen_ai.tool.type": "function",
+                                    "gen_ai.tool.status": ("success" if ok else "error"),
+                                    "gen_ai.request.model": model,
+                                    "gen_ai.session.id": conversation_id,
+                                    "gen_ai.conversation.id": conversation_id,
+                                    "cx.application.name": cx_app,
+                                    "cx.subsystem.name": cx_sub,
+                                    "otel.library.name": "github-copilot",
+                                    "otel.scope.name": scope_nm,
+                                }
+                            )
+                            ctx_tool = tool_sp.get_span_context()
+                            time.sleep(tool_ms / 1000.0 * random.uniform(0.05, 0.25))
+                            _emit_copilot_otlp_log(
+                                body="copilot_chat.tool.call",
+                                attributes={
+                                    "event.name": "copilot_chat.tool.call",
+                                    "gen_ai.tool.name": tool,
+                                    "success": ok,
+                                    "duration_ms": tool_ms,
+                                    **_copilot_log_conversation_attrs(conversation_id),
+                                },
+                                trace_id=ctx_tool.trace_id,
+                                span_id=ctx_tool.span_id,
+                            )
 
-            if st.prom_copilot_agent_dur is not None:
-                st.prom_copilot_agent_dur.labels(cx_app, cx_sub, model).observe(wall_s)
+                        if st.prom_copilot_tool is not None:
+                            st.prom_copilot_tool.labels(cx_app, cx_sub, tool, "success" if ok else "error").inc()
+                        if st.prom_copilot_tool_dur is not None:
+                            st.prom_copilot_tool_dur.labels(cx_app, cx_sub, tool).observe(tool_ms / 1000.0)
+
+                    productivity_ok = random.random() < float(
+                        os.environ.get("SIM_COPILOT_PRODUCTIVITY_ACCEPT_RATE", "0.74")
+                    )
+                    session_productivity_ok = session_productivity_ok or productivity_ok
+                    if st.prom_copilot_edit is not None:
+                        st.prom_copilot_edit.labels(cx_app, cx_sub, "accepted" if productivity_ok else "rejected").inc()
+
+                    turn_global += 1
+
+                seg_cost_usd = _copilot_github_cost_usd(
+                    model,
+                    seg_in,
+                    seg_out,
+                    cache_read_tokens=seg_cache_read_in,
+                )
+                root.set_attribute("gen_ai.usage.input_tokens", seg_in)
+                root.set_attribute("gen_ai.usage.output_tokens", seg_out)
+                root.set_attribute("gen_ai.usage.cache_read.input_tokens", seg_cache_read_in)
+                root.set_attribute("github.copilot.cost", seg_cost_usd)
+                root.set_attribute("github.copilot.nano_aiu", _copilot_nano_aiu(seg_cost_usd))
+
+        wall_s = max(0.01, time.perf_counter() - wall_start)
+        session_cost_usd = _copilot_github_cost_usd(
+            model,
+            total_in,
+            total_out,
+            cache_read_tokens=total_cache_read_in,
+        )
+
+        if st.prom_copilot_agent_dur is not None:
+            st.prom_copilot_agent_dur.labels(cx_app, cx_sub, model).observe(wall_s)
 
         # Prometheus increments after root span closes (same pattern as Codex).
         if st.prom_copilot_session is not None:
