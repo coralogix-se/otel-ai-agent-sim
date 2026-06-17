@@ -118,20 +118,23 @@ CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES = (
 # each vendor's current model list. Do not simulate suspended Anthropic routes (``fable``, ``mythos``,
 # ``claude-fable-5``, ``claude-mythos-5``) — globally disabled since Jun 2026 export-control order.
 
-# Default when ``SIM_CLAUDE_MODEL`` unset and profile has no model (Claude Code ``/model`` alias).
-CLAUDE_CODE_DEFAULT_MODEL = "sonnet"
+# Default when ``SIM_CLAUDE_MODEL`` unset and profile has no model.
+CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-4-6"
 
-# Claude Code ``/model`` tier aliases (https://code.claude.com/docs/en/model-config).
-# Telemetry uses these short names, not resolved ``claude-*`` IDs. ``SIM_CLAUDE_MODEL`` overrides.
+# Claude Code API model ids (https://code.claude.com/docs/en/monitoring-usage).
+# ``model`` on ``claude_code.api_request`` logs, Prometheus counters, and spans uses full ids
+# (e.g. ``claude-sonnet-4-6``), not ``/model`` aliases like ``sonnet``. ``SIM_CLAUDE_MODEL`` overrides.
 _CLAUDE_CODE_MODELS = (
-    "opus",
-    "sonnet",
-    "haiku",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-5-20250929",
+    "claude-haiku-4-5-20251001",
 )
 
 
 def claude_code_gen_ai_system_for_model(model: str) -> str:
-    """``gen_ai.system`` for Claude Code spans (Anthropic; ``SIM_CLAUDE_MODEL`` may override)."""
+    """``gen_ai.system`` for Claude Code spans (Anthropic API ids and legacy aliases)."""
     key = (model or "").strip().lower()
     if key in ("sonnet", "opus", "haiku", "default", "opusplan"):
         return "anthropic"
