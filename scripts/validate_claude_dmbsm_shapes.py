@@ -23,7 +23,7 @@ if ROOT not in sys.path:
 
 from sim.claude.logs import _cc_claude_log_record_attrs
 from sim.common.constants import CLAUDE_CODE_DEFAULT_MODEL, claude_api_response_body_json
-from sim.claude.repos import claude_session_repository_names
+from sim.common.repos import sim_session_repository_names
 from sim.common.identity import _CORALOGIX_TEAM_USERS
 
 _SAMPLE_PROMPT = "Refactor the auth middleware to use structured logging and add unit tests."
@@ -122,9 +122,9 @@ def validate_local_shapes() -> list[str]:
     if '"content"' not in str(body_flat.get("body", "")):
         failures.append("flat api_response_body body should use Anthropic content[] JSON")
 
-    repos = claude_session_repository_names(str(base["session.id"]), _CORALOGIX_TEAM_USERS[0])
+    repos = sim_session_repository_names(str(base["session.id"]), _CORALOGIX_TEAM_USERS[0])
     if not repos:
-        failures.append("claude_session_repository_names returned empty")
+        failures.append("sim_session_repository_names returned empty")
     managed = [r for r in repos if r.startswith("coralogix/")]
     if not managed:
         failures.append("expected at least one managed coralogix/* repo name")

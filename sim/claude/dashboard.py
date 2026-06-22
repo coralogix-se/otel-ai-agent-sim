@@ -16,7 +16,7 @@ from opentelemetry.trace import TraceFlags
 
 from sim.claude.logs import _cc_claude_log_record_attrs
 from sim.claude.meta import _claude_telemetry_profile
-from sim.claude.repos import claude_session_repository_names
+from sim.common.repos import sim_session_repository_names
 from sim.common.otel import (
     _anthropic_style_account_id,
     _cc_base_for_prometheus_labels,
@@ -386,7 +386,7 @@ def emit_claude_code_dashboard(
                     }
                 ).inc()
 
-    repo_names = claude_session_repository_names(session_id, roster_user)
+    repo_names = sim_session_repository_names(session_id, roster_user)
     for lb in lbs:
         # Use the same ``session_id`` label set as ``claude_code_cost_usage_USD`` (``lb``). When
         # ``SIM_CLAUDE_METRICS_SESSION_ID_ALIGN_LOGS=true``, that matches OTLP log ``session.id``;

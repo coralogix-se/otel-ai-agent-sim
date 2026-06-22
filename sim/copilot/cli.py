@@ -36,7 +36,8 @@ from sim.common.otel import (
     _gen_ai_dashboard_llm_span_attributes,
     tool_version_for,
 )
-from sim.claude.repos import claude_session_repository_names, copilot_session_git_repo_segments
+from sim.common.repos import sim_session_repository_names
+from sim.copilot.repos import copilot_session_git_repo_segments
 from sim.common.constants import COPILOT_CLI_AGENT_DESCRIPTION, COPILOT_CLI_MODELS, COPILOT_CLI_SAMPLE_PROMPTS
 from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.env import _env_bool, _env_csv_model_pool, _env_float, _env_int
@@ -120,7 +121,7 @@ def _emit_copilot_session_repo_metrics(
     if st.prom_copilot_session_repo is None or not _env_bool("SIM_COPILOT_REPO_METRICS", True):
         return
     base = _copilot_repo_metric_labels(conversation_id=conversation_id, user_attrs=user_attrs)
-    for repo_name in claude_session_repository_names(conversation_id, roster_user):
+    for repo_name in sim_session_repository_names(conversation_id, roster_user):
         st.prom_copilot_session_repo.labels(**base, repository_name=repo_name).set(1)
 
 

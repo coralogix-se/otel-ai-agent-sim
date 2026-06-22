@@ -22,7 +22,7 @@ import prometheus_rw
 from sim.claude.dashboard import emit_claude_code_dashboard
 from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.constants import claude_prompt_for_session
-from sim.claude.repos import claude_rogue_user_token_multiplier
+from sim.common.repos import sim_rogue_user_token_multiplier
 from sim.claude.user_variance import (
     claude_user_emit_turns_this_cycle,
     claude_user_productivity_multiplier,
@@ -3985,7 +3985,7 @@ def main() -> None:
                     emit_sid = session_id
                     turn_prompt = claude_prompt_for_session(emit_sid)
                     input_tokens, output_tokens = _sim_claude_usage_token_counts()
-                    rogue_mult = claude_rogue_user_token_multiplier(_ru)
+                    rogue_mult = sim_rogue_user_token_multiplier(_ru)
                     turn_jitter = random.uniform(0.82, 1.18)
                     if mult != 1.0:
                         input_tokens = max(1, int(input_tokens * mult))
