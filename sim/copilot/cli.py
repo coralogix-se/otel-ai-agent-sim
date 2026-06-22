@@ -19,9 +19,11 @@ import hashlib
 import json
 import os
 import random
+import re
 import socket
 import sys
 import time
+import uuid
 
 from opentelemetry import trace
 from opentelemetry.sdk._logs import LogRecord
@@ -33,25 +35,22 @@ from opentelemetry._logs.severity import SeverityNumber
 
 from sim.common.otel import (
     _cx_log_record_attrs,
-    _gen_ai_dashboard_llm_span_attributes,
     tool_version_for,
 )
 from sim.common.repos import sim_session_repository_names
 from sim.copilot.repos import copilot_session_git_repo_segments
-from sim.common.constants import COPILOT_CLI_AGENT_DESCRIPTION, COPILOT_CLI_MODELS, COPILOT_CLI_SAMPLE_PROMPTS
+from sim.common.constants import COPILOT_CLI_MODELS, COPILOT_CLI_SAMPLE_PROMPTS
 from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.env import _env_bool, _env_csv_model_pool, _env_float, _env_int
 from sim.common.identity import _claude_otlp_span_user_attrs_from_roster, random_coralogix_identity_for_agent
 from sim.common.state import st
 
-_COPILOT_TOOLS = (
-    "read_file",
-    "run_terminal_cmd",
-    "grep",
-    "apply_patch",
-    "glob_file_search",
-    "web_search",
-    "run_subagent",
+_COPILOT_TOOLS: tuple[tuple[str, str, str], ...] = (
+    ("view", "Tool for viewing files and directories.", '{"path":"src/main.ts"}'),
+    ("grep", "Search file contents.", '{"pattern":"TODO","path":"."}'),
+    ("bash", "Run a shell command.", '{"command":"npm test"}'),
+    ("read", "Read a file.", '{"path":"README.md"}'),
+    ("glob", "Find files by pattern.", '{"pattern":"**/*.py"}'),
 )
 
 _RESPONSE_MODEL_SUFFIXES: tuple[str, ...] = (
@@ -175,37 +174,63 @@ def _copilot_nano_aiu(cost_usd: float) -> int:
     return int(round(max(0.0, cost_usd) * 1_000_000_000))
 
 
-def _copilot_gen_ai_messages_json(role: str, text: str) -> str:
-    """GenAI opt-in message JSON (``role`` + ``parts[].type=text``) for cx498 session analysis."""
-    return json.dumps(
-        [{"role": role, "parts": [{"type": "text", "content": text}]}],
-        separators=(",", ":"),
-    )
+def _copilot_telemetry_model_id(model: str) -> str:
+    m = re.match(r"^(claude-(?:opus|sonnet|haiku))-(\d+)-(\d+)$", model)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}.{m.group(3)}"
+    return model
 
 
-def _copilot_chat_message_attrs(prompt: str, turn: int) -> dict[str, str]:
-    """
-    ``gen_ai.input.messages`` / ``gen_ai.output.messages`` on ``chat`` spans.
+def _copilot_finish_reasons_json(*reasons: str) -> str:
+    return json.dumps(list(reasons) if reasons else ["stop"], separators=(",", ":"))
 
-    Powers ``sessionsWithMessages`` and per-session AI analysis in the Copilot CLI dashboard.
-    """
-    if not _env_bool("SIM_COPILOT_CAPTURE_MESSAGES", True):
+
+def _copilot_gen_ai_messages_json(role: str, text: str, *, finish_reason: str | None = None) -> str:
+    msg: dict[str, object] = {"role": role, "parts": [{"type": "text", "content": text}]}
+    if finish_reason and role == "assistant":
+        msg["finish_reason"] = finish_reason
+    return json.dumps([msg], separators=(",", ":"))
+
+
+def _copilot_invoke_message_attrs(
+    prompt: str,
+    turns: list[tuple[str, str, str]],
+) -> dict[str, str]:
+    if not _env_bool("SIM_COPILOT_CAPTURE_MESSAGES", True) or not turns:
         return {}
-    user_text = prompt if turn == 0 else f"Continue: {prompt[:160]}"
-    assistant_text = random.choice(_COPILOT_ASSISTANT_REPLIES)
+    input_msgs = []
+    output_msgs = []
+    for user_text, assistant_text, finish_reason in turns:
+        input_msgs.extend(json.loads(_copilot_gen_ai_messages_json("user", user_text)))
+        output_msgs.extend(
+            json.loads(_copilot_gen_ai_messages_json("assistant", assistant_text, finish_reason=finish_reason))
+        )
     return {
-        "gen_ai.input.messages": _copilot_gen_ai_messages_json("user", user_text),
-        "gen_ai.output.messages": _copilot_gen_ai_messages_json("assistant", assistant_text),
+        "gen_ai.input.messages": json.dumps(input_msgs, separators=(",", ":")),
+        "gen_ai.output.messages": json.dumps(output_msgs, separators=(",", ":")),
+    }
+
+
+def _copilot_tool_call_attrs(tool_name: str, tool_desc: str, tool_args: str, *, ok: bool) -> dict[str, str]:
+    call_id = f"toolu_{hashlib.sha256(f'{tool_name}:{time.time_ns()}'.encode()).hexdigest()[:24]}"
+    result = "README.md\nsrc/\npackage.json\ntsconfig.json" if ok and tool_name == "view" else ("ok" if ok else "error: tool failed")
+    return {
+        "gen_ai.tool.name": tool_name,
+        "gen_ai.tool.type": "function",
+        "gen_ai.tool.call.id": call_id,
+        "gen_ai.tool.call.arguments": tool_args,
+        "gen_ai.tool.call.result": result,
+        "gen_ai.tool.description": tool_desc,
     }
 
 
 def _copilot_response_model(request_model: str, conversation_id: str, turn: int) -> str:
-    """Resolved model on ``chat`` spans (``gen_ai.response.model``)."""
+    telemetry_model = _copilot_telemetry_model_id(request_model)
     rng = random.Random(hashlib.sha256(f"copilot:resp:{conversation_id}:{turn}".encode()).digest())
-    tail = request_model.rsplit("-", 1)[-1]
-    if rng.random() < 0.12 and not (len(tail) == 10 and tail[4] == "-" and tail[7] == "-"):
-        return f"{request_model}-{rng.choice(_RESPONSE_MODEL_SUFFIXES)}"
-    return request_model
+    tail = telemetry_model.rsplit("-", 1)[-1]
+    if rng.random() < 0.12 and "." not in tail:
+        return f"{telemetry_model}-{rng.choice(_RESPONSE_MODEL_SUFFIXES)}"
+    return telemetry_model
 
 
 def _copilot_model_for_turn(profile: dict) -> str:
@@ -307,7 +332,7 @@ def emit_copilot_cli_session(
     scope_nm = _copilot_otel_scope_name()
     cx_app = os.environ.get("COPILOT_CX_APPLICATION_NAME", "copilot-cli")
     cx_sub = os.environ.get("COPILOT_CX_SUBSYSTEM_NAME", "copilot-sessions")
-    model = _copilot_model_for_turn(profile)
+    model = _copilot_telemetry_model_id(_copilot_model_for_turn(profile))
     if roster_user is not None:
         user_attrs = _claude_otlp_span_user_attrs_from_roster(roster_user)
     else:
@@ -333,9 +358,14 @@ def emit_copilot_cli_session(
         turn_global = 0
 
         for _repo_short, git_attrs, seg_turns in repo_segments:
+            segment_messages: list[tuple[str, str, str]] = []
+            last_finish_reason = "stop"
+            seg_cache_creation = 0
+            seg_reasoning_out = 0
+
             with tracer.start_as_current_span(
                 "invoke_agent",
-                kind=trace.SpanKind.INTERNAL,
+                kind=trace.SpanKind.CLIENT,
             ) as root:
                 root.set_status(Status(StatusCode.OK))
                 root.set_attributes(
@@ -348,10 +378,9 @@ def emit_copilot_cli_session(
                         "otel.library.version": ver,
                         "otel.scope.name": scope_nm,
                         "otel.scope.version": ver,
-                        "gen_ai.system": "azure.openai",
-                        "gen_ai.provider.name": "github.copilot",
-                        "gen_ai.agent.name": "copilotcli",
-                        "gen_ai.agent.description": COPILOT_CLI_AGENT_DESCRIPTION,
+                        "gen_ai.provider.name": "github",
+                        "gen_ai.agent.id": "github.copilot.default",
+                        "gen_ai.agent.version": ver,
                         "gen_ai.session.id": conversation_id,
                         "gen_ai.conversation.id": conversation_id,
                         "gen_ai.operation.name": "invoke_agent",
@@ -371,7 +400,7 @@ def emit_copilot_cli_session(
                         body="copilot_chat.session.start",
                         attributes={
                             "event.name": "copilot_chat.session.start",
-                            "gen_ai.agent.name": "copilotcli",
+                            "gen_ai.agent.id": "github.copilot.default",
                             "gen_ai.request.model": model,
                             **_copilot_log_conversation_attrs(conversation_id, include_session_id=True),
                         },
@@ -394,6 +423,10 @@ def emit_copilot_cli_session(
                         hit_prob_default=_env_float("SIM_PROMPT_CACHE_HIT_RATE", 0.96),
                         first_turn_miss=_env_bool("SIM_PROMPT_CACHE_FIRST_TURN_MISS", False),
                     )
+                    cache_creation = random.randint(0, max(0, billable_in // 2)) if not cached else 0
+                    reasoning_out = random.randint(0, max(0, out // 8))
+                    seg_cache_creation += cache_creation
+                    seg_reasoning_out += reasoning_out
                     seg_in += billable_in
                     seg_out += out
                     seg_cache_read_in += cache_read_in
@@ -409,29 +442,45 @@ def emit_copilot_cli_session(
                     chat_duration_s = random.uniform(0.8, 8.0)
                     ttft_ms = random.randint(80, 2200)
                     finish_reason = random.choice(("stop", "tool_calls", "length"))
+                    last_finish_reason = finish_reason
                     response_model = _copilot_response_model(model, conversation_id, turn_global)
-                    message_attrs = _copilot_chat_message_attrs(prompt, turn_global)
+                    user_text = prompt if turn_global == 0 else f"Continue: {prompt[:160]}"
+                    assistant_text = random.choice(_COPILOT_ASSISTANT_REPLIES)
+                    segment_messages.append((user_text, assistant_text, finish_reason))
+                    chat_cost_usd = _copilot_github_cost_usd(
+                        model, billable_in, out, cache_read_tokens=cache_read_in
+                    )
+                    interaction_id = str(uuid.uuid4())
+                    service_request_id = str(uuid.uuid4())
+                    response_id = f"msg_{hashlib.sha256(f'{conversation_id}:{turn_global}'.encode()).hexdigest()[:20]}"
 
                     with tracer.start_as_current_span(
                         "chat",
-                        kind=trace.SpanKind.INTERNAL,
+                        kind=trace.SpanKind.CLIENT,
                     ) as chat_sp:
                         chat_sp.set_status(Status(StatusCode.OK))
                         chat_sp.set_attributes(
                             {
-                                **message_attrs,
                                 "agent.product": "copilot_cli",
-                                "gen_ai.system": "azure.openai",
-                                "gen_ai.provider.name": "github.copilot",
+                                "gen_ai.provider.name": "github",
                                 "gen_ai.operation.name": "chat",
                                 "gen_ai.request.model": model,
                                 "gen_ai.response.model": response_model,
+                                "gen_ai.response.id": response_id,
                                 "gen_ai.session.id": conversation_id,
                                 "gen_ai.conversation.id": conversation_id,
-                                **_gen_ai_dashboard_llm_span_attributes(
-                                    billable_in, out, operation_name="chat", model=model
-                                ),
-                                "gen_ai.response.finish_reasons": finish_reason,
+                                "gen_ai.usage.input_tokens": billable_in,
+                                "gen_ai.usage.output_tokens": out,
+                                "gen_ai.usage.cache_creation_input_tokens": cache_creation,
+                                "gen_ai.usage.reasoning_output_tokens": reasoning_out,
+                                "gen_ai.response.finish_reasons": _copilot_finish_reasons_json(finish_reason),
+                                "github.copilot.cost": chat_cost_usd,
+                                "github.copilot.nano_aiu": _copilot_nano_aiu(chat_cost_usd),
+                                "github.copilot.server_duration": str(int(chat_duration_s * 1000)),
+                                "github.copilot.initiator": "user",
+                                "github.copilot.turn_id": str(turn_global),
+                                "github.copilot.interaction_id": interaction_id,
+                                "github.copilot.service_request_id": service_request_id,
                                 "copilot.request.tier": ("premium" if is_premium else "standard"),
                                 "copilot.cache.status": ("hit" if cached else "miss"),
                                 "cx.application.name": cx_app,
@@ -471,11 +520,11 @@ def emit_copilot_cli_session(
                     n_tools = random.randint(1, 3)
                     n_tools_total += n_tools
                     for _ in range(n_tools):
-                        tool = random.choice(_COPILOT_TOOLS)
+                        tool_name, tool_desc, tool_args = random.choice(_COPILOT_TOOLS)
                         tool_ms = random.randint(12, 3200)
                         ok = random.random() > 0.05
                         with tracer.start_as_current_span(
-                            "execute_tool",
+                            f"execute_tool {tool_name}",
                             kind=trace.SpanKind.INTERNAL,
                         ) as tool_sp:
                             tool_sp.set_status(
@@ -485,12 +534,11 @@ def emit_copilot_cli_session(
                                 {
                                     "agent.product": "copilot_cli",
                                     "gen_ai.operation.name": "execute_tool",
-                                    "gen_ai.tool.name": tool,
-                                    "gen_ai.tool.type": "function",
-                                    "gen_ai.tool.status": ("success" if ok else "error"),
-                                    "gen_ai.request.model": model,
-                                    "gen_ai.session.id": conversation_id,
+                                    "gen_ai.provider.name": "github",
                                     "gen_ai.conversation.id": conversation_id,
+                                    **_copilot_tool_call_attrs(
+                                        tool_name, tool_desc, tool_args, ok=ok
+                                    ),
                                     "cx.application.name": cx_app,
                                     "cx.subsystem.name": cx_sub,
                                     "otel.library.name": "github-copilot",
@@ -503,7 +551,7 @@ def emit_copilot_cli_session(
                                 body="copilot_chat.tool.call",
                                 attributes={
                                     "event.name": "copilot_chat.tool.call",
-                                    "gen_ai.tool.name": tool,
+                                    "gen_ai.tool.name": tool_name,
                                     "success": ok,
                                     "duration_ms": tool_ms,
                                     **_copilot_log_conversation_attrs(conversation_id),
@@ -513,9 +561,11 @@ def emit_copilot_cli_session(
                             )
 
                         if st.prom_copilot_tool is not None:
-                            st.prom_copilot_tool.labels(cx_app, cx_sub, tool, "success" if ok else "error").inc()
+                            st.prom_copilot_tool.labels(
+                                cx_app, cx_sub, tool_name, "success" if ok else "error"
+                            ).inc()
                         if st.prom_copilot_tool_dur is not None:
-                            st.prom_copilot_tool_dur.labels(cx_app, cx_sub, tool).observe(tool_ms / 1000.0)
+                            st.prom_copilot_tool_dur.labels(cx_app, cx_sub, tool_name).observe(tool_ms / 1000.0)
 
                     productivity_ok = random.random() < float(
                         os.environ.get("SIM_COPILOT_PRODUCTIVITY_ACCEPT_RATE", "0.74")
@@ -532,11 +582,21 @@ def emit_copilot_cli_session(
                     seg_out,
                     cache_read_tokens=seg_cache_read_in,
                 )
-                root.set_attribute("gen_ai.usage.input_tokens", seg_in)
-                root.set_attribute("gen_ai.usage.output_tokens", seg_out)
-                root.set_attribute("gen_ai.usage.cache_read_input_tokens", seg_cache_read_in)
-                root.set_attribute("github.copilot.cost", seg_cost_usd)
-                root.set_attribute("github.copilot.nano_aiu", _copilot_nano_aiu(seg_cost_usd))
+                root.set_attributes(
+                    {
+                        **_copilot_invoke_message_attrs(prompt, segment_messages),
+                        "gen_ai.usage.input_tokens": seg_in,
+                        "gen_ai.usage.output_tokens": seg_out,
+                        "gen_ai.usage.cache_read_input_tokens": seg_cache_read_in,
+                        "gen_ai.usage.cache_creation_input_tokens": seg_cache_creation,
+                        "gen_ai.usage.reasoning_output_tokens": seg_reasoning_out,
+                        "gen_ai.response.finish_reasons": _copilot_finish_reasons_json(last_finish_reason),
+                        "github.copilot.turn_count": str(seg_turns),
+                        "github.copilot.nano_aiu": _copilot_nano_aiu(seg_cost_usd),
+                    }
+                )
+                if random.random() >= float(os.environ.get("SIM_COPILOT_NULL_INVOKE_COST_RATE", "0.12")):
+                    root.set_attribute("github.copilot.cost", seg_cost_usd)
 
         wall_s = max(0.01, time.perf_counter() - wall_start)
         session_cost_usd = _copilot_github_cost_usd(
