@@ -397,6 +397,62 @@ def _claude_otlp_span_user_attrs_from_roster(roster_user: dict) -> dict:
     return d
 
 
+def _copilot_collector_user_login(user_attrs: dict) -> str:
+    """GitHub-style login for collector ``user_login`` (local-part of roster email when present)."""
+    email = str(user_attrs.get("user.email", "") or "").strip()
+    if "@" in email:
+        local = email.split("@", 1)[0].strip()
+        if local:
+            return local
+    name = str(user_attrs.get("user.name", "") or "").strip()
+    return name.replace(" ", "-").lower() or "unknown"
+
+
+def _copilot_collector_omit_user_email(user_attrs: dict) -> bool:
+    """
+    Deterministic subset of roster users with empty ``user_email`` on collector series.
+
+    Exercises cx498 PromQL ``label_join`` fallback (login + name) while spans keep
+    ``process.tags['user.email']`` for users that have a roster address.
+    """
+    rate = min(1.0, max(0.0, _env_float("SIM_COPILOT_COLLECTOR_EMPTY_EMAIL_RATE", 0.25)))
+    if rate <= 0:
+        return False
+    if rate >= 1:
+        return True
+    key = str(user_attrs.get("user.account_uuid", "") or user_attrs.get("user.id", "") or "").strip()
+    if not key:
+        return random.random() < rate
+    digest = hashlib.sha256(f"otel-ai-agent-sim:copilot:collector:no-email:{key}".encode()).digest()
+    return (digest[0] / 255.0) < rate
+
+
+def copilot_collector_user_metric_labels(user_attrs: dict, *, org: str) -> dict[str, str]:
+    """Prometheus ``user_*`` label set for ``github_copilot_user_*`` metrics."""
+    login = _copilot_collector_user_login(user_attrs)
+    name = str(user_attrs.get("user.name", login) or login)
+    email = str(user_attrs.get("user.email", "") or "").strip()
+    if email.endswith("@coralogix.com") and _copilot_collector_omit_user_email(user_attrs):
+        email = ""
+    elif not email or email == "unknown@coralogix.com":
+        email = ""
+    return {
+        "organization": org,
+        "user_email": email,
+        "user_login": login,
+        "user_name": name,
+    }
+
+
+def copilot_collector_dau_identity(user_metric_labels: dict[str, str]) -> str:
+    """Stable DAU/WAU key (email when set, else login)."""
+    email = str(user_metric_labels.get("user_email", "") or "").strip()
+    if email:
+        return email
+    login = str(user_metric_labels.get("user_login", "") or "").strip()
+    return f"login:{login}" if login else "unknown"
+
+
 def _claude_metric_label_pin_key(roster_user: dict | None, session_id: str) -> str:
     """Stable key for pinning Prometheus label sets (prefer roster account uuid)."""
     if roster_user is not None:

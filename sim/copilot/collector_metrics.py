@@ -2,16 +2,20 @@
 GitHub Enterprise Copilot collector Prometheus metrics (``github_copilot_org_*`` / ``github_copilot_user_*``).
 
 When ``SIM_COPILOT_COLLECTOR_METRICS=true``, each Copilot CLI session also increments the series queried
-by AI Center with ``github-copilot-collector`` (PromQL path in cx498 HAR ``chunk-DPVBNZ5E.js``).
+by AI Center with ``github-copilot-collector`` (PromQL path in cx498 HAR ``chunk-AGSLFPR3.js``).
 
-Label shapes follow the dashboard filter helper ``y()``: ``organization``, optional ``model`` / ``user_login``,
-plus breakdown dimensions ``feature``, ``ide``, ``language``, ``sku``. User panels prefer ``user_email``;
-we always set ``user_email`` + ``user_login`` + ``user_name`` on per-user series.
+Label shapes follow the dashboard filter helper and ``docs/copilot-sim-data.json``:
 
-Field semantics mirror GitHub usage metrics API docs (``daily_active_cli_users``, ``totals_by_cli``, etc.).
-No live ``github_copilot_*`` samples were available in cxai/c4c MCP tenants at implementation time.
+- Billing ``sku``: ``copilot_enterprise``, ``copilot_business``
+- CLI breakdown ``feature``: ``copilot_cli`` on ``*_by_model_feature`` / ``*_by_feature`` for CLI emits
+- ``language``: Title case (``TypeScript``, ``Python``, …) on ``*_by_language_feature``
+- Per-user series: ``user_email`` + ``user_login`` + ``user_name``; ~25% of roster rows omit ``user_email``
+  (``SIM_COPILOT_COLLECTOR_EMPTY_EMAIL_RATE``) for PromQL ``label_join`` fallback panels
 
-Uses a custom ``Collector`` so metric names match GitHub's exporter exactly (no ``_total`` suffix).
+**Semantics (Phase 3.5):** GitHub's exporter exposes daily usage as gauges (DAU/WAU/MAU) and billing as
+cumulative amounts. This sim **accumulates counters in-process** and exposes them as gauge families on
+scrape (same pattern as the pre-Phase-3 scaffold). ``increase()`` over scrape windows approximates session
+increments; DAU gauges reflect distinct users touched today (by email or login when email is blank).
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from prometheus_client.core import GaugeMetricFamily
 from prometheus_client.registry import Collector
 
 from sim.common.env import _env_bool, _env_float
+from sim.common.identity import copilot_collector_dau_identity, copilot_collector_user_metric_labels
 
 _ORG_L = ("organization",)
 _USER_L = ("organization", "user_email", "user_login", "user_name")
@@ -36,30 +41,13 @@ _LANG_FEATURE_L = _ORG_L + ("language", "feature")
 _SKU_L = _ORG_L + ("sku",)
 _USER_MODEL_FEATURE_L = _USER_L + ("model", "feature")
 
-# ``totals_by_feature`` / ``totals_by_ide`` slugs (GitHub usage metrics API + example schema).
-_DEFAULT_FEATURE_MIX: tuple[tuple[str, float], ...] = (
-    ("code_completion", 0.36),
-    ("agent", 0.22),
-    ("chat_panel_ask_mode", 0.14),
-    ("chat_panel_edit_mode", 0.12),
-    ("chat_panel_plan_mode", 0.08),
-    ("chat_panel_agent_mode", 0.05),
-    ("chat_panel_custom_mode", 0.03),
+_CLI_FEATURE = "copilot_cli"
+_CLI_IDE = "Copilot CLI"
+_LANGUAGES = ("Python", "TypeScript", "Go", "Java", "Rust", "Ruby")
+_BILLING_SKUS: tuple[tuple[str, float], ...] = (
+    ("copilot_enterprise", 0.88),
+    ("copilot_business", 0.12),
 )
-_DEFAULT_IDE_MIX: tuple[tuple[str, float], ...] = (
-    ("vscode", 0.44),
-    ("jetbrains", 0.22),
-    ("visualstudio", 0.12),
-    ("neovim", 0.08),
-    ("xcode", 0.06),
-    ("eclipse", 0.04),
-    ("Copilot CLI", 0.04),
-)
-_LANGUAGES = ("python", "typescript", "go", "java", "rust", "ruby")
-_BILLING_SKUS = ("copilot_premium_request", "copilot_chat", "copilot_agent")
-
-_feature_mix_cache: tuple[tuple[str, float], ...] | None = None
-_ide_mix_cache: tuple[tuple[str, float], ...] | None = None
 
 
 def copilot_collector_enabled() -> bool:
@@ -79,8 +67,7 @@ def _parse_weighted_mix(
     """
     Parse ``name:weight,name:weight`` (weight optional, defaults to 1).
 
-    Override defaults with ``SIM_COPILOT_COLLECTOR_FEATURE_MIX`` or
-    ``SIM_COPILOT_COLLECTOR_IDE_MIX``.
+    Override defaults with ``SIM_COPILOT_COLLECTOR_BILLING_SKU_MIX``.
     """
     import os
 
@@ -107,26 +94,6 @@ def _parse_weighted_mix(
     return tuple(out) if out else default
 
 
-def _feature_mix() -> tuple[tuple[str, float], ...]:
-    global _feature_mix_cache
-    if _feature_mix_cache is None:
-        _feature_mix_cache = _parse_weighted_mix(
-            "SIM_COPILOT_COLLECTOR_FEATURE_MIX",
-            _DEFAULT_FEATURE_MIX,
-        )
-    return _feature_mix_cache
-
-
-def _ide_mix() -> tuple[tuple[str, float], ...]:
-    global _ide_mix_cache
-    if _ide_mix_cache is None:
-        _ide_mix_cache = _parse_weighted_mix(
-            "SIM_COPILOT_COLLECTOR_IDE_MIX",
-            _DEFAULT_IDE_MIX,
-        )
-    return _ide_mix_cache
-
-
 def _pick_weighted(mix: tuple[tuple[str, float], ...]) -> str:
     total = sum(weight for _, weight in mix)
     if total <= 0:
@@ -140,11 +107,9 @@ def _pick_weighted(mix: tuple[tuple[str, float], ...]) -> str:
     return mix[-1][0]
 
 
-def _user_login_from_attrs(user_attrs: dict) -> str:
-    email = str(user_attrs.get("user.email", "") or "")
-    if "@" in email:
-        return email.split("@", 1)[0]
-    return str(user_attrs.get("user.name", "unknown")).replace(" ", "-").lower() or "unknown"
+def _pick_billing_sku() -> str:
+    override = _parse_weighted_mix("SIM_COPILOT_COLLECTOR_BILLING_SKU_MIX", _BILLING_SKUS)
+    return _pick_weighted(override)
 
 
 def _label_key(labels: dict[str, str]) -> tuple[tuple[str, str], ...]:
@@ -160,7 +125,7 @@ class _ActiveUserTracker:
     recent_28d: deque[tuple[str, set[str]]] = field(default_factory=lambda: deque(maxlen=28))
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def touch(self, user_email: str, *, cli: bool = True) -> tuple[int, int, int, int]:
+    def touch(self, dau_key: str, *, cli: bool = True) -> tuple[int, int, int, int]:
         today = date.today().isoformat()
         with self.lock:
             if self.day != today:
@@ -170,9 +135,9 @@ class _ActiveUserTracker:
                 self.day = today
                 self.all_users.clear()
                 self.cli_users.clear()
-            self.all_users.add(user_email)
+            self.all_users.add(dau_key)
             if cli:
-                self.cli_users.add(user_email)
+                self.cli_users.add(dau_key)
             dau = len(self.all_users)
             cli_dau = len(self.cli_users)
             wau = len(set().union(*[s for _, s in self.recent_7d], self.all_users))
@@ -404,12 +369,10 @@ def record_copilot_collector_session(
 ) -> None:
     """Increment org/user collector counters and refresh DAU gauges for one CLI session."""
     org_name = org or copilot_collector_org()
-    user_email = str(user_attrs.get("user.email", "") or "unknown@coralogix.com")
-    user_login = _user_login_from_attrs(user_attrs)
-    user_name = str(user_attrs.get("user.name", user_login))
+    user_l = copilot_collector_user_metric_labels(user_attrs, org=org_name)
     language = random.choice(_LANGUAGES)
-    feature = _pick_weighted(_feature_mix())
-    ide = _pick_weighted(_ide_mix())
+    feature = _CLI_FEATURE
+    ide = _CLI_IDE
     loc_added = random.randint(4, 120) if productivity_ok else random.randint(0, 24)
     loc_deleted = random.randint(0, 18) if productivity_ok else 0
     loc_suggested = loc_added + random.randint(0, 40)
@@ -417,16 +380,9 @@ def record_copilot_collector_session(
     generations = max(1, n_turns + random.randint(0, 2))
     interactions = max(1, n_turns)
     acceptances = 1 if productivity_ok else 0
-    sku = random.choice(_BILLING_SKUS)
+    sku = _pick_billing_sku()
     gross = cost_usd * random.uniform(1.05, 1.18)
     discount = max(0.0, gross - cost_usd)
-
-    user_l = dict(
-        organization=org_name,
-        user_email=user_email,
-        user_login=user_login,
-        user_name=user_name,
-    )
 
     metrics.org_cli_session.labels(organization=org_name).inc()
     metrics.org_cli_request.labels(organization=org_name).inc(requests)
@@ -471,7 +427,8 @@ def record_copilot_collector_session(
         metrics.user_code_acceptance.labels(**user_l).inc(acceptances)
         metrics.user_code_acceptance_activity.labels(**user_l).inc(acceptances)
 
-    dau, wau, mau, cli_dau = _tracker.touch(user_email, cli=True)
+    dau_key = copilot_collector_dau_identity(user_l)
+    dau, wau, mau, cli_dau = _tracker.touch(dau_key, cli=True)
     metrics.org_daily_active.labels(organization=org_name).set(dau)
     metrics.org_weekly_active.labels(organization=org_name).set(wau)
     metrics.org_monthly_active.labels(organization=org_name).set(mau)

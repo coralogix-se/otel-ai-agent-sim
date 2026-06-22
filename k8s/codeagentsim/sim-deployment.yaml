@@ -118,7 +118,13 @@ spec:
               value: "true"
             - name: SIM_COPILOT_COLLECTOR_ORG
               value: coralogix
-            # Feature / IDE breakdown panels (``github_copilot_org_user_initiated_interaction_count_by_*``):
+            # ~25% of roster users emit user_email="" on collector series (PromQL label_join fallback):
+            # - name: SIM_COPILOT_COLLECTOR_EMPTY_EMAIL_RATE
+            #   value: "0.25"
+            # Billing sku mix (default enterprise 88% / business 12%):
+            # - name: SIM_COPILOT_COLLECTOR_BILLING_SKU_MIX
+            #   value: "copilot_enterprise:0.88,copilot_business:0.12"
+            # Legacy IDE breakdown override (unused for CLI emits; ide fixed to Copilot CLI):
             # - name: SIM_COPILOT_COLLECTOR_FEATURE_MIX
             #   value: "code_completion:0.4,agent:0.25,chat_panel_ask_mode:0.15,chat_panel_edit_mode:0.1"
             # - name: SIM_COPILOT_COLLECTOR_IDE_MIX
