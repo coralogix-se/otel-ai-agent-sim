@@ -39,7 +39,11 @@ from sim.common.otel import (
 )
 from sim.common.repos import sim_session_repository_names
 from sim.copilot.repos import copilot_session_git_repo_segments
-from sim.common.constants import COPILOT_CLI_MODELS, COPILOT_CLI_SAMPLE_PROMPTS
+from sim.common.constants import (
+    COPILOT_CLI_MODELS,
+    COPILOT_CLI_SAMPLE_ASSISTANT_REPLIES,
+    COPILOT_CLI_SAMPLE_PROMPTS,
+)
 from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.env import _env_bool, _env_csv_model_pool, _env_float, _env_int
 from sim.common.identity import _claude_otlp_span_user_attrs_from_roster, random_coralogix_identity_for_agent
@@ -58,15 +62,6 @@ _RESPONSE_MODEL_SUFFIXES: tuple[str, ...] = (
     "2025-04-14",
     "2025-06-01",
 )
-
-_COPILOT_ASSISTANT_REPLIES: tuple[str, ...] = (
-    "I'll scan the repo for failing tests and propose a patch.",
-    "Here's a concise fix for the handler plus an updated unit test.",
-    "I found the root cause in the telemetry hook — applying a small refactor.",
-    "Summarizing the diff and suggested next steps for this Copilot CLI session.",
-    "Running the targeted grep and read_file steps, then I'll suggest edits.",
-)
-
 
 class _SharedSpanExporter:
     """Wrap the process-wide OTLP exporter so per-session providers can shut down safely."""
@@ -445,7 +440,7 @@ def emit_copilot_cli_session(
                     last_finish_reason = finish_reason
                     response_model = _copilot_response_model(model, conversation_id, turn_global)
                     user_text = prompt if turn_global == 0 else f"Continue: {prompt[:160]}"
-                    assistant_text = random.choice(_COPILOT_ASSISTANT_REPLIES)
+                    assistant_text = random.choice(COPILOT_CLI_SAMPLE_ASSISTANT_REPLIES)
                     segment_messages.append((user_text, assistant_text, finish_reason))
                     chat_cost_usd = _copilot_github_cost_usd(
                         model, billable_in, out, cache_read_tokens=cache_read_in
