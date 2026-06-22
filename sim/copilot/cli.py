@@ -228,12 +228,71 @@ def _copilot_response_model(request_model: str, conversation_id: str, turn: int)
     return telemetry_model
 
 
-def _copilot_model_for_turn(profile: dict) -> str:
+def _copilot_user_model_pool(conversation_id: str, pool: tuple[str, ...]) -> tuple[str, ...]:
+    """
+    Deterministic 2–3 model ids per stable session (not the full GA pool).
+
+    Most users get two models; ~35% get three so dashboards show modest per-user variety.
+    """
+    if not pool:
+        return (COPILOT_CLI_MODELS[0],)
+    cid = conversation_id.strip() or "unknown-session"
+    digest = hashlib.sha256(f"otel-ai-agent-sim:copilot:model-pool:{cid}".encode()).digest()
+    n_pick = 3 if digest[0] % 100 >= 65 else 2
+    n_pick = min(n_pick, len(pool))
+    choices: list[str] = []
+    used: set[int] = set()
+    b = 1
+    while len(choices) < n_pick:
+        idx = digest[b % len(digest)] % len(pool)
+        b += 1
+        if idx in used:
+            if b > len(digest) + len(pool) * 4:
+                break
+            continue
+        used.add(idx)
+        choices.append(pool[idx])
+    if not choices:
+        choices.append(pool[digest[1] % len(pool)])
+    return tuple(choices)
+
+
+def _copilot_model_for_session(conversation_id: str, profile: dict) -> str:
+    """
+    Model for one Copilot CLI emit.
+
+    Pins ``SIM_COPILOT_MODEL`` when set. Otherwise each stable ``conversation_id`` keeps a small
+    deterministic model pool (2–3 ids). The primary model is used most of the time; alternates
+    appear occasionally on a time bucket so invoke counts do not accumulate one id per tick.
+    """
     pinned = os.environ.get("SIM_COPILOT_MODEL", "").strip()
     if pinned:
         return pinned
+    profile_model = str(profile.get("gen_ai.request.model", "") or "").strip()
+    if profile_model and _env_bool("SIM_COPILOT_USE_PROFILE_MODEL", False):
+        return profile_model
     pool = _env_csv_model_pool("SIM_COPILOT_MODELS", COPILOT_CLI_MODELS)
-    return random.choice(pool)
+    choices = _copilot_user_model_pool(conversation_id, pool)
+    if len(choices) == 1:
+        return choices[0]
+    rotate_sec = max(0, _env_int("SIM_COPILOT_MODEL_ROTATE_SEC", 3600))
+    if rotate_sec <= 0:
+        return choices[0]
+    cid = conversation_id.strip() or "unknown-session"
+    bucket = int(time.time()) // rotate_sec
+    digest = hashlib.sha256(f"otel-ai-agent-sim:copilot:model-pick:{cid}:{bucket}".encode()).digest()
+    primary_weight = min(1.0, max(0.5, _env_float("SIM_COPILOT_PRIMARY_MODEL_WEIGHT", 0.82)))
+    r = digest[0] / 255.0
+    if r < primary_weight:
+        return choices[0]
+    alt = choices[1:]
+    idx = digest[1] % len(alt)
+    return alt[idx]
+
+
+def _copilot_model_for_turn(profile: dict) -> str:
+    """Backward-compatible alias when no stable conversation id is available."""
+    return _copilot_model_for_session(str(profile.get("gen_ai.conversation.id", "") or ""), profile)
 
 
 def _copilot_log_conversation_attrs(
@@ -327,7 +386,7 @@ def emit_copilot_cli_session(
     scope_nm = _copilot_otel_scope_name()
     cx_app = os.environ.get("COPILOT_CX_APPLICATION_NAME", "copilot-cli")
     cx_sub = os.environ.get("COPILOT_CX_SUBSYSTEM_NAME", "copilot-sessions")
-    model = _copilot_telemetry_model_id(_copilot_model_for_turn(profile))
+    model = _copilot_telemetry_model_id(_copilot_model_for_session(conversation_id, profile))
     if roster_user is not None:
         user_attrs = _claude_otlp_span_user_attrs_from_roster(roster_user)
     else:

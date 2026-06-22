@@ -4027,13 +4027,6 @@ def main() -> None:
             return
 
         if profile["agent.product"] == "copilot_cli":
-            profile = {
-                **profile,
-                "gen_ai.request.model": (
-                    os.environ.get("SIM_COPILOT_MODEL", "").strip()
-                    or random.choice(COPILOT_CLI_MODELS)
-                ),
-            }
             gid = session_id
             pru: dict | None = None
             if _env_bool("SIM_COPILOT_STABLE_SESSION_PER_USER", True):
