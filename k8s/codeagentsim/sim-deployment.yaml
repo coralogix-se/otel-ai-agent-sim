@@ -105,11 +105,11 @@ spec:
             # keeps ``gemini-cli-sessions`` so sim traffic does not mix with that filter in DataPrime/Traces.
             - name: GEMINI_CX_SUBSYSTEM_NAME
               value: gemini-cli-sessions
-            # GitHub Copilot CLI (``github-copilot`` / ``gen_ai.agent.name=copilotcli``; see sim/copilot_cli.py).
+            # GitHub Copilot CLI (cx498 dashboards: ``copilot-cli`` / ``copilot-sessions``).
             - name: COPILOT_CX_APPLICATION_NAME
-              value: github-copilot
+              value: copilot-cli
             - name: COPILOT_CX_SUBSYSTEM_NAME
-              value: copilot-cli-sessions
+              value: copilot-sessions
             # Dashboard DataPrime matches ``tags['otel.scope.name'] == 'github.copilot'`` (EU2 cxai-demo HAR).
             # - name: SIM_COPILOT_OTEL_SCOPE_NAME
             #   value: github.copilot

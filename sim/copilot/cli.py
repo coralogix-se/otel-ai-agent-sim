@@ -145,9 +145,9 @@ def _copilot_enduser_pseudo_id(user_attrs: dict) -> str:
     email = str(user_attrs.get("user.email", "") or "unknown@coralogix.com")
     legacy_raw = os.environ.get("SIM_COPILOT_ENDUSER_PSEUDO_RAW_EMAIL")
     if legacy_raw is not None and not _env_bool("SIM_COPILOT_ENDUSER_PSEUDO_RAW_EMAIL", True):
-        return hashlib.sha256(f"github-copilot-pseudo:{email}".encode()).hexdigest()[:36]
-    if _env_bool("SIM_COPILOT_ENDUSER_PSEUDO_OPAQUE", False):
-        return hashlib.sha256(f"github-copilot-pseudo:{email}".encode()).hexdigest()[:36]
+        return hashlib.sha256(f"github-copilot-pseudo:{email}".encode()).hexdigest()[:32]
+    if _env_bool("SIM_COPILOT_ENDUSER_PSEUDO_OPAQUE", True):
+        return hashlib.sha256(f"github-copilot-pseudo:{email}".encode()).hexdigest()[:32]
     return email
 
 
@@ -245,8 +245,8 @@ def _emit_copilot_otlp_log(
 ) -> None:
     if st.copilot_otlp_logger is None:
         return
-    cx_app = os.environ.get("COPILOT_CX_APPLICATION_NAME", "github-copilot")
-    cx_sub = os.environ.get("COPILOT_CX_SUBSYSTEM_NAME", "copilot-cli-sessions")
+    cx_app = os.environ.get("COPILOT_CX_APPLICATION_NAME", "copilot-cli")
+    cx_sub = os.environ.get("COPILOT_CX_SUBSYSTEM_NAME", "copilot-sessions")
     merged: dict[str, str | int | float | bool] = {
         **_cx_log_record_attrs(cx_app, cx_sub),
         **attributes,
@@ -305,8 +305,8 @@ def emit_copilot_cli_session(
         raise RuntimeError("CLI trace providers not initialized")
     ver = tool_version_for("github_copilot")
     scope_nm = _copilot_otel_scope_name()
-    cx_app = os.environ.get("COPILOT_CX_APPLICATION_NAME", "github-copilot")
-    cx_sub = os.environ.get("COPILOT_CX_SUBSYSTEM_NAME", "copilot-cli-sessions")
+    cx_app = os.environ.get("COPILOT_CX_APPLICATION_NAME", "copilot-cli")
+    cx_sub = os.environ.get("COPILOT_CX_SUBSYSTEM_NAME", "copilot-sessions")
     model = _copilot_model_for_turn(profile)
     if roster_user is not None:
         user_attrs = _claude_otlp_span_user_attrs_from_roster(roster_user)
@@ -340,7 +340,6 @@ def emit_copilot_cli_session(
                 root.set_status(Status(StatusCode.OK))
                 root.set_attributes(
                     {
-                        **user_attrs,
                         **git_attrs,
                         "enduser.pseudo.id": pseudo_id,
                         "agent.product": "copilot_cli",
@@ -420,10 +419,7 @@ def emit_copilot_cli_session(
                         chat_sp.set_status(Status(StatusCode.OK))
                         chat_sp.set_attributes(
                             {
-                                **user_attrs,
-                                **git_attrs,
                                 **message_attrs,
-                                "enduser.pseudo.id": pseudo_id,
                                 "agent.product": "copilot_cli",
                                 "gen_ai.system": "azure.openai",
                                 "gen_ai.provider.name": "github.copilot",
@@ -455,7 +451,7 @@ def emit_copilot_cli_session(
                                 "gen_ai.response.model": response_model,
                                 "gen_ai.usage.input_tokens": billable_in,
                                 "gen_ai.usage.output_tokens": out,
-                                "gen_ai.usage.cache_read.input_tokens": cache_read_in,
+                                "gen_ai.usage.cache_read_input_tokens": cache_read_in,
                                 "duration_ms": int(chat_duration_s * 1000),
                                 "finish_reason": finish_reason,
                                 "gen_ai.response.finish_reasons": finish_reason,
@@ -487,9 +483,6 @@ def emit_copilot_cli_session(
                             )
                             tool_sp.set_attributes(
                                 {
-                                    **user_attrs,
-                                    **git_attrs,
-                                    "enduser.pseudo.id": pseudo_id,
                                     "agent.product": "copilot_cli",
                                     "gen_ai.operation.name": "execute_tool",
                                     "gen_ai.tool.name": tool,
@@ -541,7 +534,7 @@ def emit_copilot_cli_session(
                 )
                 root.set_attribute("gen_ai.usage.input_tokens", seg_in)
                 root.set_attribute("gen_ai.usage.output_tokens", seg_out)
-                root.set_attribute("gen_ai.usage.cache_read.input_tokens", seg_cache_read_in)
+                root.set_attribute("gen_ai.usage.cache_read_input_tokens", seg_cache_read_in)
                 root.set_attribute("github.copilot.cost", seg_cost_usd)
                 root.set_attribute("github.copilot.nano_aiu", _copilot_nano_aiu(seg_cost_usd))
 

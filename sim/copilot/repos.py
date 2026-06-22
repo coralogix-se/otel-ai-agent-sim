@@ -21,8 +21,8 @@ def copilot_git_otel_attrs_from_repo_short(repo_short: str) -> dict[str, str]:
     """
     VS Code Copilot ``github.copilot.git.*`` span tags for cx498 repo dashboards.
 
-    ``github.copilot.git.repository`` is the remote URL (not ``org/repo``). ``github.copilot.github.org``
-    is set for managed GitHub org remotes only.
+    ``github.copilot.git.repository`` is ``org/repo`` (not a remote URL).
+    ``github.copilot.github.org`` is set for managed GitHub org remotes only.
     """
     if not repo_short or repo_short == "unknown":
         return {}
@@ -37,10 +37,10 @@ def copilot_git_otel_attrs_from_repo_short(repo_short: str) -> dict[str, str]:
     }
     if "/" in repo_short:
         org, repo = repo_short.split("/", 1)
-        attrs["github.copilot.git.repository"] = f"https://github.com/{org}/{repo}.git"
+        attrs["github.copilot.git.repository"] = f"{org}/{repo}"
         attrs["github.copilot.github.org"] = org
     else:
-        attrs["github.copilot.git.repository"] = f"https://github.com/{repo_short}.git"
+        attrs["github.copilot.git.repository"] = repo_short
     return attrs
 
 
