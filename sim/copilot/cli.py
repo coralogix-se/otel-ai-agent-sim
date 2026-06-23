@@ -115,7 +115,11 @@ def _emit_copilot_session_repo_metrics(
     if st.prom_copilot_session_repo is None or not _env_bool("SIM_COPILOT_REPO_METRICS", True):
         return
     base = _copilot_repo_metric_labels(conversation_id=conversation_id, user_attrs=user_attrs)
-    for repo_name in sim_session_repository_names(conversation_id, roster_user):
+    for repo_name in sim_session_repository_names(
+        conversation_id,
+        roster_user,
+        agent_product="copilot_cli",
+    ):
         st.prom_copilot_session_repo.labels(**base, repository_name=repo_name).set(1)
 
 

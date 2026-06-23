@@ -386,7 +386,11 @@ def emit_claude_code_dashboard(
                     }
                 ).inc()
 
-    repo_names = sim_session_repository_names(session_id, roster_user)
+    repo_names = sim_session_repository_names(
+        session_id,
+        roster_user,
+        agent_product="claude_code",
+    )
     for lb in lbs:
         # Use the same ``session_id`` label set as ``claude_code_cost_usage_USD`` (``lb``). When
         # ``SIM_CLAUDE_METRICS_SESSION_ID_ALIGN_LOGS=true``, that matches OTLP log ``session.id``;

@@ -6,7 +6,7 @@ import hashlib
 import random
 
 from sim.common.env import _env_bool
-from sim.common.repos import sim_session_repository_names
+from sim.common.repos import sim_org_repos, sim_session_repository_names
 
 _COPILOT_GIT_BRANCHES: tuple[str, ...] = (
     "main",
@@ -38,7 +38,8 @@ def copilot_git_otel_attrs_from_repo_short(repo_short: str) -> dict[str, str]:
     if "/" in repo_short:
         org, repo = repo_short.split("/", 1)
         attrs["github.copilot.git.repository"] = f"{org}/{repo}"
-        attrs["github.copilot.github.org"] = org
+        if repo_short in sim_org_repos():
+            attrs["github.copilot.github.org"] = org
     else:
         attrs["github.copilot.git.repository"] = repo_short
     return attrs
@@ -73,7 +74,11 @@ def copilot_session_git_repo_segments(
     if not _env_bool("SIM_COPILOT_GIT_SPAN_ATTRS", True):
         return [("", {}, max(1, n_turns))]
 
-    repo_names = sim_session_repository_names(session_id, roster_user)
+    repo_names = sim_session_repository_names(
+        session_id,
+        roster_user,
+        agent_product="copilot_cli",
+    )
     if not repo_names:
         return [("", {}, max(1, n_turns))]
 

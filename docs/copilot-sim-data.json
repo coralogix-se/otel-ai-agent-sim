@@ -1,0 +1,258 @@
+{
+  "description": "Copilot CLI sim data — FF github-copilot-collector ON. Two paths: OTel spans (CLI) + Prometheus metrics (collector).",
+
+  "spans": {
+    "description": "OTLP spans from the Copilot CLI. service.name=github-copilot OR otel.scope.name=github.copilot. Three span types per session turn.",
+
+    "invoke_agent": {
+      "description": "Root span, 1 per user turn. Carries user identity, repo info, rolled-up token usage, cost. NO gen_ai.response.model here.",
+      "example": {
+        "operationName": "invoke_agent",
+        "parentId": null,
+        "duration_microseconds": 7547190,
+        "process": {
+          "serviceName": "github-copilot",
+          "tags": {
+            "service.version": "1.0.62",
+            "user.email": "alice@coralogix.com",
+            "github.user": "alice-gh",
+            "github.user_id": "239784247"
+          }
+        },
+        "labels": {
+          "applicationName": "copilot-cli",
+          "subsystemName": "copilot-sessions",
+          "serviceName": "github-copilot"
+        },
+        "tags": {
+          "otel.scope.name": "github.copilot",
+          "otel.scope.version": "1.0.62",
+          "gen_ai.operation.name": "invoke_agent",
+          "gen_ai.provider.name": "github",
+          "gen_ai.agent.id": "github.copilot.default",
+          "gen_ai.agent.version": "1.0.62",
+
+          "gen_ai.conversation.id": "c4b968a6-0c39-445f-916e-a35e6291f791",
+          "enduser.pseudo.id": "02a73e89aa503ba88708e3d353b284b9",
+
+          "gen_ai.request.model": "claude-haiku-4.5",
+          "gen_ai.response.finish_reasons": "[\"stop\"]",
+
+          "gen_ai.usage.input_tokens": "37651",
+          "gen_ai.usage.output_tokens": "388",
+          "gen_ai.usage.cache_read_input_tokens": "18704",
+          "gen_ai.usage.cache_creation_input_tokens": "18931",
+          "gen_ai.usage.reasoning_output_tokens": "156",
+
+          "github.copilot.nano_aiu": "2749015000",
+          "github.copilot.cost": "0.66",
+          "github.copilot.turn_count": "2",
+
+          "github.copilot.git.repository": "coralogix/ai-agent-instrumentation",
+          "github.copilot.git.branch": "master",
+          "github.copilot.git.commit_sha": "b5db4d33a674756873a648193a34fc3a2c993744",
+          "github.copilot.github.org": "coralogix",
+
+          "github.copilot.agent.type": "builtin",
+          "github.copilot.context.mcp_server_names": "[\"github-mcp-server\"]",
+          "github.copilot.context.skills": "[\"cx-alerts\",\"cx-telemetry-querying\"]",
+          "github.copilot.context.custom_agent_names": "[]",
+
+          "gen_ai.input.messages": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"Describe the files in this folder\"}]}]",
+          "gen_ai.output.messages": "[{\"role\":\"assistant\",\"parts\":[{\"type\":\"text\",\"content\":\"Here are the files in this directory: README.md, src/, package.json\"}],\"finish_reason\":\"stop\"}]",
+
+          "cx.application.name": "copilot-cli",
+          "cx.subsystem.name": "copilot-sessions",
+          "span.kind": "client"
+        }
+      },
+      "notes": [
+        "user.email is on process.tags, NOT in tags — it's a resource attribute",
+        "enduser.pseudo.id is a 32-char hex hash (MD5 length)",
+        "cache_read_input_tokens — note the exact key name, NOT cache_read.input_tokens (old wrong format)",
+        "nano_aiu is the reliable billing unit (divide by 1e9 = AIU). github.copilot.cost can be 0 on some CLI versions",
+        "gen_ai.response.model does NOT appear here — only on chat spans",
+        "gen_ai.conversation.id is the join key between invoke_agent and chat spans"
+      ]
+    },
+
+    "chat": {
+      "description": "Child span, 1 per LLM API call. Carries gen_ai.response.model and per-call latency. NO enduser.pseudo.id.",
+      "example": {
+        "operationName": "chat claude-haiku-4.5",
+        "parentId": "<invoke_agent spanID>",
+        "duration_microseconds": 3155665,
+        "process": {
+          "serviceName": "github-copilot",
+          "tags": {
+            "service.version": "1.0.62",
+            "user.email": "alice@coralogix.com"
+          }
+        },
+        "labels": {
+          "applicationName": "copilot-cli",
+          "subsystemName": "copilot-sessions",
+          "serviceName": "github-copilot"
+        },
+        "tags": {
+          "otel.scope.name": "github.copilot",
+          "otel.scope.version": "1.0.62",
+          "gen_ai.operation.name": "chat",
+          "gen_ai.provider.name": "github",
+          "gen_ai.conversation.id": "c4b968a6-0c39-445f-916e-a35e6291f791",
+
+          "gen_ai.request.model": "claude-haiku-4.5",
+          "gen_ai.response.model": "claude-haiku-4.5",
+          "gen_ai.response.id": "msg_bdrk_01CHGqQYEiAWYpr8yTeeGqyS",
+          "gen_ai.response.finish_reasons": "[\"stop\"]",
+
+          "gen_ai.usage.input_tokens": "18705",
+          "gen_ai.usage.output_tokens": "101",
+          "gen_ai.usage.cache_creation_input_tokens": "18695",
+          "gen_ai.usage.reasoning_output_tokens": "49",
+
+          "github.copilot.cost": "0.33",
+          "github.copilot.nano_aiu": "2388375000",
+          "github.copilot.server_duration": "3089",
+          "github.copilot.initiator": "user",
+          "github.copilot.turn_id": "0",
+          "github.copilot.interaction_id": "351a17d1-dafd-4e89-bdd7-380cdb7f6ca6",
+          "github.copilot.service_request_id": "317b8413-9af2-417f-b815-8518df48c7ca",
+
+          "gen_ai.input.messages": "[{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"content\":\"Describe the files in this folder\"}]}]",
+          "gen_ai.output.messages": "[{\"role\":\"assistant\",\"parts\":[{\"type\":\"text\",\"content\":\"Here are the files...\"}],\"finish_reason\":\"stop\"}]",
+
+          "cx.application.name": "copilot-cli",
+          "cx.subsystem.name": "copilot-sessions",
+          "span.kind": "client"
+        }
+      },
+      "notes": [
+        "gen_ai.response.model lives HERE, not on invoke_agent — this is where the dashboard reads model for model-breakdown widgets",
+        "NO enduser.pseudo.id on chat spans — per-user model queries join via gen_ai.conversation.id back to invoke_agent",
+        "duration_microseconds is the wall-clock LLM round-trip time — summing these gives totalChatDurationMs"
+      ]
+    },
+
+    "execute_tool": {
+      "description": "Child span, 1 per tool call. Carries tool name, arguments, result.",
+      "example": {
+        "operationName": "execute_tool view",
+        "parentId": "<invoke_agent spanID>",
+        "duration_microseconds": 618023,
+        "process": {
+          "serviceName": "github-copilot",
+          "tags": {
+            "service.version": "1.0.62",
+            "user.email": "alice@coralogix.com"
+          }
+        },
+        "labels": {
+          "applicationName": "copilot-cli",
+          "subsystemName": "copilot-sessions",
+          "serviceName": "github-copilot"
+        },
+        "tags": {
+          "otel.scope.name": "github.copilot",
+          "otel.scope.version": "1.0.62",
+          "gen_ai.operation.name": "execute_tool",
+          "gen_ai.provider.name": "github",
+          "gen_ai.tool.name": "view",
+          "gen_ai.tool.type": "function",
+          "gen_ai.tool.call.id": "toolu_bdrk_01WHft5Fi2HXz7w5s8xeJPAM",
+          "gen_ai.tool.call.arguments": "{\"path\":\"/Users/alice/repos/my-project\"}",
+          "gen_ai.tool.call.result": "README.md\nsrc/\npackage.json\ntsconfig.json",
+          "gen_ai.tool.description": "Tool for viewing files and directories.",
+
+          "cx.application.name": "copilot-cli",
+          "cx.subsystem.name": "copilot-sessions",
+          "span.kind": "internal"
+        }
+      },
+      "notes": [
+        "gen_ai.tool.name is what the dashboard counts for topUsedTools widget",
+        "span.kind is internal (not client like the others)"
+      ]
+    }
+  },
+
+  "metrics": {
+    "description": "Prometheus metrics from the github-copilot-collector (polls GitHub Copilot API). Only needed for FF ON path. All are daily gauges — emit one data point per day per label combination.",
+
+    "org_level": {
+      "description": "Org-level metrics. All have at minimum label: organization",
+      "examples": [
+        { "metric": "github_copilot_org_daily_active_users",                                  "labels": { "organization": "coralogix" },                              "value": 47 },
+        { "metric": "github_copilot_org_weekly_active_users",                                 "labels": { "organization": "coralogix" },                              "value": 89 },
+        { "metric": "github_copilot_org_monthly_active_users",                                "labels": { "organization": "coralogix" },                              "value": 134 },
+        { "metric": "github_copilot_org_daily_active_cli_users",                              "labels": { "organization": "coralogix" },                              "value": 12 },
+        { "metric": "github_copilot_org_daily_active_copilot_cloud_agent_users",              "labels": { "organization": "coralogix" },                              "value": 8 },
+        { "metric": "github_copilot_org_daily_active_copilot_code_review_users",             "labels": { "organization": "coralogix" },                              "value": 23 },
+        { "metric": "github_copilot_org_daily_passive_copilot_code_review_users",            "labels": { "organization": "coralogix" },                              "value": 31 },
+        { "metric": "github_copilot_org_code_generation_count",                              "labels": { "organization": "coralogix" },                              "value": 5420 },
+        { "metric": "github_copilot_org_user_initiated_code_acceptance_count",               "labels": { "organization": "coralogix" },                              "value": 2100 },
+        { "metric": "github_copilot_org_user_initiated_interaction_count",                   "labels": { "organization": "coralogix" },                              "value": 1230 },
+        { "metric": "github_copilot_org_loc_added_sum_by_language_feature",                  "labels": { "organization": "coralogix", "language": "TypeScript", "feature": "code_completion" }, "value": 8900 },
+        { "metric": "github_copilot_org_loc_added_sum_by_language_feature",                  "labels": { "organization": "coralogix", "language": "Python",     "feature": "code_completion" }, "value": 3200 },
+        { "metric": "github_copilot_org_loc_deleted_sum_by_language_feature",                "labels": { "organization": "coralogix", "language": "TypeScript", "feature": "code_completion" }, "value": 2300 },
+        { "metric": "github_copilot_org_loc_suggested_to_add_sum",                           "labels": { "organization": "coralogix" },                              "value": 12000 },
+        { "metric": "github_copilot_org_cli_session_count",                                  "labels": { "organization": "coralogix" },                              "value": 89 },
+        { "metric": "github_copilot_org_cli_request_count",                                  "labels": { "organization": "coralogix" },                              "value": 412 },
+        { "metric": "github_copilot_org_cli_prompt_tokens_sum",                              "labels": { "organization": "coralogix" },                              "value": 564948 },
+        { "metric": "github_copilot_org_cli_output_tokens_sum",                              "labels": { "organization": "coralogix" },                              "value": 11246 },
+        { "metric": "github_copilot_org_pull_requests_created",                              "labels": { "organization": "coralogix" },                              "value": 156 },
+        { "metric": "github_copilot_org_pull_requests_reviewed",                             "labels": { "organization": "coralogix" },                              "value": 89 },
+        { "metric": "github_copilot_org_pull_requests_merged",                               "labels": { "organization": "coralogix" },                              "value": 134 },
+        { "metric": "github_copilot_org_pull_requests_created_by_copilot",                   "labels": { "organization": "coralogix" },                              "value": 12 },
+        { "metric": "github_copilot_org_pull_requests_reviewed_by_copilot",                  "labels": { "organization": "coralogix" },                              "value": 45 },
+        { "metric": "github_copilot_org_pull_requests_copilot_suggestions",                  "labels": { "organization": "coralogix" },                              "value": 230 },
+        { "metric": "github_copilot_org_pull_requests_copilot_applied_suggestions",          "labels": { "organization": "coralogix" },                              "value": 178 },
+        { "metric": "github_copilot_org_pull_requests_median_minutes_to_merge",              "labels": { "organization": "coralogix" },                              "value": 340 },
+        { "metric": "github_copilot_org_user_initiated_interaction_count_by_model_feature",  "labels": { "organization": "coralogix", "model": "claude-haiku-4.5",  "feature": "copilot_cli" }, "value": 450 },
+        { "metric": "github_copilot_org_user_initiated_interaction_count_by_model_feature",  "labels": { "organization": "coralogix", "model": "gpt-4o",             "feature": "copilot_cli" }, "value": 180 },
+        { "metric": "github_copilot_org_user_initiated_interaction_count_by_ide",            "labels": { "organization": "coralogix", "ide": "vscode" },             "value": 600 },
+        { "metric": "github_copilot_org_user_initiated_interaction_count_by_ide",            "labels": { "organization": "coralogix", "ide": "jetbrains" },          "value": 230 },
+        { "metric": "github_copilot_org_user_initiated_interaction_count_by_feature",        "labels": { "organization": "coralogix", "feature": "copilot_cli" },    "value": 800 },
+        { "metric": "github_copilot_org_user_initiated_interaction_count_by_feature",        "labels": { "organization": "coralogix", "feature": "code_completion" }, "value": 430 }
+      ]
+    },
+
+    "billing": {
+      "description": "Billing metrics. Labels: organization, sku",
+      "examples": [
+        { "metric": "github_copilot_billing_net_amount",      "labels": { "organization": "coralogix", "sku": "copilot_enterprise" },  "value": 3800.50 },
+        { "metric": "github_copilot_billing_net_amount",      "labels": { "organization": "coralogix", "sku": "copilot_business" },    "value": 400.00 },
+        { "metric": "github_copilot_billing_gross_amount",    "labels": { "organization": "coralogix", "sku": "copilot_enterprise" },  "value": 4100.00 },
+        { "metric": "github_copilot_billing_discount_amount", "labels": { "organization": "coralogix", "sku": "copilot_enterprise" },  "value": 299.50 },
+        { "metric": "github_copilot_billing_net_quantity",    "labels": { "organization": "coralogix", "sku": "copilot_enterprise" },  "value": 120 },
+        { "metric": "github_copilot_billing_net_quantity",    "labels": { "organization": "coralogix", "sku": "copilot_business" },    "value": 14 }
+      ]
+    },
+
+    "user_level": {
+      "description": "Per-user metrics. Labels: organization + (user_email OR user_login+user_name). Make some users have email, some only login+name — the dashboard handles both via PromQL label_join.",
+      "notes": [
+        "user with email set: user_email='alice@coralogix.com', user_login='alice-gh', user_name='Alice Smith'",
+        "user without email: user_email='', user_login='bob-gh', user_name='Bob Jones' — dashboard falls back to joining login+name",
+        "the join key to spans is user.email — so for FF ON users list to show combined data, the email here must match user.email in span process.tags"
+      ],
+      "examples": [
+        { "metric": "github_copilot_user_user_initiated_interaction_count",                      "labels": { "organization": "coralogix", "user_email": "alice@coralogix.com", "user_login": "alice-gh",  "user_name": "Alice Smith" }, "value": 312 },
+        { "metric": "github_copilot_user_user_initiated_interaction_count",                      "labels": { "organization": "coralogix", "user_email": "",                    "user_login": "bob-gh",     "user_name": "Bob Jones"  }, "value": 187 },
+        { "metric": "github_copilot_user_cli_session_count",                                     "labels": { "organization": "coralogix", "user_email": "alice@coralogix.com", "user_login": "alice-gh",  "user_name": "Alice Smith" }, "value": 34 },
+        { "metric": "github_copilot_user_cli_session_count",                                     "labels": { "organization": "coralogix", "user_email": "",                    "user_login": "bob-gh",     "user_name": "Bob Jones"  }, "value": 18 },
+        { "metric": "github_copilot_user_cli_prompt_tokens_sum",                                 "labels": { "organization": "coralogix", "user_email": "alice@coralogix.com", "user_login": "alice-gh",  "user_name": "Alice Smith" }, "value": 280000 },
+        { "metric": "github_copilot_user_cli_prompt_tokens_sum",                                 "labels": { "organization": "coralogix", "user_email": "",                    "user_login": "bob-gh",     "user_name": "Bob Jones"  }, "value": 160000 },
+        { "metric": "github_copilot_user_cli_output_tokens_sum",                                 "labels": { "organization": "coralogix", "user_email": "alice@coralogix.com", "user_login": "alice-gh",  "user_name": "Alice Smith" }, "value": 5800 },
+        { "metric": "github_copilot_user_cli_output_tokens_sum",                                 "labels": { "organization": "coralogix", "user_email": "",                    "user_login": "bob-gh",     "user_name": "Bob Jones"  }, "value": 3200 },
+        { "metric": "github_copilot_user_loc_added_sum",                                         "labels": { "organization": "coralogix", "user_email": "alice@coralogix.com", "user_login": "alice-gh",  "user_name": "Alice Smith" }, "value": 4500 },
+        { "metric": "github_copilot_user_loc_added_sum",                                         "labels": { "organization": "coralogix", "user_email": "",                    "user_login": "bob-gh",     "user_name": "Bob Jones"  }, "value": 2800 },
+        { "metric": "github_copilot_user_code_acceptance_count",                                 "labels": { "organization": "coralogix", "user_email": "alice@coralogix.com", "user_login": "alice-gh",  "user_name": "Alice Smith" }, "value": 890 },
+        { "metric": "github_copilot_user_code_acceptance_activity_count",                        "labels": { "organization": "coralogix", "user_email": "alice@coralogix.com", "user_login": "alice-gh",  "user_name": "Alice Smith" }, "value": 1020 },
+        { "metric": "github_copilot_user_code_generation_count",                                 "labels": { "organization": "coralogix", "user_email": "alice@coralogix.com", "user_login": "alice-gh",  "user_name": "Alice Smith" }, "value": 2100 },
+        { "metric": "github_copilot_user_user_initiated_interaction_count_by_model_feature",     "labels": { "organization": "coralogix", "user_email": "alice@coralogix.com", "user_login": "alice-gh",  "user_name": "Alice Smith", "model": "claude-haiku-4.5", "feature": "copilot_cli" }, "value": 210 },
+        { "metric": "github_copilot_user_user_initiated_interaction_count_by_model_feature",     "labels": { "organization": "coralogix", "user_email": "alice@coralogix.com", "user_login": "alice-gh",  "user_name": "Alice Smith", "model": "gpt-4o",            "feature": "copilot_cli" }, "value": 102 }
+      ]
+    }
+  }
+}
