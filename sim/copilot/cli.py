@@ -41,8 +41,7 @@ from sim.common.repos import sim_session_repository_names
 from sim.copilot.repos import copilot_session_git_repo_segments
 from sim.common.constants import (
     COPILOT_CLI_MODELS,
-    COPILOT_CLI_SAMPLE_ASSISTANT_REPLIES,
-    COPILOT_CLI_SAMPLE_PROMPTS,
+    copilot_prompt_reply_for_turn,
 )
 from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.env import _env_bool, _env_csv_model_pool, _env_float, _env_int
@@ -397,7 +396,6 @@ def emit_copilot_cli_session(
         user_attrs = random_coralogix_identity_for_agent(conversation_id, "copilot_cli")
     user_email = str(user_attrs.get("user.email", "") or "unknown@coralogix.com")
     pseudo_id = _copilot_enduser_pseudo_id(user_attrs)
-    prompt = random.choice(COPILOT_CLI_SAMPLE_PROMPTS)
 
     n_turns = max(1, _env_int("SIM_COPILOT_CHAT_ROUNDS", 2))
     repo_segments = copilot_session_git_repo_segments(conversation_id, roster_user, n_turns)
@@ -502,8 +500,8 @@ def emit_copilot_cli_session(
                     finish_reason = random.choice(("stop", "tool_calls", "length"))
                     last_finish_reason = finish_reason
                     response_model = _copilot_response_model(model, conversation_id, turn_global)
+                    prompt, assistant_text = copilot_prompt_reply_for_turn(conversation_id, turn_global)
                     user_text = prompt if turn_global == 0 else f"Continue: {prompt[:160]}"
-                    assistant_text = random.choice(COPILOT_CLI_SAMPLE_ASSISTANT_REPLIES)
                     segment_messages.append((user_text, assistant_text, finish_reason))
                     chat_cost_usd = _copilot_github_cost_usd(
                         model, billable_in, out, cache_read_tokens=cache_read_in

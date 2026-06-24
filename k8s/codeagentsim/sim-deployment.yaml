@@ -256,11 +256,13 @@ spec:
             # Claude Code: `user_prompt` on scope `claude-code` + claude_code.* metrics/logs
             # Session/repo dashboard: ``claude_code_session_repo_info{session_id,repository_name}`` +
             # ``claude_code.user_prompt`` logs with ``prompt`` + ``claude_code.api_response_body``.
-            # Default repo mix (non-rogue): ~85% managed, ~5% unmanaged, ~10% unknown (``SIM_CLAUDE_*_REPO_FRAC``).
-            # Managed repos (6): fictional company GitHub org. Unmanaged (5): fictional external projects.
+            # Default repo mix (non-rogue): ~90% managed, ~10% unmanaged (``SIM_CLAUDE_*_REPO_FRAC``).
+            # All sessions emit linkable ``org/repo`` names on ``claude_code_session_repo_info`` (no ``unknown``).
+            # Managed = repos in GitHub integration scan (``GetScan``), not all coralogix/* on GitHub.
+            # obdev scan (2026-06): ``coralogix/cxai-observability-demo-playground`` only.
             # Rogue users (roster indices 17,42,88): ~85% unmanaged repos + 4–8× token/cost multiplier.
-            # - name: SIM_CLAUDE_ORG_REPOS
-            #   value: "coralogix/platform-web-workspace,coralogix/identity-token-service,..."
+            - name: SIM_CLAUDE_ORG_REPOS
+              value: "coralogix/cxai-observability-demo-playground"
             # - name: SIM_CLAUDE_ROGUE_USER_INDICES
             #   value: "17,42,88"
             # - name: SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MIN

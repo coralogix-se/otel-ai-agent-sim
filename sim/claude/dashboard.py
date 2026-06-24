@@ -15,7 +15,7 @@ from opentelemetry.sdk._logs import LogRecord
 from opentelemetry.trace import TraceFlags
 
 from sim.claude.logs import _cc_claude_log_record_attrs
-from sim.claude.meta import _claude_telemetry_profile
+from sim.claude.meta import _claude_resolved_telemetry_profile
 from sim.common.repos import sim_session_repository_names
 from sim.common.otel import (
     _anthropic_style_account_id,
@@ -219,7 +219,7 @@ def emit_claude_code_dashboard(
         cc_token.labels(**lab).inc(amt)
         cc_token_coralogix.labels(**lab).inc(amt)
 
-    _ctp = _claude_telemetry_profile()
+    _ctp = _claude_resolved_telemetry_profile(session_id)
     av_dotted = os.environ.get("SIM_CLAUDE_DOTTED_SERVICE_VERSION", "1.0.33").strip() or "1.0.33"
     _pin_metric_labels = _env_bool("SIM_CLAUDE_PIN_METRIC_LABELS", True)
     _pin_key = _claude_metric_label_pin_key(roster_user, session_id)
@@ -229,25 +229,13 @@ def emit_claude_code_dashboard(
         av_flat = app_version or os.environ.get("SIM_CC_APP_VERSION") or tool_version_for("claude_code")
         model = profile["gen_ai.request.model"]
 
-    if _ctp == "both":
-        core = dict(roster_user) if roster_user is not None else _claude_roster_core_user(session_id)
-        user_flat = dict(core)
-        user_dotted = dict(core)
-        _apply_claude_dotted_email_domain(user_dotted)
-        base_flat = _cc_dashboard_base_attrs(session_id, user_flat, av_flat, flavor="flat")
-        base_dotted = _cc_dashboard_base_attrs(session_id, user_dotted, av_dotted, flavor="dotted")
-        base_by_profile = {"flat": base_flat, "dotted": base_dotted}
-        _bps = (
-            (_cc_base_for_prometheus_labels(session_id, base_flat), cx_sub_flat),
-            (_cc_base_for_prometheus_labels(session_id, base_dotted), cx_sub_dotted),
-        )
-        lbs = [_map_cc_base_labels(bp[0], cx_app, bp[1]) for bp in _bps]
-    elif _ctp == "dotted":
+    if _ctp == "dotted":
         user_attrs = (
             _claude_user_identity_flavor(session_id, "dotted")
             if roster_user is None
             else _claude_otlp_span_user_attrs_from_roster(roster_user)
         )
+        _apply_claude_dotted_email_domain(user_attrs)
         ver_s = av_dotted if _pin_metric_labels else (app_version or av_dotted)
         base = _cc_dashboard_base_attrs(session_id, user_attrs, ver_s, flavor="dotted")
         base_by_profile = {"dotted": base}
@@ -263,6 +251,12 @@ def emit_claude_code_dashboard(
         base_by_profile = {"flat": base}
         base_prom = _cc_base_for_prometheus_labels(session_id, base)
         lbs = [_map_cc_base_labels(base_prom, cx_app, cx_sub_flat)]
+
+    _cc_log_emitters = [
+        emitter for emitter in st.cc_log_emitters if emitter[1] == _ctp
+    ]
+    if not _cc_log_emitters:
+        return
 
     billable_input, cache_read_amt_i, _cache_hit = sim_prompt_cache_token_split(
         input_tokens,

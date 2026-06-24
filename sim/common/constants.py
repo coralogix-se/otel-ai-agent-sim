@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 
 GEMINI_AGENT_DESCRIPTION = (
     "Gemini CLI is an open-source AI agent that brings the power of Gemini directly "
@@ -362,18 +363,104 @@ GEMINI_CLI_MODELS = (
 )
 
 
-def claude_prompt_for_session(session_id: str) -> str:
+def _generic_assistant_reply(prompt: str) -> str:
+    """Fallback assistant text when no curated reply exists for a prompt."""
+    p = prompt.strip().rstrip(".")
+    lower = p.lower()
+    if lower.startswith(("how ", "why ", "what ", "explain ", "summarize ", "document ")):
+        return f"Here's a concise answer on that: {p[:120]}."
+    if lower.startswith(
+        (
+            "add ",
+            "fix ",
+            "implement ",
+            "migrate ",
+            "refactor ",
+            "debug ",
+            "review ",
+            "run ",
+            "wire ",
+            "convert ",
+            "split ",
+            "reduce ",
+            "upgrade ",
+            "harden ",
+            "optimize ",
+            "create ",
+            "investigate ",
+            "align ",
+            "write ",
+            "generate ",
+            "clean ",
+            "set ",
+            "trace ",
+            "draft ",
+            "find ",
+        ),
+    ):
+        return f"I'll work on that next: {p[:120]}."
+    return f"Working on your request — {p[:120]}."
+
+
+def _build_prompt_reply_pairs(
+    prompts: Sequence[str],
+    replies: Sequence[str],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Pair each prompt with a semantically aligned reply (index-aligned when possible)."""
+    pairs: list[tuple[str, tuple[str, ...]]] = []
+    n_replies = len(replies)
+    for i, prompt in enumerate(prompts):
+        if i < n_replies:
+            pairs.append((prompt, (replies[i],)))
+        else:
+            pairs.append((prompt, (_generic_assistant_reply(prompt),)))
+    return tuple(pairs)
+
+
+CLAUDE_CODE_PROMPT_REPLY_PAIRS = _build_prompt_reply_pairs(
+    CLAUDE_CODE_SAMPLE_PROMPTS,
+    CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES,
+)
+COPILOT_CLI_PROMPT_REPLY_PAIRS = _build_prompt_reply_pairs(
+    COPILOT_CLI_SAMPLE_PROMPTS,
+    COPILOT_CLI_SAMPLE_ASSISTANT_REPLIES,
+)
+
+
+def _session_turn_pair_index(session_id: str, turn: int, n_pairs: int) -> int:
+    key = f"{session_id.strip() or 'unknown-session'}:{turn}"
+    return int(hashlib.sha256(key.encode()).hexdigest(), 16) % n_pairs
+
+
+def prompt_reply_for_turn(
+    session_id: str,
+    turn: int,
+    pairs: Sequence[tuple[str, Sequence[str]]],
+) -> tuple[str, str]:
+    """Stable prompt/reply for a session turn; reply is chosen from the aligned pair."""
+    idx = _session_turn_pair_index(session_id, turn, len(pairs))
+    prompt, replies = pairs[idx]
+    if len(replies) == 1:
+        return prompt, replies[0]
+    ridx = int(hashlib.sha256(f"reply:{session_id}:{turn}".encode()).hexdigest(), 16) % len(replies)
+    return prompt, replies[ridx]
+
+
+def claude_prompt_for_session(session_id: str, *, turn: int = 0) -> str:
     """Stable user_prompt text for a ``session.id`` (one plausible reason per session)."""
-    key = session_id.strip() or "unknown-session"
-    idx = int(hashlib.sha256(key.encode()).hexdigest(), 16) % len(CLAUDE_CODE_SAMPLE_PROMPTS)
-    return CLAUDE_CODE_SAMPLE_PROMPTS[idx]
+    prompt, _reply = prompt_reply_for_turn(session_id, turn, CLAUDE_CODE_PROMPT_REPLY_PAIRS)
+    return prompt
 
 
-def claude_assistant_reply_for_session(session_id: str) -> str:
+def claude_assistant_reply_for_session(session_id: str, *, turn: int = 0) -> str:
     """Stable assistant reply aligned with ``claude_prompt_for_session``."""
-    key = session_id.strip() or "unknown-session"
-    idx = int(hashlib.sha256(b"reply:" + key.encode()).hexdigest(), 16) % len(CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES)
-    return CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES[idx]
+    _prompt, reply = prompt_reply_for_turn(session_id, turn, CLAUDE_CODE_PROMPT_REPLY_PAIRS)
+    return reply
+
+
+def copilot_prompt_reply_for_turn(conversation_id: str, turn: int) -> tuple[str, str]:
+    """Stable Copilot CLI user/assistant message pair for a conversation turn."""
+    return prompt_reply_for_turn(conversation_id, turn, COPILOT_CLI_PROMPT_REPLY_PAIRS)
 
 
 def claude_api_response_body_json(text: str) -> str:

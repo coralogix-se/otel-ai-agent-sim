@@ -10,18 +10,13 @@ import re
 from sim.common.env import _env_float, _env_int
 from sim.common.identity import _CORALOGIX_TEAM_USERS
 
-# Fictional company GitHub repos (managed — in the org scan). Plausible shape only; not real repos.
-# Includes names seen in Copilot CLI telemetry (``ai-agent-instrumentation``, ``cx-web-workspace``).
-# Override with ``SIM_CLAUDE_ORG_REPOS`` (shared env name kept for compatibility).
+# Managed repos: must appear in the tenant GitHub integration scan (``ScansService/GetScan``),
+# not merely exist in the Coralogix GitHub org. cx498 classifies managed vs unmanaged by matching
+# ``repository_name`` / ``github.copilot.git.repository`` against that scan set (full name or bare repo).
+# onlineboutique-dev / obdev scan (2026-06-23 HAR): only this repo is in the scan today.
+# Override with ``SIM_CLAUDE_ORG_REPOS`` (comma-separated).
 _DEFAULT_ORG_REPOS: tuple[str, ...] = (
-    "coralogix/ai-agent-instrumentation",
-    "coralogix/cx-web-workspace",
-    "coralogix/platform-web-workspace",
-    "coralogix/identity-token-service",
-    "coralogix/agent-telemetry-hooks",
-    "coralogix/analytics-query-engine",
-    "coralogix/deploy-pipeline-handler",
-    "coralogix/microshop-demo",
+    "coralogix/cxai-observability-demo-playground",
 )
 
 # Fictional external / personal repos (unmanaged — not in org scan). Override with ``SIM_CLAUDE_UNMANAGED_REPOS``.
@@ -201,24 +196,27 @@ def sim_personal_violation_repository(roster_user: dict) -> str:
 
 
 def _repo_class_weights(rogue: bool) -> tuple[tuple[str, float], ...]:
+    """Managed vs unmanaged only — every session gets a linkable ``org/repo`` name for repo gauges."""
     if rogue:
         return (
             ("managed", _env_float("SIM_CLAUDE_ROGUE_MANAGED_FRAC", 0.08)),
-            ("unmanaged", _env_float("SIM_CLAUDE_ROGUE_UNMANAGED_FRAC", 0.85)),
-            ("unknown", _env_float("SIM_CLAUDE_ROGUE_UNKNOWN_FRAC", 0.07)),
+            ("unmanaged", _env_float("SIM_CLAUDE_ROGUE_UNMANAGED_FRAC", 0.92)),
         )
     return (
-        ("managed", _env_float("SIM_CLAUDE_MANAGED_REPO_FRAC", 0.85)),
-        ("unmanaged", _env_float("SIM_CLAUDE_UNMANAGED_REPO_FRAC", 0.05)),
-        ("unknown", _env_float("SIM_CLAUDE_UNKNOWN_REPO_FRAC", 0.10)),
+        ("managed", _env_float("SIM_CLAUDE_MANAGED_REPO_FRAC", 0.90)),
+        ("unmanaged", _env_float("SIM_CLAUDE_UNMANAGED_REPO_FRAC", 0.10)),
     )
 
 
+def _session_repo_rng(session_id: str) -> random.Random:
+    key = session_id.strip() or "unknown-session"
+    return random.Random(hashlib.sha256(f"cc:repos:{key}".encode()).digest())
+
+
 def _pick_repo_name(repo_class: str, rng: random.Random) -> str:
-    if repo_class == "unknown":
-        return "unknown"
     if repo_class == "managed":
         return rng.choice(_parse_csv("SIM_CLAUDE_ORG_REPOS", _DEFAULT_ORG_REPOS))
+    # ``unmanaged`` and legacy ``unknown`` class both resolve to external org/repo names.
     return rng.choice(_parse_csv("SIM_CLAUDE_UNMANAGED_REPOS", _UNMANAGED_REPOS))
 
 
@@ -232,8 +230,11 @@ def sim_session_repository_names(
     """
     Repository names for session repo Prometheus gauges and Copilot git span tags.
 
-    Mix: managed (org GitHub), unmanaged (external), unknown (literal ``unknown``).
-    Rogue roster users skew heavily toward unmanaged repos; everyone else is ~85% managed.
+    Mix: managed (org owner repos, e.g. ``coralogix/*``) and unmanaged (external ``org/repo``).
+    Every session emits at least one linkable repo name (no literal ``unknown`` gauge values).
+    Rogue roster users skew heavily toward unmanaged repos; everyone else is ~90% managed.
+
+    Repo count and names are stable for a given ``session_id`` (seeded RNG).
 
     When ``agent_product`` is ``claude_code`` or ``copilot_cli``, one pinned roster user
     per product uses only their personal ``<username>/Coralogix-log-explore`` repo — simulating
@@ -245,6 +246,7 @@ def sim_session_repository_names(
     ):
         return [sim_personal_violation_repository(roster_user)]
 
+    rng = _session_repo_rng(session_id)
     rogue = is_sim_rogue_user(roster_user)
     if n_repos is None:
         lo = _env_int("SIM_CLAUDE_REPOS_PER_SESSION_MIN", 1)
@@ -252,14 +254,13 @@ def sim_session_repository_names(
         if rogue:
             lo = max(lo, _env_int("SIM_CLAUDE_ROGUE_REPOS_PER_SESSION_MIN", 1))
             hi = max(hi, _env_int("SIM_CLAUDE_ROGUE_REPOS_PER_SESSION_MAX", 3))
-        n_repos = random.randint(lo, hi)
+        n_repos = rng.randint(lo, hi)
 
     weights = _repo_class_weights(rogue)
     labels, probs = zip(*weights)
     s = sum(probs)
     norm = [p / s for p in probs] if s > 0 else [1 / len(labels)] * len(labels)
 
-    rng = random.Random(hashlib.sha256(f"cc:repos:{session_id}".encode()).digest())
     names: list[str] = []
     for _ in range(max(1, n_repos)):
         cls = rng.choices(labels, weights=norm, k=1)[0]

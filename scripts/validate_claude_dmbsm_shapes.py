@@ -125,9 +125,9 @@ def validate_local_shapes() -> list[str]:
     repos = sim_session_repository_names(str(base["session.id"]), _CORALOGIX_TEAM_USERS[0])
     if not repos:
         failures.append("sim_session_repository_names returned empty")
-    managed = [r for r in repos if r.startswith("coralogix/")]
+    managed = [r for r in repos if r == "coralogix/cxai-observability-demo-playground"]
     if not managed:
-        failures.append("expected at least one managed coralogix/* repo name")
+        failures.append("expected at least one obdev-scan managed repo (cxai-observability-demo-playground)")
 
     return failures
 
@@ -157,7 +157,7 @@ def dmbsm_mcp_cookbook() -> dict:
             {
                 "tool": "query_metrics_range",
                 "query": 'max by (session_id, repository_name) (max_over_time(claude_code_session_repo_info{job="otel-ai-agent-sim"}[1h]))',
-                "note": "Dashboard join key; repository_name values include fictional coralogix/*, jchen/dotfiles, unknown",
+                "note": "Dashboard join key; repository_name values are org/repo (managed coralogix/* or fictional external repos)",
             },
             {
                 "tool": "query_metrics_range",

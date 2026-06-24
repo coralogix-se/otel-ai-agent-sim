@@ -48,7 +48,7 @@
           "github.copilot.cost": "0.66",
           "github.copilot.turn_count": "2",
 
-          "github.copilot.git.repository": "coralogix/ai-agent-instrumentation",
+          "github.copilot.git.repository": "coralogix/cxai-observability-demo-playground",
           "github.copilot.git.branch": "master",
           "github.copilot.git.commit_sha": "b5db4d33a674756873a648193a34fc3a2c993744",
           "github.copilot.github.org": "coralogix",
