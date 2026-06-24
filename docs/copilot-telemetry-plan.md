@@ -77,7 +77,9 @@ python3 scripts/extract_copilot_har_queries.py .logs/copiloteonlineboutique-dev.
 
 ## Validation on obdev
 
-**Tenant MCP:** `user-obdev-coralogix-server`  
+**Reusable checklist:** run [post-deploy-validation.md](./post-deploy-validation.md) after every major deploy (Tier 0 local → soak → tenant queries → results log).
+
+**Tenant MCP:** `user-ob-coralogix-server`  
 **Sim filter (append to every query):**
 
 ```dataprime
