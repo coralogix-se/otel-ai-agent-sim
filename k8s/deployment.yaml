@@ -143,11 +143,19 @@ spec:
             # With ``SIM_CLAUDE_STABLE_SESSION_PER_USER=false``: reuse one random UUID as ``session.id`` for N seconds
             # (legacy). 0 = pick a new user (stable mode) or new UUID (legacy mode) every iteration.
             #
-            # Parallel **long** Claude users (same duration N): ``SIM_CLAUDE_CONCURRENT_LONG_SESSIONS`` independent
-            # slots (like Gemini); each slot pins one roster row for N seconds — up to that many distinct users at once
-            # without shortening N. Slot pick: ``SIM_CLAUDE_SESSION_SLOT_STRATEGY`` = ``random`` (default) or ``round_robin``.
-            - name: SIM_CLAUDE_LONG_SESSION_SEC
-              value: "14400"
+            # Parallel **long** Claude users: ``SIM_CLAUDE_CONCURRENT_LONG_SESSIONS`` independent slots; each pins one
+            # roster row for a jittered window (``SIM_CLAUDE_LONG_SESSION_SEC_MIN``…``_MAX``). Code spreads slot
+            # expiries so rotations never align on a fixed wall-clock period (avoids artificial sawtooth metrics).
+            - name: SIM_CLAUDE_LONG_SESSION_SEC_MIN
+              value: "1800"
+            - name: SIM_CLAUDE_LONG_SESSION_SEC_MAX
+              value: "5400"
+            - name: SIM_CLAUDE_SESSION_ID_ROTATE_SEC_MIN
+              value: "386"
+            - name: SIM_CLAUDE_SESSION_ID_ROTATE_SEC_MAX
+              value: "900"
+            - name: SIM_CLAUDE_PREFILL_SESSION_SLOTS
+              value: "true"
             # Cursor Composer: ``SIM_CURSOR_STABLE_SESSION_PER_USER`` (app default true) + slots below reuse one roster
             # user per slot for ``SIM_CURSOR_LONG_SESSION_SEC`` or (if unset) the same ``SIM_CLAUDE_LONG_SESSION_SEC``
             # window — parallel sessions stay on distinct pinned users. Set ``SIM_CURSOR_LONG_SESSION_SEC=0`` for a new

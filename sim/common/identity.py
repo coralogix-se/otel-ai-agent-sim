@@ -9,7 +9,8 @@ import uuid
 
 from sim.claude.meta import _claude_effective_cx_subsystem, _claude_telemetry_profile
 from sim.claude.user_variance import (
-    claude_user_session_phase_offset,
+    claude_session_id_rotate_deadline,
+    claude_slot_pin_deadline,
     claude_user_session_rotate_duration_from_env,
 )
 from sim.common.otel import tool_version_for, _stable_uuid
@@ -315,8 +316,7 @@ def _claude_session_id_for_roster_user(user: dict) -> str:
         if now < deadline:
             return sid
     sid = str(uuid.uuid4())
-    phase = claude_user_session_phase_offset(user)
-    st.cc_user_session_ids[key] = (sid, now + float(rotate) + phase)
+    st.cc_user_session_ids[key] = (sid, claude_session_id_rotate_deadline(now, float(rotate)))
     return sid
 
 
@@ -341,14 +341,20 @@ def _claude_ensure_session_slots() -> int:
             base = random.randrange(len(allowed))
             for i in range(n_slots):
                 idx = allowed[(base + i) % len(allowed)]
-                st.cc_slot_users[i] = dict(_CORALOGIX_TEAM_USERS[idx])
-                st.cc_slot_deadlines[i] = now + float(dur)
+                user = dict(_CORALOGIX_TEAM_USERS[idx])
+                st.cc_slot_users[i] = user
+                st.cc_slot_deadlines[i] = claude_slot_pin_deadline(
+                    now, slot_index=i, n_slots=n_slots, roster_user=user, initial=True
+                )
     if dur > 0:
         now = time.monotonic()
         for i in range(n_slots):
             if st.cc_slot_users[i] is None or now >= st.cc_slot_deadlines[i]:
-                st.cc_slot_users[i] = _claude_roster_core_user(str(uuid.uuid4()) + f":slot:{i}")
-                st.cc_slot_deadlines[i] = now + float(dur)
+                user = _claude_roster_core_user(str(uuid.uuid4()) + f":slot:{i}")
+                st.cc_slot_users[i] = user
+                st.cc_slot_deadlines[i] = claude_slot_pin_deadline(
+                    now, slot_index=i, n_slots=n_slots, roster_user=user, initial=False
+                )
     return n_slots
 
 

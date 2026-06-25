@@ -183,9 +183,11 @@ spec:
             # slots (like Gemini); each slot pins one roster row for N seconds — up to that many distinct users at once
             # without shortening N. Slot pick: ``SIM_CLAUDE_SESSION_SLOT_STRATEGY`` = ``random`` (default) or ``round_robin``.
             # Target: ~18 parallel Claude users (aligned with Gemini/Cursor), one emit per cycle.
-            # 18 slots × 2700s user pin; session rotate uniform in [386,900]s.
-            - name: SIM_CLAUDE_LONG_SESSION_SEC
-              value: "2700"
+            # User pin uniform in [2100,4200]s; session.id rotate in [386,900]s; slot deadlines staggered in code.
+            - name: SIM_CLAUDE_LONG_SESSION_SEC_MIN
+              value: "2100"
+            - name: SIM_CLAUDE_LONG_SESSION_SEC_MAX
+              value: "4200"
             - name: SIM_CLAUDE_SESSION_ID_ROTATE_SEC_MIN
               value: "386"
             - name: SIM_CLAUDE_SESSION_ID_ROTATE_SEC_MAX

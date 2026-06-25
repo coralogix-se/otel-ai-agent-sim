@@ -26,7 +26,8 @@ from sim.common.repos import sim_rogue_user_token_multiplier
 from sim.claude.user_variance import (
     claude_user_emit_turns_this_cycle,
     claude_user_productivity_multiplier,
-    claude_user_session_phase_offset,
+    claude_session_id_rotate_deadline,
+    claude_slot_pin_deadline,
     claude_user_session_rotate_duration_from_env,
     claude_user_should_emit_this_cycle,
     claude_user_token_multiplier,
@@ -1994,8 +1995,7 @@ def _claude_session_id_for_roster_user(user: dict) -> str:
         if now < deadline:
             return sid
     sid = str(uuid.uuid4())
-    phase = claude_user_session_phase_offset(user)
-    _cc_user_session_ids[key] = (sid, now + float(rotate) + phase)
+    _cc_user_session_ids[key] = (sid, claude_session_id_rotate_deadline(now, float(rotate)))
     return sid
 
 
@@ -2021,14 +2021,20 @@ def _claude_ensure_session_slots() -> int:
             base = random.randrange(len(allowed))
             for i in range(n_slots):
                 idx = allowed[(base + i) % len(allowed)]
-                _cc_slot_users[i] = dict(_CORALOGIX_TEAM_USERS[idx])
-                _cc_slot_deadlines[i] = now + float(dur)
+                user = dict(_CORALOGIX_TEAM_USERS[idx])
+                _cc_slot_users[i] = user
+                _cc_slot_deadlines[i] = claude_slot_pin_deadline(
+                    now, slot_index=i, n_slots=n_slots, roster_user=user, initial=True
+                )
     if dur > 0:
         now = time.monotonic()
         for i in range(n_slots):
             if _cc_slot_users[i] is None or now >= _cc_slot_deadlines[i]:
-                _cc_slot_users[i] = _claude_roster_core_user(str(uuid.uuid4()) + f":slot:{i}")
-                _cc_slot_deadlines[i] = now + float(dur)
+                user = _claude_roster_core_user(str(uuid.uuid4()) + f":slot:{i}")
+                _cc_slot_users[i] = user
+                _cc_slot_deadlines[i] = claude_slot_pin_deadline(
+                    now, slot_index=i, n_slots=n_slots, roster_user=user, initial=False
+                )
     return n_slots
 
 
