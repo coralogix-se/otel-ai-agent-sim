@@ -194,9 +194,12 @@ spec:
               value: "900"
             - name: SIM_CLAUDE_PREFILL_SESSION_SLOTS
               value: "true"
-            # Fan-out: one emit per active slot each Claude cycle (was 60× per pick — disabled for balanced overview).
+            # Fan-out when Claude wins selection: ``SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT`` parallel emits (keep
+            # ``SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS=false`` so overview usage-by-agent pie stays ~balanced).
             - name: SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS
               value: "false"
+            - name: SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT
+              value: "5"
             # Cursor Composer: ``SIM_CURSOR_STABLE_SESSION_PER_USER`` (app default true) + slots below reuse one roster
             # user per slot for ``SIM_CURSOR_LONG_SESSION_SEC`` or (if unset) the same ``SIM_CLAUDE_LONG_SESSION_SEC``
             # window — parallel sessions stay on distinct pinned users. Set ``SIM_CURSOR_LONG_SESSION_SEC=0`` for a new

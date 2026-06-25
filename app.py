@@ -2006,6 +2006,34 @@ def _claude_emit_all_session_slots() -> bool:
     return _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0) > 0
 
 
+def _claude_emit_session_slot_count(n_slots: int) -> int:
+    """
+    How many parallel slot users emit when Claude Code wins agent selection.
+
+    ``SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS=true`` → all slots. Else ``SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT``
+    (default 1) caps fan-out so overview session share stays balanced vs span-based agents.
+    """
+    if n_slots <= 0:
+        return 0
+    if _claude_emit_all_session_slots():
+        return n_slots
+    cap = _env_int("SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT", 1)
+    return min(n_slots, max(1, cap))
+
+
+def _claude_pick_session_slot_indices(n_emit: int, n_slots: int) -> list[int]:
+    """Pick ``n_emit`` distinct slot indices (``SIM_CLAUDE_SESSION_SLOT_STRATEGY``)."""
+    if n_emit >= n_slots:
+        return list(range(n_slots))
+    strat = os.environ.get("SIM_CLAUDE_SESSION_SLOT_STRATEGY", "random").strip().lower().replace("-", "_")
+    if strat in ("round_robin", "rr"):
+        global _cc_slot_rr
+        start = _cc_slot_rr % n_slots
+        _cc_slot_rr += n_emit
+        return [(start + i) % n_slots for i in range(n_emit)]
+    return random.sample(range(n_slots), n_emit)
+
+
 def _claude_ensure_session_slots() -> int:
     """Initialize / refresh parallel Claude user slots; return slot count."""
     dur = _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0)
@@ -2039,12 +2067,14 @@ def _claude_ensure_session_slots() -> int:
 
 
 def _claude_roster_users_for_claude_code_emit() -> list[dict]:
-    """All active slot users when fan-out is enabled; otherwise a one-element list."""
+    """Active slot users to emit this Claude cycle (1, capped N, or all slots)."""
     dur = _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0)
     if dur <= 0:
         return [_claude_roster_core_user(str(uuid.uuid4()))]
-    _claude_ensure_session_slots()
-    return [dict(u) for u in _cc_slot_users if u is not None]
+    n_slots = _claude_ensure_session_slots()
+    n_emit = _claude_emit_session_slot_count(n_slots)
+    indices = _claude_pick_session_slot_indices(n_emit, n_slots)
+    return [dict(_cc_slot_users[i]) for i in indices if _cc_slot_users[i] is not None]
 
 
 def _claude_roster_user_for_claude_code_emit() -> dict:
@@ -3964,10 +3994,8 @@ def main() -> None:
             mult = max(0.01, _env_float("SIM_CLAUDE_PER_EMIT_TOKEN_MULT", 1.0))
             batch = max(1, _env_int("SIM_CLAUDE_TOKEN_EMIT_BATCH", 1))
             stable_user = _env_bool("SIM_CLAUDE_STABLE_SESSION_PER_USER", True)
-            if stable_user and _claude_emit_all_session_slots():
+            if stable_user:
                 roster_users = _claude_roster_users_for_claude_code_emit()
-            elif stable_user:
-                roster_users = [_claude_roster_user_for_claude_code_emit()]
             else:
                 roster_users = [None]
             for user_idx, _ru in enumerate(roster_users):
