@@ -1,0 +1,71 @@
+# Single Coralogix tenant: OTLP traces/logs + Prometheus remote_write via one API key.
+# Ingress host is substituted by scripts/deploy-sigmadev.sh (default ingress.us2.coralogix.com).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-codeagentsim-config
+  namespace: codeagentsim
+  labels:
+    app: otel-collector-codeagentsim
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13134
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:24317
+          http:
+            endpoint: 0.0.0.0:24318
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: otel-ai-agent-sim
+              scrape_interval: 15s
+              static_configs:
+                - targets:
+                    - otel-ai-agent-sim:9090
+
+    processors:
+      # Backpressure before kernel OOM; keep limit_mib ~75–80% of pod memory limit (1536Mi).
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 1200
+        spike_limit_mib: 192
+      batch:
+        timeout: 5s
+        send_batch_size: 256
+
+    exporters:
+      otlp/coralogix:
+        endpoint: CORALOGIX_INGRESS_HOST:443
+        tls:
+          insecure: false
+        headers:
+          Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY}
+
+      prometheusremotewrite/coralogix:
+        endpoint: https://CORALOGIX_INGRESS_HOST/prometheus/v1
+        tls:
+          insecure: false
+        headers:
+          Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY}
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/coralogix]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/coralogix]
+        metrics:
+          receivers: [prometheus]
+          processors: [memory_limiter, batch]
+          exporters: [prometheusremotewrite/coralogix]

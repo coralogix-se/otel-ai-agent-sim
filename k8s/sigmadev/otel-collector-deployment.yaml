@@ -31,22 +31,11 @@ spec:
               containerPort: 13134
               protocol: TCP
           env:
-            - name: CORALOGIX_PRIVATE_KEY_US2
+            - name: CORALOGIX_PRIVATE_KEY
               valueFrom:
                 secretKeyRef:
-                  name: coralogix-multi-export
-                  key: private_key_us2
-            - name: CORALOGIX_PRIVATE_KEY_EU1
-              valueFrom:
-                secretKeyRef:
-                  name: coralogix-multi-export
-                  key: private_key_eu1
-            # onlineboutique-dev Coralogix instance (US2); same ingress as US2 exporter #1, different API key.
-            - name: CORALOGIX_PRIVATE_KEY_ONLINEBOUTIQUE_DEV
-              valueFrom:
-                secretKeyRef:
-                  name: coralogix-multi-export
-                  key: private_key_onlineboutique_dev
+                  name: coralogix-otel
+                  key: private_key
           volumeMounts:
             - name: config
               mountPath: /etc/otelcol

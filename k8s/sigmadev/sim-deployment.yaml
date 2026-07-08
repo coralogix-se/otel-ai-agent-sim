@@ -1,4 +1,4 @@
-# Sim Deployment — OTLP to otel-collector-codeagentsim:24317; metrics scraped by collector.
+# Sim Deployment (SigmaDev) — OTLP to otel-collector-codeagentsim:24317; single Coralogix tenant via collector.
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -162,7 +162,7 @@ spec:
             # - name: SIM_GEMINI_LONG_SESSION_SEC
             #   value: "7200"
             - name: DEPLOYMENT_ENVIRONMENT
-              value: test-cluster
+              value: sigmadev
             - name: POD_NAME
               valueFrom:
                 fieldRef:
