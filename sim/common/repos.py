@@ -106,8 +106,8 @@ def sim_rogue_user_token_multiplier(roster_user: dict | None) -> float:
     """Token/cost scale for rogue users so they rank among top spenders on cost panels."""
     if not is_sim_rogue_user(roster_user):
         return 1.0
-    lo = _env_float("SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MIN", 4.0)
-    hi = max(lo, _env_float("SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MAX", 8.0))
+    lo = _env_float("SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MIN", 1.5)
+    hi = max(lo, _env_float("SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MAX", 2.5))
     email = str(roster_user.get("user.email", "")) if roster_user else ""
     rng = random.Random(hashlib.sha256(f"cc:rogue:mult:{email}".encode()).digest())
     return rng.uniform(lo, hi)

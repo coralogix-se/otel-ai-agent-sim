@@ -1,9 +1,10 @@
 """Per-model USD pricing for simulated LLM cost (input/output/cache tokens).
 
-Rates are USD per 1M tokens, aligned with vendor list prices (June 2026):
+Rates are USD per 1M tokens, aligned with vendor list prices (July 2026):
 - Anthropic: https://platform.claude.com/docs/en/about-claude/models/overview
-- OpenAI: https://developers.openai.com/codex/models and API pricing tiers
+- OpenAI / Codex: https://developers.openai.com/codex/models and API pricing tiers
 - Google Gemini: https://ai.google.dev/gemini-api/docs/pricing
+- Cursor list prices: https://cursor.com/docs/models
 - GitHub Copilot ``github.copilot.cost`` uses the same API-equivalent rates for the routed model.
 """
 from __future__ import annotations
@@ -35,7 +36,9 @@ def _r(inp: float, out: float, *, cache_read: float | None = None, cache_write: 
 
 # Explicit ids used in sim pools (and common aliases).
 _EXACT: dict[str, ModelRates] = {
-    # --- Anthropic Claude (Opus/Sonnet/Haiku) ---
+    # --- Anthropic Claude (Opus/Sonnet/Haiku/Fable) ---
+    "claude-fable-5": _r(10.0, 50.0),
+    "claude-sonnet-5": _r(3.0, 15.0),
     "claude-opus-4-8": _r(5.0, 25.0),
     "claude-opus-4-7": _r(5.0, 25.0),
     "claude-opus-4-6": _r(5.0, 25.0),
@@ -52,7 +55,11 @@ _EXACT: dict[str, ModelRates] = {
     "claude-opus-4.7": _r(5.0, 25.0),
     "claude-opus-4.6": _r(5.0, 25.0),
     "claude-opus-4.5": _r(5.0, 25.0),
-    # --- OpenAI / Codex ---
+    # --- OpenAI / Codex (GPT-5.6 Sol/Terra/Luna + prior) ---
+    "gpt-5.6": _r(5.0, 30.0, cache_read=0.50, cache_write=6.25),
+    "gpt-5.6-sol": _r(5.0, 30.0, cache_read=0.50, cache_write=6.25),
+    "gpt-5.6-terra": _r(2.50, 15.0, cache_read=0.25, cache_write=3.125),
+    "gpt-5.6-luna": _r(1.0, 6.0, cache_read=0.10, cache_write=1.25),
     "gpt-5.5": _r(5.0, 30.0, cache_read=0.50),
     "gpt-5.5-pro": _r(30.0, 180.0),
     "gpt-5.4": _r(2.50, 15.0, cache_read=0.25),
@@ -70,7 +77,8 @@ _EXACT: dict[str, ModelRates] = {
     "gpt-4o-mini": _r(0.15, 0.60, cache_read=0.075),
     "gpt-4.1": _r(2.0, 8.0, cache_read=0.50),
     # --- Google Gemini ---
-    "gemini-3.5-flash": _r(1.00, 6.00),
+    "gemini-3.6-flash": _r(1.50, 7.50, cache_read=0.15),
+    "gemini-3.5-flash": _r(1.50, 9.00, cache_read=0.15),
     "gemini-3.1-pro-preview": _r(2.00, 12.00),
     "gemini-3.1-pro": _r(2.00, 12.00),
     "gemini-3.1-pro-preview-customtools": _r(2.00, 12.00),
@@ -83,16 +91,17 @@ _EXACT: dict[str, ModelRates] = {
     "gemini-2.5-flash-lite": _r(0.10, 0.40),
     "gemini-2.0-flash": _r(0.10, 0.40),
     "gemini-3-flash": _r(0.50, 3.00),
-    "gemini-3.1-pro": _r(2.00, 12.00),
     "gemma-4-31b-it": _r(0.20, 0.80),
     "gemma-4-26b-a4b-it": _r(0.20, 0.80),
-    # --- Copilot / misc routed ids ---
+    # --- Copilot / Cursor / misc routed ids ---
     "mai-code-1-flash": _r(0.75, 4.50),
     "raptor-mini": _r(0.75, 4.50),
+    "kimi-k2.7-code": _r(0.95, 4.00, cache_read=0.19),
     "composer-2": _r(0.50, 2.50),  # legacy Cursor-native
     "composer-2.5": _r(0.50, 2.50),
     "composer-2.5-fast": _r(3.00, 15.00),
-    # --- Third-party models routable via Claude Code ---
+    # --- Third-party models routable via Cursor / Claude Code ---
+    "grok-4.5": _r(2.00, 6.00, cache_read=0.50),
     "grok-4.3": _r(1.25, 2.50, cache_read=0.20),
     "grok-4.20": _r(2.00, 6.00, cache_read=0.20),
     "grok-build-0.1": _r(1.00, 2.00, cache_read=0.20),
@@ -101,9 +110,14 @@ _EXACT: dict[str, ModelRates] = {
 
 # Longest-prefix / pattern fallbacks (order matters).
 _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
+    ("claude-fable", _r(10.0, 50.0)),
     ("claude-opus", _r(5.0, 25.0)),
     ("claude-sonnet", _r(3.0, 15.0)),
     ("claude-haiku", _r(1.0, 5.0)),
+    ("gpt-5.6-sol", _r(5.0, 30.0, cache_read=0.50, cache_write=6.25)),
+    ("gpt-5.6-terra", _r(2.50, 15.0, cache_read=0.25, cache_write=3.125)),
+    ("gpt-5.6-luna", _r(1.0, 6.0, cache_read=0.10, cache_write=1.25)),
+    ("gpt-5.6", _r(5.0, 30.0, cache_read=0.50, cache_write=6.25)),
     ("gpt-5.5-pro", _r(30.0, 180.0)),
     ("gpt-5.5", _r(5.0, 30.0, cache_read=0.50)),
     ("gpt-5.4-mini", _r(0.75, 4.50, cache_read=0.075)),
@@ -111,12 +125,14 @@ _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
     ("gpt-5.4", _r(2.50, 15.0, cache_read=0.25)),
     ("gpt-5.3-codex", _r(1.75, 14.0, cache_read=0.175)),
     ("gpt-5-codex", _r(1.75, 14.0, cache_read=0.175)),
-    ("gemini-3.5", _r(1.00, 6.00)),
+    ("gemini-3.6", _r(1.50, 7.50, cache_read=0.15)),
+    ("gemini-3.5", _r(1.50, 9.00, cache_read=0.15)),
     ("gemini-3.1-pro", _r(2.00, 12.00)),
     ("gemini-3-pro", _r(2.00, 12.00)),
-    ("gemini-3.1-pro", _r(2.00, 12.00)),
     ("gemini-3-flash", _r(0.50, 3.00)),
     ("gemma-4", _r(0.20, 0.80)),
+    ("kimi-k2", _r(0.95, 4.00, cache_read=0.19)),
+    ("grok-4.5", _r(2.00, 6.00, cache_read=0.50)),
     ("grok-build", _r(1.00, 2.00, cache_read=0.20)),
     ("gemini-3.1-flash", _r(0.10, 0.40)),
     ("gemini-2.5-pro", _r(1.25, 10.00)),
@@ -147,6 +163,8 @@ def model_rates(model: str) -> ModelRates:
     for prefix, rates in _PREFIX_RULES:
         if key.startswith(prefix):
             return rates
+    if re.search(r"fable", key):
+        return _r(10.0, 50.0)
     if re.search(r"opus", key):
         return _r(5.0, 25.0)
     if re.search(r"haiku", key):

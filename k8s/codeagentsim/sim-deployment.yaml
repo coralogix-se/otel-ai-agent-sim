@@ -118,6 +118,29 @@ spec:
               value: "true"
             - name: SIM_COPILOT_COLLECTOR_ORG
               value: coralogix
+            # Stamp ``github.copilot.cost`` / billing ~once per user per UTC day (accrued from sessions).
+            - name: SIM_COPILOT_COST_ONCE_PER_DAY
+              value: "true"
+            # Emit late enough that accrued USD ≈ most of that user's day (API-equivalent).
+            - name: SIM_COPILOT_COST_EMIT_AFTER_SESSIONS
+              value: "8"
+            - name: SIM_COPILOT_COST_EMIT_AFTER_SEC
+              value: "14400"
+            # Billing PromQL uses sum_over_time — emit github_copilot_billing_* once/UTC day only.
+            - name: SIM_COPILOT_BILLING_DAILY_SAMPLE
+              value: "true"
+            - name: SIM_COPILOT_BILLING_SAMPLE_AFTER_SEC
+              value: "14400"
+            - name: SIM_COPILOT_BILLING_SAMPLE_HOUR_UTC
+              value: "20"
+            - name: SIM_COPILOT_PROMPT_TOKENS_MIN
+              value: "400"
+            - name: SIM_COPILOT_PROMPT_TOKENS_MAX
+              value: "4000"
+            - name: SIM_COPILOT_OUTPUT_TOKENS_MIN
+              value: "80"
+            - name: SIM_COPILOT_OUTPUT_TOKENS_MAX
+              value: "1500"
             # ~25% of roster users emit user_email="" on collector series (PromQL label_join fallback):
             # - name: SIM_COPILOT_COLLECTOR_EMPTY_EMAIL_RATE
             #   value: "0.25"
@@ -199,7 +222,7 @@ spec:
             - name: SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS
               value: "false"
             - name: SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT
-              value: "5"
+              value: "1"
             # Cursor Composer: ``SIM_CURSOR_STABLE_SESSION_PER_USER`` (app default true) + slots below reuse one roster
             # user per slot for ``SIM_CURSOR_LONG_SESSION_SEC`` or (if unset) the same ``SIM_CLAUDE_LONG_SESSION_SEC``
             # window — parallel sessions stay on distinct pinned users. Set ``SIM_CURSOR_LONG_SESSION_SEC=0`` for a new
@@ -243,11 +266,11 @@ spec:
             # Gemini CLI ``user_prompt`` OTLP spans (``gemini-cli`` resource). Metrics/logs unchanged when false.
             - name: SIM_GEMINI_OTLP_TRACES_ENABLED
               value: "true"
-            # Per-turn token totals (defaults in app.py ~4.5k–225k combined; avoids one 50M spike flattening charts).
-            # - name: SIM_CLAUDE_TOTAL_TOKENS_MIN
-            #   value: "100000"
-            # - name: SIM_CLAUDE_TOTAL_TOKENS_MAX
-            #   value: "50000000"
+            # Per-turn token totals (defaults in code ~2.5k–18k combined for realistic weekly spend).
+            - name: SIM_CLAUDE_TOTAL_TOKENS_MIN
+              value: "2500"
+            - name: SIM_CLAUDE_TOTAL_TOKENS_MAX
+              value: "18000"
             # More users + higher token counts in ``topk(... increase(...))``: ``round_robin`` roster, batch emits, mult.
             # - name: SIM_CLAUDE_ROSTER_STRATEGY
             #   value: round_robin
@@ -265,7 +288,11 @@ spec:
             # All sessions emit linkable ``org/repo`` names on ``claude_code_session_repo_info`` (no ``unknown``).
             # Managed = repos in GitHub integration scan (``GetScan``), not all coralogix/* on GitHub.
             # obdev scan (2026-06): ``coralogix/cxai-observability-demo-playground`` only.
-            # Rogue users (roster indices 17,42,88): ~85% unmanaged repos + 4–8× token/cost multiplier.
+            # Rogue users (roster indices 17,42,88): mild token/cost bump (defaults 1.5–2.5×).
+            - name: SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MIN
+              value: "1.5"
+            - name: SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MAX
+              value: "2.5"
             - name: SIM_CLAUDE_ORG_REPOS
               value: "coralogix/cxai-observability-demo-playground"
             # - name: SIM_CLAUDE_ROGUE_USER_INDICES

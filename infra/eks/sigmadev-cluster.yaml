@@ -1,0 +1,61 @@
+# SigmaDev — 3-node EKS cluster for otel-ai-agent-sim (~30 pod capacity).
+# Reuses the default VPC (vpc-077b7582dc73f76bc) shared with coralogixDemo — account VPC/IGW limit is 5.
+#
+# Create: bash scripts/create-sigmadev-cluster.sh
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: SigmaDev
+  region: us-west-2
+  version: "1.36"
+
+# eksctl/API defaults to EXTENDED; use STANDARD to avoid extended-support charges.
+upgradePolicy:
+  supportType: STANDARD
+
+# Omit metrics-server (not needed for the sim; saves a small amount of cluster overhead).
+addonsConfig:
+  disableDefaultAddons: true
+addons:
+  - name: vpc-cni
+  - name: coredns
+  - name: kube-proxy
+
+autoModeConfig:
+  enabled: false
+
+vpc:
+  id: vpc-077b7582dc73f76bc
+  subnets:
+    public:
+      us-west-2a:
+        id: subnet-02cae8d7cba17e578
+      us-west-2b:
+        id: subnet-0b21fa331556b919f
+      us-west-2c:
+        id: subnet-09fd255f2a77fd841
+      us-west-2d:
+        id: subnet-0972aac2da34d8e99
+  clusterEndpoints:
+    publicAccess: true
+    privateAccess: true
+  nat:
+    gateway: Disable
+
+managedNodeGroups:
+  - name: sigmadev-ng
+    instanceType: t3.large
+    desiredCapacity: 3
+    minSize: 3
+    maxSize: 3
+    volumeSize: 50
+    amiFamily: AmazonLinux2023
+    privateNetworking: false
+    labels:
+      owner: otel-ai-agent-sim
+      cluster: SigmaDev
+    tags:
+      Name: SigmaDev-ng
+      Project: otel-ai-agent-sim
+      Environment: sigmadev

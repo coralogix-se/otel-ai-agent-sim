@@ -3,12 +3,16 @@
 VS Code Copilot OTel: ``invoke_agent`` → ``chat`` / ``execute_tool``, ``gen_ai.agent.name=copilotcli``,
 Resource ``service.name=github-copilot``. Span tags aligned with Coralogix AI Center Copilot CLI dashboards:
 
-- cxai-demo: ``otel.scope.name=github.copilot``, ``enduser.pseudo.id``, ``github.copilot.cost``,
-  ``gen_ai.usage.*`` on ``invoke_agent``.
+- cxai-demo: ``otel.scope.name=github.copilot``, ``enduser.pseudo.id``, ``github.copilot.cost``
+  (once-per-day rollup reflecting accrued session usage — not per-turn), ``gen_ai.usage.*``
+  on ``invoke_agent``.
 - cx498 repo panels: ``github.copilot.git.*``, ``github.copilot.nano_aiu``, ``$d.process.tags['user.email']``
   (via per-session Resource), ``gen_ai.response.model`` on ``chat``.
 - cx498 session breakdown: ``gen_ai.conversation.id``, ``gen_ai.input.messages`` / ``gen_ai.output.messages``
   on ``chat`` (GenAI JSON message shape for ``sessionsWithMessages`` / AI analysis).
+
+Cost: set ``SIM_COPILOT_COST_ONCE_PER_DAY=false`` to restore legacy per-session ``github.copilot.cost``
+on ``invoke_agent``. Chat spans never carry cost (avoids sum()-inflated dashboards).
 
 See https://code.visualstudio.com/docs/agents/guides/monitoring-agents
 """
@@ -155,7 +159,11 @@ def _copilot_github_cost_usd(
     *,
     cache_read_tokens: int = 0,
 ) -> float:
-    """USD for ``tags['github.copilot.cost']`` on ``invoke_agent`` (model-aware API-equivalent rates)."""
+    """API-equivalent USD for Copilot usage (model-aware rates).
+
+    ``input_tokens`` should be the **full** prompt size (billable + cache-read). Cache-read
+    tokens are billed at the discounted cache rate inside ``estimate_llm_cost_usd``.
+    """
     from sim.common.model_pricing import estimate_llm_cost_usd
 
     return estimate_llm_cost_usd(
@@ -165,6 +173,15 @@ def _copilot_github_cost_usd(
         cache_read_tokens=cache_read_tokens,
         jitter_usd=random.uniform(0.0, 1e-6),
     )
+
+
+def _copilot_turn_token_counts() -> tuple[int, int]:
+    """Prompt/output tokens per Copilot ``chat`` turn (realistic CLI ranges)."""
+    p_lo = max(64, _env_int("SIM_COPILOT_PROMPT_TOKENS_MIN", 400))
+    p_hi = max(p_lo + 1, _env_int("SIM_COPILOT_PROMPT_TOKENS_MAX", 4_000))
+    o_lo = max(32, _env_int("SIM_COPILOT_OUTPUT_TOKENS_MIN", 80))
+    o_hi = max(o_lo + 1, _env_int("SIM_COPILOT_OUTPUT_TOKENS_MAX", 1_500))
+    return random.randint(p_lo, p_hi), random.randint(o_lo, o_hi)
 
 
 def _copilot_nano_aiu(cost_usd: float) -> int:
@@ -470,8 +487,7 @@ def emit_copilot_cli_session(
                 seg_cache_read_in = 0
 
                 for _ in range(seg_turns):
-                    prompt_tokens = random.randint(800, 14_000)
-                    out = random.randint(120, 6000)
+                    prompt_tokens, out = _copilot_turn_token_counts()
                     billable_in, cache_read_in, cached = sim_prompt_cache_token_split(
                         prompt_tokens,
                         turn_index=turn_global,
@@ -503,9 +519,6 @@ def emit_copilot_cli_session(
                     prompt, assistant_text = copilot_prompt_reply_for_turn(conversation_id, turn_global)
                     user_text = prompt if turn_global == 0 else f"Continue: {prompt[:160]}"
                     segment_messages.append((user_text, assistant_text, finish_reason))
-                    chat_cost_usd = _copilot_github_cost_usd(
-                        model, billable_in, out, cache_read_tokens=cache_read_in
-                    )
                     interaction_id = str(uuid.uuid4())
                     service_request_id = str(uuid.uuid4())
                     response_id = f"msg_{hashlib.sha256(f'{conversation_id}:{turn_global}'.encode()).hexdigest()[:20]}"
@@ -515,6 +528,8 @@ def emit_copilot_cli_session(
                         kind=trace.SpanKind.CLIENT,
                     ) as chat_sp:
                         chat_sp.set_status(Status(StatusCode.OK))
+                        # Cost / nano_aiu intentionally omitted on chat — dashboards that sum
+                        # ``github.copilot.cost`` expect ~once/day rollups, not per-turn stamps.
                         chat_sp.set_attributes(
                             {
                                 "agent.product": "copilot_cli",
@@ -528,10 +543,9 @@ def emit_copilot_cli_session(
                                 "gen_ai.usage.input_tokens": billable_in,
                                 "gen_ai.usage.output_tokens": out,
                                 "gen_ai.usage.cache_creation_input_tokens": cache_creation,
+                                "gen_ai.usage.cache_read_input_tokens": cache_read_in,
                                 "gen_ai.usage.reasoning_output_tokens": reasoning_out,
                                 "gen_ai.response.finish_reasons": _copilot_finish_reasons_json(finish_reason),
-                                "github.copilot.cost": chat_cost_usd,
-                                "github.copilot.nano_aiu": _copilot_nano_aiu(chat_cost_usd),
                                 "github.copilot.server_duration": str(int(chat_duration_s * 1000)),
                                 "github.copilot.initiator": "user",
                                 "github.copilot.turn_id": str(turn_global),
@@ -632,9 +646,11 @@ def emit_copilot_cli_session(
 
                     turn_global += 1
 
+                # Full prompt = billable + cache-read (pricing helper subtracts cache-read once).
+                seg_prompt = seg_in + seg_cache_read_in
                 seg_cost_usd = _copilot_github_cost_usd(
                     model,
-                    seg_in,
+                    seg_prompt,
                     seg_out,
                     cache_read_tokens=seg_cache_read_in,
                 )
@@ -648,19 +664,75 @@ def emit_copilot_cli_session(
                         "gen_ai.usage.reasoning_output_tokens": seg_reasoning_out,
                         "gen_ai.response.finish_reasons": _copilot_finish_reasons_json(last_finish_reason),
                         "github.copilot.turn_count": str(seg_turns),
-                        "github.copilot.nano_aiu": _copilot_nano_aiu(seg_cost_usd),
                     }
                 )
-                if random.random() >= float(os.environ.get("SIM_COPILOT_NULL_INVOKE_COST_RATE", "0.12")):
-                    root.set_attribute("github.copilot.cost", seg_cost_usd)
+                # Defer cost/nano_aiu until after all segments so we can attach a once/day rollup.
 
         wall_s = max(0.01, time.perf_counter() - wall_start)
+        session_prompt = total_in + total_cache_read_in
         session_cost_usd = _copilot_github_cost_usd(
             model,
-            total_in,
+            session_prompt,
             total_out,
             cache_read_tokens=total_cache_read_in,
         )
+
+        from sim.copilot.daily_cost import (
+            accrue_copilot_session_cost,
+            copilot_cost_once_per_day_enabled,
+            take_copilot_daily_cost_emit,
+        )
+
+        accrue_copilot_session_cost(
+            user_email,
+            session_cost_usd,
+            input_tokens=total_in,
+            output_tokens=total_out,
+            cache_read_tokens=total_cache_read_in,
+        )
+
+        daily_emit = take_copilot_daily_cost_emit(user_email)
+        emit_cost_usd: float | None = None
+        if daily_emit is not None:
+            emit_cost_usd = daily_emit.cost_usd
+        elif not copilot_cost_once_per_day_enabled():
+            # Legacy: stamp per-session cost on invoke_agent (optional null rate).
+            if random.random() >= float(os.environ.get("SIM_COPILOT_NULL_INVOKE_COST_RATE", "0.12")):
+                emit_cost_usd = session_cost_usd
+
+        if emit_cost_usd is not None and emit_cost_usd > 0:
+            # Attach daily (or legacy session) cost to the most recent invoke_agent via a
+            # lightweight follow-up attribute span is not available after close — re-open is
+            # messy; stamp via OTLP log + Prometheus billing instead, and set on a dedicated
+            # cost span under a new short-lived root when needed.
+            with tracer.start_as_current_span(
+                "invoke_agent",
+                kind=trace.SpanKind.CLIENT,
+            ) as cost_root:
+                cost_root.set_status(Status(StatusCode.OK))
+                cost_root.set_attributes(
+                    {
+                        "agent.product": "copilot_cli",
+                        "gen_ai.provider.name": "github",
+                        "gen_ai.operation.name": "invoke_agent",
+                        "gen_ai.request.model": model,
+                        "gen_ai.session.id": conversation_id,
+                        "gen_ai.conversation.id": conversation_id,
+                        "cx.application.name": cx_app,
+                        "cx.subsystem.name": cx_sub,
+                        "otel.scope.name": scope_nm,
+                        "enduser.pseudo.id": pseudo_id,
+                        "github.copilot.cost": emit_cost_usd,
+                        "github.copilot.nano_aiu": _copilot_nano_aiu(emit_cost_usd),
+                        "github.copilot.cost.rollup": "daily" if daily_emit is not None else "session",
+                        "github.copilot.cost.day": (
+                            daily_emit.day if daily_emit is not None else ""
+                        ),
+                        "github.copilot.cost.sessions": (
+                            daily_emit.sessions if daily_emit is not None else 1
+                        ),
+                    }
+                )
 
         if st.prom_copilot_agent_dur is not None:
             st.prom_copilot_agent_dur.labels(cx_app, cx_sub, model).observe(wall_s)
@@ -688,8 +760,10 @@ def emit_copilot_cli_session(
                 n_tools=n_tools_total,
                 total_in=total_in,
                 total_out=total_out,
-                cost_usd=session_cost_usd,
+                # Billing amount only on the daily rollup emit (reflects accrued usage).
+                cost_usd=emit_cost_usd if emit_cost_usd is not None else 0.0,
                 productivity_ok=session_productivity_ok,
+                record_billing=emit_cost_usd is not None,
             )
 
         _emit_copilot_session_repo_metrics(

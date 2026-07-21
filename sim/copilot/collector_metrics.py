@@ -13,24 +13,40 @@ Label shapes follow the dashboard filter helper and ``docs/copilot-sim-data.json
   (``SIM_COPILOT_COLLECTOR_EMPTY_EMAIL_RATE``) for PromQL ``label_join`` fallback panels
 
 **Semantics (Phase 3.5):** GitHub's exporter exposes daily usage as gauges (DAU/WAU/MAU) and billing as
-cumulative amounts. This sim **accumulates counters in-process** and exposes them as gauge families on
-scrape (same pattern as the pre-Phase-3 scaffold). ``increase()`` over scrape windows approximates session
-increments; DAU gauges reflect distinct users touched today (by email or login when email is blank).
+**one sample per day** (daily net/gross/discount amounts). AI Center net-cost PromQL is
+``sum(sum_over_time(github_copilot_billing_net_amount[7d]))``, which only stays sane with sparse
+daily samples — continuous scrape of a cumulative series inflates into millions.
+
+This sim:
+- Accumulates non-billing counters in-process and exposes them every scrape (session/token/etc.).
+- Accrues **today's** billing amounts in memory, then exposes ``github_copilot_billing_*`` on
+  **at most one scrape per UTC day** (then omits them) so Coralogix stores ~1 point/day.
+- DAU gauges reflect distinct users touched today (by email or login when email is blank).
 """
 
 from __future__ import annotations
 
 import random
 import threading
+import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 
 from prometheus_client.core import GaugeMetricFamily
 from prometheus_client.registry import Collector
 
-from sim.common.env import _env_bool, _env_float
+from sim.common.env import _env_bool, _env_float, _env_int
 from sim.common.identity import copilot_collector_dau_identity, copilot_collector_user_metric_labels
+
+_BILLING_METRIC_NAMES = frozenset(
+    {
+        "github_copilot_billing_net_amount",
+        "github_copilot_billing_gross_amount",
+        "github_copilot_billing_discount_amount",
+        "github_copilot_billing_net_quantity",
+    }
+)
 
 _ORG_L = ("organization",)
 _USER_L = ("organization", "user_email", "user_login", "user_name")
@@ -179,8 +195,80 @@ class GitHubCopilotCollector(Collector):
         self._lock = threading.Lock()
         self._counters: dict[tuple[str, tuple[tuple[str, str], ...]], float] = defaultdict(float)
         self._gauges: dict[tuple[str, tuple[tuple[str, str], ...]], float] = {}
+        # Daily billing buckets (org, sku) — exported at most once per UTC day.
+        self._billing_day: str = ""
+        self._billing_net: dict[tuple[str, str], float] = defaultdict(float)
+        self._billing_gross: dict[tuple[str, str], float] = defaultdict(float)
+        self._billing_discount: dict[tuple[str, str], float] = defaultdict(float)
+        self._billing_quantity: dict[tuple[str, str], float] = defaultdict(float)
+        self._billing_first_accrual_mono: float = 0.0
+        self._billing_exported_day: str = ""
+
+    def _utc_day(self) -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _rollover_billing_day_locked(self) -> None:
+        day = self._utc_day()
+        if self._billing_day == day:
+            return
+        self._billing_day = day
+        self._billing_net.clear()
+        self._billing_gross.clear()
+        self._billing_discount.clear()
+        self._billing_quantity.clear()
+        self._billing_first_accrual_mono = 0.0
+        # Keep _billing_exported_day so a late scrape after midnight starts a new day cleanly.
+
+    def accrue_daily_billing(
+        self,
+        *,
+        organization: str,
+        sku: str,
+        net_usd: float,
+        gross_usd: float,
+        discount_usd: float,
+        quantity: float,
+    ) -> None:
+        """Add to today's org+sku billing totals (exported once/day as sparse gauges)."""
+        if net_usd <= 0 and gross_usd <= 0 and quantity <= 0:
+            return
+        with self._lock:
+            self._rollover_billing_day_locked()
+            key = (organization, sku)
+            if self._billing_first_accrual_mono <= 0.0:
+                self._billing_first_accrual_mono = time.monotonic()
+            self._billing_net[key] += max(0.0, float(net_usd))
+            self._billing_gross[key] += max(0.0, float(gross_usd))
+            self._billing_discount[key] += max(0.0, float(discount_usd))
+            self._billing_quantity[key] += max(0.0, float(quantity))
+
+    def _billing_sample_ready_locked(self) -> bool:
+        """True when today's billing may be exported on this scrape (at most once)."""
+        if not _env_bool("SIM_COPILOT_BILLING_DAILY_SAMPLE", True):
+            # Legacy: export every scrape from in-day totals (breaks sum_over_time).
+            return bool(self._billing_net)
+        day = self._utc_day()
+        if self._billing_exported_day == day:
+            return False
+        if not self._billing_net:
+            return False
+        # Prefer late-day sample (matches GitHub daily gauge). Also allow an earlier
+        # sample after SIM_COPILOT_BILLING_SAMPLE_AFTER_SEC from first accrual.
+        min_hour = _env_int("SIM_COPILOT_BILLING_SAMPLE_HOUR_UTC", 20)
+        after_sec = max(0.0, _env_float("SIM_COPILOT_BILLING_SAMPLE_AFTER_SEC", 14400.0))
+        hour_ok = min_hour <= 0 or datetime.now(timezone.utc).hour >= min_hour
+        age = (
+            time.monotonic() - self._billing_first_accrual_mono
+            if self._billing_first_accrual_mono > 0
+            else 0.0
+        )
+        age_ok = after_sec > 0 and age >= after_sec
+        return hour_ok or age_ok
 
     def _inc_counter(self, name: str, labels: dict[str, str], amount: float) -> None:
+        if name in _BILLING_METRIC_NAMES:
+            # Billing must go through accrue_daily_billing (daily sparse gauges).
+            return
         key = (name, _label_key(labels))
         with self._lock:
             self._counters[key] += amount
@@ -193,13 +281,53 @@ class GitHubCopilotCollector(Collector):
     def _handle(self, name: str, labelnames: tuple[str, ...]) -> _MetricHandle:
         return _MetricHandle(self, name, labelnames)
 
+    def _billing_families_locked(self) -> list[GaugeMetricFamily]:
+        """Build billing gauge families from today's buckets; caller marks exported."""
+        if not self._billing_net:
+            return []
+        net_f = GaugeMetricFamily(
+            "github_copilot_billing_net_amount",
+            "GitHub Copilot collector daily net billing amount",
+            labels=["organization", "sku"],
+        )
+        gross_f = GaugeMetricFamily(
+            "github_copilot_billing_gross_amount",
+            "GitHub Copilot collector daily gross billing amount",
+            labels=["organization", "sku"],
+        )
+        disc_f = GaugeMetricFamily(
+            "github_copilot_billing_discount_amount",
+            "GitHub Copilot collector daily discount amount",
+            labels=["organization", "sku"],
+        )
+        qty_f = GaugeMetricFamily(
+            "github_copilot_billing_net_quantity",
+            "GitHub Copilot collector daily billing quantity",
+            labels=["organization", "sku"],
+        )
+        for (org, sku), net in self._billing_net.items():
+            net_f.add_metric([org, sku], net)
+            gross_f.add_metric([org, sku], self._billing_gross.get((org, sku), 0.0))
+            disc_f.add_metric([org, sku], self._billing_discount.get((org, sku), 0.0))
+            qty_f.add_metric([org, sku], self._billing_quantity.get((org, sku), 0.0))
+        return [net_f, gross_f, disc_f, qty_f]
+
     def collect(self):
         with self._lock:
+            self._rollover_billing_day_locked()
             counters = dict(self._counters)
             gauges = dict(self._gauges)
+            emit_billing = self._billing_sample_ready_locked()
+            billing_families = self._billing_families_locked() if emit_billing else []
+            if emit_billing and billing_families:
+                # Only lock the sparse once/day path; legacy continuous export re-emits every scrape.
+                if _env_bool("SIM_COPILOT_BILLING_DAILY_SAMPLE", True):
+                    self._billing_exported_day = self._utc_day()
 
         by_name: dict[str, list[tuple[tuple[tuple[str, str], ...], float]]] = defaultdict(list)
         for (name, label_key), val in counters.items():
+            if name in _BILLING_METRIC_NAMES:
+                continue
             by_name[name].append((label_key, val))
         for name, rows in by_name.items():
             if not rows:
@@ -220,6 +348,9 @@ class GitHubCopilotCollector(Collector):
             fam = GaugeMetricFamily(name, f"GitHub Copilot collector {name}", labels=label_names)
             for label_key, val in rows:
                 fam.add_metric([v for _, v in label_key], val)
+            yield fam
+
+        for fam in billing_families:
             yield fam
 
 
@@ -366,8 +497,16 @@ def record_copilot_collector_session(
     cost_usd: float,
     productivity_ok: bool,
     org: str | None = None,
+    record_billing: bool = True,
 ) -> None:
-    """Increment org/user collector counters and refresh DAU gauges for one CLI session."""
+    """Increment org/user collector counters and refresh DAU gauges for one CLI session.
+
+    When ``record_billing`` is false, session/token/productivity counters still update but
+    ``github_copilot_billing_*`` amounts are skipped (used with once-per-day cost rollups).
+
+    Billing accrues into **today's** daily buckets and is exposed on at most one Prometheus
+    scrape per UTC day (sparse samples for ``sum_over_time`` net-cost PromQL).
+    """
     org_name = org or copilot_collector_org()
     user_l = copilot_collector_user_metric_labels(user_attrs, org=org_name)
     language = random.choice(_LANGUAGES)
@@ -407,12 +546,15 @@ def record_copilot_collector_session(
     )
     if acceptances:
         metrics.org_code_acceptance.labels(organization=org_name).inc(acceptances)
-    metrics.org_billing_net.labels(organization=org_name, sku=sku).inc(cost_usd)
-    metrics.org_billing_gross.labels(organization=org_name, sku=sku).inc(gross)
-    metrics.org_billing_discount.labels(organization=org_name, sku=sku).inc(discount)
-    metrics.org_billing_quantity.labels(organization=org_name, sku=sku).inc(
-        max(1, requests // 2)
-    )
+    if record_billing and cost_usd > 0:
+        metrics.collector.accrue_daily_billing(
+            organization=org_name,
+            sku=sku,
+            net_usd=cost_usd,
+            gross_usd=gross,
+            discount_usd=discount,
+            quantity=float(max(1, requests // 2)),
+        )
 
     metrics.user_cli_session.labels(**user_l).inc()
     metrics.user_cli_prompt_tokens.labels(**user_l).inc(total_in)

@@ -633,11 +633,11 @@ def _sim_claude_usage_token_counts() -> tuple[int, int]:
     """
     Input/output token counts for Claude Code metrics and the ``user_prompt`` span.
     Combined input+output is drawn in ``[SIM_CLAUDE_TOTAL_TOKENS_MIN, SIM_CLAUDE_TOTAL_TOKENS_MAX]``
-    (defaults ~4.5k–~225k per simulated turn so charts do not auto-scale to one giant spike and
-    hide everything else). Override env for stress tests (e.g. ``50_000_000`` max).
+    (defaults ~2.5k–~18k per simulated turn — realistic CLI turn sizes; was up to ~225k which
+    produced absurd weekly spend). Override env for stress tests (e.g. ``50_000_000`` max).
     """
-    t0 = _env_int("SIM_CLAUDE_TOTAL_TOKENS_MIN", 4_500)
-    t1 = _env_int("SIM_CLAUDE_TOTAL_TOKENS_MAX", 225_000)
+    t0 = _env_int("SIM_CLAUDE_TOTAL_TOKENS_MIN", 2_500)
+    t1 = _env_int("SIM_CLAUDE_TOTAL_TOKENS_MAX", 18_000)
     lo, hi = min(t0, t1), max(t0, t1)
     pair_total = random.randint(lo, hi)
     inp_frac = random.uniform(0.55, 0.75)
