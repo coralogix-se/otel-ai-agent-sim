@@ -163,16 +163,21 @@ def _copilot_github_cost_usd(
 
     ``input_tokens`` should be the **full** prompt size (billable + cache-read). Cache-read
     tokens are billed at the discounted cache rate inside ``estimate_llm_cost_usd``.
+
+    ``SIM_COPILOT_COST_SCALE`` (default 1.0) multiplies the result so demo spend can be
+    dialed independently of per-turn token ranges (still accrued once/day when enabled).
     """
     from sim.common.model_pricing import estimate_llm_cost_usd
 
-    return estimate_llm_cost_usd(
+    raw = estimate_llm_cost_usd(
         model,
         input_tokens,
         output_tokens,
         cache_read_tokens=cache_read_tokens,
         jitter_usd=random.uniform(0.0, 1e-6),
     )
+    scale = max(0.0, _env_float("SIM_COPILOT_COST_SCALE", 1.0))
+    return raw * scale
 
 
 def _copilot_turn_token_counts() -> tuple[int, int]:
