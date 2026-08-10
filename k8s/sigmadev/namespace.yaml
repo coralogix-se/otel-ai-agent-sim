@@ -1,8 +1,0 @@
-# AI agent sim + OTEL collector (single Coralogix tenant export).
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: codeagentsim
-  labels:
-    app.kubernetes.io/name: otel-ai-agent-sim
-    app.kubernetes.io/instance: sigmadev

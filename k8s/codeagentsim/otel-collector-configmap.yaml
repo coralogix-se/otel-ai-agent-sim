@@ -31,11 +31,11 @@ data:
                     - otel-ai-agent-sim:9090
 
     processors:
-      # Backpressure before the kernel OOM killer; keep limit_mib ~75–80% of the pod memory limit (1536Mi).
+      # Backpressure before the kernel OOM killer; keep limit_mib ~75–80% of the pod memory limit (3Gi).
       memory_limiter:
         check_interval: 5s
-        limit_mib: 1200
-        spike_limit_mib: 192
+        limit_mib: 2400
+        spike_limit_mib: 384
       batch:
         timeout: 5s
         send_batch_size: 256

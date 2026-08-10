@@ -178,7 +178,7 @@ if [[ "$restarts" -gt 0 ]]; then
 fi
 
 if [[ "$last_reason" == "OOMKilled" ]]; then
-  fail_alert "last container exit was OOMKilled — bump sim memory limit in k8s/sigmadev/sim-deployment.yaml (or k8s/codeagentsim/sim-deployment.yaml)"
+  fail_alert "last container exit was OOMKilled — bump sim memory limit in k8s/codeagentsim/sim-deployment.yaml"
 fi
 
 if [[ "$mem_limit_bytes" -gt 0 && "$mem_pct" -ge "$MEMORY_WARN_PCT" ]]; then

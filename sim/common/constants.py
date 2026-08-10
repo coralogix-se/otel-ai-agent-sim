@@ -118,7 +118,8 @@ CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES = (
 # Model pools below (Claude, Codex, Cursor, Copilot, Gemini) should be reviewed regularly against
 # each vendor's current model list. ``claude-fable-5`` restored globally Jul 2026 (was briefly suspended
 # Jun 2026). Do not simulate ``claude-mythos-5`` in general pools — Glasswing / limited release only.
-# Last reviewed 2026-07-21 against Claude Code / Codex / Cursor / Copilot / Gemini CLI docs.
+# Last reviewed 2026-08-10 against Claude Code / Codex / Cursor / Copilot / Gemini CLI docs + vendor pricing.
+# Dump pools + assert rates: ``python3 scripts/print_model_pools.py --check``.
 
 # Default when ``SIM_CLAUDE_MODEL`` unset and profile has no model.
 CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-5"

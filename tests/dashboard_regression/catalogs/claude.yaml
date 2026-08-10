@@ -1,0 +1,102 @@
+sim: claude
+description: >
+  Claude Code AI Center dashboard / session-analysis regressions for onlineboutique-dev (obdev).
+  Session Analyze hard-codes source ai.sessions.claude (see docs/nomessages*.har).
+
+checks:
+  # --- Session AI Analyze (the "No messages to analyze" failure mode) ---
+  - id: claude.session_messages.ui_dataset
+    title: UI Session Analyze dataset exists and has prompt/response rows
+    kind: dataprime
+    expect: has_rows
+    window: 7d
+    limit: 10
+    notes: >
+      Dashboard HAR (Aug 2026) queries source ai.sessions.claude for
+      claude_code.user_prompt + claude_code.api_response_body. Empty/missing
+      source yields "No messages to analyze for this section".
+      Product expects managed-dataset routing via OTLP resource attrs
+      cx.integration.source.type / version; those markers are currently omitted
+      in the sim so Claude logs remain visible in source logs / ai_sessions_claude
+      while backend investigates.
+    query: |
+      source ai.sessions.claude
+      | filter ['claude_code.user_prompt', 'claude_code.api_response_body'].arrayContains(firstNonNull($d.body, $d.logRecord.body))
+      | create prompt from firstNonNull($d.attributes['prompt'], $d.logRecord.attributes['prompt'])
+      | create body from firstNonNull($d.attributes['body'], $d.logRecord.attributes['body'])
+      | filter (firstNonNull($d.body, $d.logRecord.body) == 'claude_code.user_prompt' && prompt != null && prompt != '' && prompt != '<redacted>')
+           || (firstNonNull($d.body, $d.logRecord.body) == 'claude_code.api_response_body' && body != null && body != '' && body != '<redacted>')
+      | limit 10
+
+  - id: claude.session_messages.tco_dataset
+    title: TCO-routed session dataset still receives prompt/response telemetry
+    kind: dataprime
+    expect: has_rows
+    window: 24h
+    limit: 10
+    notes: >
+      Tenant TCO policy currently targets ai_sessions_claude. This check proves
+      the sim is still emitting messages even if the UI dataset name drifted.
+    query: |
+      source ai_sessions_claude
+      | filter $d.body == 'claude_code.user_prompt' || $d.body == 'claude_code.api_response_body'
+      | filter ($d.body == 'claude_code.user_prompt' && $d.attributes.prompt != null)
+           || ($d.body == 'claude_code.api_response_body' && $d.attributes.body != null)
+      | limit 10
+
+  - id: claude.session_messages.event_mix
+    title: Session dataset has user_prompt, api_request, and api_response_body
+    kind: dataprime
+    expect: has_rows
+    window: 24h
+    limit: 20
+    notes: Group-by must return all three conversation event bodies.
+    query: |
+      source ai_sessions_claude
+      | create body from $d.body
+      | filter body == 'claude_code.user_prompt' || body == 'claude_code.api_request' || body == 'claude_code.api_response_body'
+      | groupby body aggregate count() as cnt
+      | filter cnt > 0
+      | sortby body asc
+
+  # --- Cost / usage panels ---
+  - id: claude.metrics.cost_24h
+    title: Claude cost counter has data (dashboard cost panels)
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum(increase(claude_code_cost_usage_USD_total{job="otel-ai-agent-sim"}[86400s]))
+
+  - id: claude.metrics.active_users
+    title: Claude active users by email (overview / Claude panels)
+    kind: promql
+    expect: has_nonzero
+    query: |
+      count(count by (user_email) (count by (user_email, session_id) (increase(claude_code_cost_usage_USD_total{job="otel-ai-agent-sim"}[86400s]))))
+
+  - id: claude.metrics.usage_by_model
+    title: Claude usage by model
+    kind: promql
+    expect: has_nonzero
+    query: |
+      count(count by (model) (count by (model, session_id) (increase(claude_code_cost_usage_USD_total{job="otel-ai-agent-sim"}[86400s]))))
+
+  - id: claude.metrics.session_repo
+    title: Claude session↔repo gauge present for AI Center join
+    kind: promql
+    expect: has_nonzero
+    query: |
+      count(count by (repository_name) (max_over_time(claude_code_session_repo_info{job="otel-ai-agent-sim"}[86400s])))
+
+  # --- Tool / non-session logs still land in source logs ---
+  - id: claude.logs.tool_results
+    title: Claude tool_result logs present in default logs dataset
+    kind: dataprime
+    expect: has_rows
+    window: 24h
+    limit: 5
+    query: |
+      source logs
+      | filter $l.applicationname == 'claude-code'
+      | filter $d.body == 'claude_code.tool_result'
+      | limit 5

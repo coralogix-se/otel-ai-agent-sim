@@ -1,0 +1,52 @@
+sim: codex
+description: Codex AI Center / overview dashboard regressions.
+
+checks:
+  - id: codex.logs.active_users
+    title: Codex active users from completed SSE events (overview)
+    kind: dataprime
+    expect: has_rows
+    window: 24h
+    limit: 20
+    query: |
+      source logs
+      | filter $d.resource.attributes['service.name']:string == 'codex_cli_rs' || $d.resource.attributes['service.name']:string == 'codex-app-server'
+      | filter firstNonNull($d.logRecord.attributes['event.name'], $d.attributes['event.name']) == 'codex.sse_event'
+      | filter firstNonNull($d.logRecord.attributes['event.kind'], $d.attributes['event.kind']) == 'response.completed'
+      | create user_email from firstNonNull($d.logRecord.attributes['user.email'], $d.attributes['user.email'])
+      | create conversation_id from firstNonNull($d.logRecord.attributes['conversation.id'], $d.attributes['conversation.id'])
+      | filter user_email != null && conversation_id != null
+      | groupby user_email aggregate distinct_count(conversation_id) as sessions
+      | choose user_email as userEmail, sessions
+      | limit 20
+
+  - id: codex.logs.usage_by_model
+    title: Codex usage by model
+    kind: dataprime
+    expect: has_rows
+    window: 24h
+    limit: 20
+    query: |
+      source logs
+      | filter $d.resource.attributes['service.name']:string == 'codex_cli_rs' || $d.resource.attributes['service.name']:string == 'codex-app-server'
+      | filter firstNonNull($d.logRecord.attributes['event.name'], $d.attributes['event.name']) == 'codex.sse_event'
+      | filter firstNonNull($d.logRecord.attributes['event.kind'], $d.attributes['event.kind']) == 'response.completed'
+      | create model from firstNonNull($d.logRecord.attributes['model'], $d.attributes['model'])
+      | create conversation_id from firstNonNull($d.logRecord.attributes['conversation.id'], $d.attributes['conversation.id'])
+      | filter model != null && conversation_id != null
+      | groupby model aggregate distinct_count(conversation_id) as sessions
+      | choose model, sessions
+      | limit 20
+
+  - id: codex.spans.run_turn
+    title: Codex run_turn spans present
+    kind: dataprime
+    expect: has_rows
+    tier: frequent
+    window: 24h
+    limit: 5
+    query: |
+      source spans
+      | filter $l.serviceName == 'codex_cli_rs'
+      | filter $l.operationName == 'run_turn' || tags['gen_ai.operation.name'] == 'run_turn'
+      | limit 5

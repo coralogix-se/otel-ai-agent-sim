@@ -1,8 +1,8 @@
 """Per-model USD pricing for simulated LLM cost (input/output/cache tokens).
 
-Rates are USD per 1M tokens, aligned with vendor list prices (July 2026):
-- Anthropic: https://platform.claude.com/docs/en/about-claude/models/overview
-- OpenAI / Codex: https://developers.openai.com/codex/models and API pricing tiers
+Rates are USD per 1M tokens, aligned with vendor list prices (August 2026):
+- Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
+- OpenAI / Codex: https://developers.openai.com/api/docs/pricing
 - Google Gemini: https://ai.google.dev/gemini-api/docs/pricing
 - Cursor list prices: https://cursor.com/docs/models
 - GitHub Copilot ``github.copilot.cost`` uses the same API-equivalent rates for the routed model.
@@ -37,14 +37,17 @@ def _r(inp: float, out: float, *, cache_read: float | None = None, cache_write: 
 # Explicit ids used in sim pools (and common aliases).
 _EXACT: dict[str, ModelRates] = {
     # --- Anthropic Claude (Opus/Sonnet/Haiku/Fable) ---
+    # Sonnet 5: introductory $2/$10 through 2026-08-31; standard $3/$15 from 2026-09-01.
     "claude-fable-5": _r(10.0, 50.0),
-    "claude-sonnet-5": _r(3.0, 15.0),
+    "claude-sonnet-5": _r(2.0, 10.0),
+    "claude-opus-5": _r(5.0, 25.0),
     "claude-opus-4-8": _r(5.0, 25.0),
     "claude-opus-4-7": _r(5.0, 25.0),
     "claude-opus-4-6": _r(5.0, 25.0),
     "claude-opus-4-20250514": _r(15.0, 75.0),  # legacy Opus 4 snapshot (was much pricier)
     "claude-sonnet-4-6": _r(3.0, 15.0),
     "claude-sonnet-4-5": _r(3.0, 15.0),
+    "claude-sonnet-4-5-20250929": _r(3.0, 15.0),
     "claude-sonnet-4-20250514": _r(3.0, 15.0),
     "claude-haiku-4-5": _r(1.0, 5.0),
     "claude-haiku-4.5": _r(1.0, 5.0),
@@ -55,11 +58,11 @@ _EXACT: dict[str, ModelRates] = {
     "claude-opus-4.7": _r(5.0, 25.0),
     "claude-opus-4.6": _r(5.0, 25.0),
     "claude-opus-4.5": _r(5.0, 25.0),
-    # --- OpenAI / Codex (GPT-5.6 Sol/Terra/Luna + prior) ---
+    # --- OpenAI / Codex (GPT-5.6 Sol/Terra/Luna + prior; Terra/Luna cut 2026-07-30) ---
     "gpt-5.6": _r(5.0, 30.0, cache_read=0.50, cache_write=6.25),
     "gpt-5.6-sol": _r(5.0, 30.0, cache_read=0.50, cache_write=6.25),
-    "gpt-5.6-terra": _r(2.50, 15.0, cache_read=0.25, cache_write=3.125),
-    "gpt-5.6-luna": _r(1.0, 6.0, cache_read=0.10, cache_write=1.25),
+    "gpt-5.6-terra": _r(2.0, 12.0, cache_read=0.20, cache_write=2.50),
+    "gpt-5.6-luna": _r(0.20, 1.20, cache_read=0.02, cache_write=0.25),
     "gpt-5.5": _r(5.0, 30.0, cache_read=0.50),
     "gpt-5.5-pro": _r(30.0, 180.0),
     "gpt-5.4": _r(2.50, 15.0, cache_read=0.25),
@@ -112,11 +115,12 @@ _EXACT: dict[str, ModelRates] = {
 _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
     ("claude-fable", _r(10.0, 50.0)),
     ("claude-opus", _r(5.0, 25.0)),
+    ("claude-sonnet-5", _r(2.0, 10.0)),  # intro rate through 2026-08-31
     ("claude-sonnet", _r(3.0, 15.0)),
     ("claude-haiku", _r(1.0, 5.0)),
     ("gpt-5.6-sol", _r(5.0, 30.0, cache_read=0.50, cache_write=6.25)),
-    ("gpt-5.6-terra", _r(2.50, 15.0, cache_read=0.25, cache_write=3.125)),
-    ("gpt-5.6-luna", _r(1.0, 6.0, cache_read=0.10, cache_write=1.25)),
+    ("gpt-5.6-terra", _r(2.0, 12.0, cache_read=0.20, cache_write=2.50)),
+    ("gpt-5.6-luna", _r(0.20, 1.20, cache_read=0.02, cache_write=0.25)),
     ("gpt-5.6", _r(5.0, 30.0, cache_read=0.50, cache_write=6.25)),
     ("gpt-5.5-pro", _r(30.0, 180.0)),
     ("gpt-5.5", _r(5.0, 30.0, cache_read=0.50)),

@@ -85,12 +85,14 @@ KUBECTL_CONTEXT=arn:aws:eks:us-west-2:827602716714:cluster/coralogixDemo \
 ```bash
 .venv/bin/python scripts/validate_claude_dmbsm_shapes.py
 bash scripts/post-deploy-validate-local.sh
+bash scripts/run-dashboard-regression.sh --catalog-only
 ```
 
 | ID | Pass | Notes |
 |----|------|-------|
 | 0.2a | `validate_claude_dmbsm_shapes.py` exits 0 | flat/dotted logs, api_response_body, repo names |
 | 0.2b | `post-deploy-validate-local.sh` exits 0 | imports, prompt/reply pairs, no `unknown` repos |
+| 0.2c | Dashboard regression catalogs load | `tests/dashboard_regression/catalogs/*.yaml` |
 
 ### 0.3 Record soak start
 
@@ -317,6 +319,22 @@ Local reference: `bash scripts/validate_refactored_cli_agents.sh` (requires loca
 | cx498 obdev — Copilot CLI dashboard | Repo table, sessions, model breakdown, top tools |
 | AI Center — Claude Code | User cost ↔ repo join, managed/unmanaged split |
 | Session message / AI Analysis | Prompt + reply readable and aligned |
+
+### Automated dashboard query regression (preferred)
+
+Runs the catalogued AI Center queries per sim via `cx` and asserts each returns data. This is what catches Session Analyze source renames (`ai.sessions.claude` vs `ai_sessions_claude`).
+
+```bash
+# All sims (default cx profile = obdev)
+bash scripts/run-dashboard-regression.sh
+
+# Claude only
+bash scripts/run-dashboard-regression.sh --sim claude
+```
+
+| ID | Pass |
+|----|------|
+| 5.a | All selected live checks green (see `tests/dashboard_regression/README.md`) |
 
 ---
 

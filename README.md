@@ -80,8 +80,19 @@ If a cluster-wide Coralogix OpenTelemetry integration scrapes the sim, these val
 |------|---------|
 | `app.py` | Simulator entrypoint and wiring |
 | `sim/` | Per-agent packages (`claude/`, `copilot/`, `gemini/`, `codex/`, `cursor/`, `generic/`) plus shared `common/` |
+| `tests/dashboard_regression/` | Live AI Center dashboard query regressions (grouped by sim) |
 | `prompb/`, `prometheus_rw.py`, `otlp_metrics.py` | Metrics / remote write helpers |
 | `k8s/codeagentsim/` | Namespace, collector + sim, **multi-exporter** Coralogix fan-out |
 | `k8s/deployment.yaml` | Single-tenant direct-ingest example |
 | `config/` | Local collector samples |
 | `scripts/redeploy.sh` | Build, push (ECR), rollout for default `k8s/deployment.yaml` |
+| `scripts/run-dashboard-regression.sh` | Run dashboard has-data checks via `cx` |
+| `docs/post-deploy-validation.md` | Post-deploy checklist |
+
+After deploy, validate dashboards still have data:
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+bash scripts/run-dashboard-regression.sh            # all sims via cx
+bash scripts/run-dashboard-regression.sh --sim claude
+```

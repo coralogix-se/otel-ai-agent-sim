@@ -52,6 +52,11 @@ if ! "$PY" scripts/validate_claude_dmbsm_shapes.py; then
   FAIL=1
 fi
 
+echo "--- model pools + pricing ---"
+if ! "$PY" scripts/print_model_pools.py --check; then
+  FAIL=1
+fi
+
 echo "--- repo pool (no unknown) ---"
 ROOT="$ROOT" "$PY" <<PY
 import importlib.util

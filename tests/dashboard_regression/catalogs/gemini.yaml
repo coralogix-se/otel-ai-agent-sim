@@ -1,0 +1,37 @@
+sim: gemini
+description: Gemini CLI AI Center / overview dashboard regressions.
+
+checks:
+  - id: gemini.metrics.sessions_24h
+    title: Gemini total sessions (overview / Gemini panels)
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum(increase(gemini_cli_session_count_total{job="otel-ai-agent-sim"}[86400s]))
+
+  - id: gemini.metrics.active_users
+    title: Gemini active users by email
+    kind: promql
+    expect: has_nonzero
+    query: |
+      count(sum by (user_email) (increase(gemini_cli_session_count_total{job="otel-ai-agent-sim"}[86400s])))
+
+  - id: gemini.metrics.api_by_model
+    title: Gemini API requests by model
+    kind: promql
+    expect: has_nonzero
+    query: |
+      count(sum by (model) (increase(gemini_cli_api_request_count_total{job="otel-ai-agent-sim"}[86400s])))
+
+  - id: gemini.spans.user_prompt
+    title: Gemini user_prompt spans present
+    kind: dataprime
+    expect: has_rows
+    tier: frequent
+    window: 24h
+    limit: 5
+    query: |
+      source spans
+      | filter $l.serviceName == 'gemini-cli'
+      | filter $l.operationName == 'user_prompt'
+      | limit 5
