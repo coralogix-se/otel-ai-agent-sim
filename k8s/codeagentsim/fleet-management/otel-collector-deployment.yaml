@@ -1,0 +1,135 @@
+# Standalone Deployment: OpAMP Supervisor wraps the Collector (fleet management).
+# Image: Coralogix supervised collector (supervisor binary + otelcol-contrib).
+# Do not apply alongside ../otel-collector-deployment.yaml without changing
+# Service ports / sim OTLP endpoint — both default to 24317/24318.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector-codeagentsim-fleet
+  namespace: codeagentsim
+  labels:
+    app: otel-collector-codeagentsim-fleet
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector-codeagentsim-fleet
+  template:
+    metadata:
+      labels:
+        app: otel-collector-codeagentsim-fleet
+    spec:
+      containers:
+        - name: otelcol
+          # Bundles OpAMP supervisor + collector (collector ~0.156.x as of supervised 0.12.0).
+          # Live codeagentsim collector still uses otel/opentelemetry-collector-contrib:0.158.0.
+          image: cgx.jfrog.io/coralogix-docker-images/coralogix-otel-supervised-collector:0.12.0
+          command:
+            - /opampsupervisor
+            - --config=/etc/otelcol-contrib/supervisor.yaml
+          ports:
+            - name: otlp-grpc
+              containerPort: 24317
+              protocol: TCP
+            - name: otlp-http
+              containerPort: 24318
+              protocol: TCP
+            - name: health
+              containerPort: 13134
+              protocol: TCP
+          env:
+            - name: KUBE_POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: spec.nodeName
+            - name: CORALOGIX_PRIVATE_KEY_US2
+              valueFrom:
+                secretKeyRef:
+                  name: coralogix-multi-export
+                  key: private_key_us2
+            - name: CORALOGIX_PRIVATE_KEY_EU1
+              valueFrom:
+                secretKeyRef:
+                  name: coralogix-multi-export
+                  key: private_key_eu1
+            # onlineboutique-dev Coralogix instance (US2); also used for Fleet Manager OpAMP auth.
+            - name: CORALOGIX_PRIVATE_KEY_ONLINEBOUTIQUE_DEV
+              valueFrom:
+                secretKeyRef:
+                  name: coralogix-multi-export
+                  key: private_key_onlineboutique_dev
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+              readOnly: true
+            - name: supervisor-config
+              mountPath: /etc/otelcol-contrib/supervisor.yaml
+              subPath: supervisor.yaml
+              readOnly: true
+            - name: supervisor-data
+              mountPath: /var/lib/otelcol/supervisor-data
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 1536Mi
+            limits:
+              cpu: "1"
+              memory: 3Gi
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-codeagentsim-fleet-config
+            items:
+              - key: config.yaml
+                path: config.yaml
+        - name: supervisor-config
+          configMap:
+            name: otel-collector-codeagentsim-fleet-supervisor
+            items:
+              - key: supervisor.yaml
+                path: supervisor.yaml
+        - name: supervisor-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector-codeagentsim-fleet
+  namespace: codeagentsim
+  labels:
+    app: otel-collector-codeagentsim-fleet
+spec:
+  type: ClusterIP
+  selector:
+    app: otel-collector-codeagentsim-fleet
+  ports:
+    - name: otlp-grpc
+      port: 24317
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: otlp-http
+      port: 24318
+      targetPort: otlp-http
+      protocol: TCP
+    - name: health
+      port: 13134
+      targetPort: health
+      protocol: TCP

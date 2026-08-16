@@ -1,0 +1,109 @@
+# Standalone copy: same telemetry pipelines as ../otel-collector-configmap.yaml,
+# intended to run under the OpAMP Supervisor (see sibling manifests).
+#
+# Mode: hybrid (local config + remote Fleet Manager overlays).
+# With supervisor.enabled + local config_files, Fleet Manager remote config
+# still takes highest merge precedence when present.
+#
+# Fan-out: OTLP traces/logs -> ingress.us2 + ingress.eu1 + ingress.us2 (onlineboutique-dev).
+# Prometheus: scrape sim Service :9090 -> remote_write to all three exporters.
+# Receiver ports 24317/24318 avoid overlapping another collector using 4317/4318 in-cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-codeagentsim-fleet-config
+  namespace: codeagentsim
+  labels:
+    app: otel-collector-codeagentsim-fleet
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13134
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:24317
+          http:
+            endpoint: 0.0.0.0:24318
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: otel-ai-agent-sim
+              scrape_interval: 15s
+              static_configs:
+                - targets:
+                    - otel-ai-agent-sim:9090
+
+    processors:
+      # Backpressure before the kernel OOM killer; keep limit_mib ~75–80% of the pod memory limit (3Gi).
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 2400
+        spike_limit_mib: 384
+      batch:
+        timeout: 5s
+        send_batch_size: 256
+
+    exporters:
+      otlp/us2:
+        endpoint: ingress.us2.coralogix.com:443
+        tls:
+          insecure: false
+        headers:
+          Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_US2}
+
+      otlp/eu1:
+        endpoint: ingress.eu1.coralogix.com:443
+        tls:
+          insecure: false
+        headers:
+          Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_EU1}
+
+      # Same US2 ingress as ``otlp/us2``; distinct Send-Your-Data key for Coralogix instance ``onlineboutique-dev``
+      # (secret key ``private_key_onlineboutique_dev`` — UI label ``Default-Api-key``).
+      otlp/us2-onlineboutique:
+        endpoint: ingress.us2.coralogix.com:443
+        tls:
+          insecure: false
+        headers:
+          Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_ONLINEBOUTIQUE_DEV}
+
+      prometheusremotewrite/us2:
+        endpoint: https://ingress.us2.coralogix.com/prometheus/v1
+        tls:
+          insecure: false
+        headers:
+          Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_US2}
+
+      prometheusremotewrite/eu1:
+        endpoint: https://ingress.eu1.coralogix.com/prometheus/v1
+        tls:
+          insecure: false
+        headers:
+          Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_EU1}
+
+      prometheusremotewrite/us2-onlineboutique:
+        endpoint: https://ingress.us2.coralogix.com/prometheus/v1
+        tls:
+          insecure: false
+        headers:
+          Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_ONLINEBOUTIQUE_DEV}
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/us2, otlp/eu1, otlp/us2-onlineboutique]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/us2, otlp/eu1, otlp/us2-onlineboutique]
+        metrics:
+          receivers: [prometheus]
+          processors: [memory_limiter, batch]
+          exporters: [prometheusremotewrite/us2, prometheusremotewrite/eu1, prometheusremotewrite/us2-onlineboutique]
