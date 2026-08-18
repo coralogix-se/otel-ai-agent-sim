@@ -119,7 +119,7 @@ def test_catalogs_load_and_are_grouped_by_sim() -> None:
     grouped = list(iter_catalogs())
     assert grouped, "expected at least one catalog YAML"
     sims = {sim for sim, _ in grouped}
-    assert sims >= {"claude", "copilot", "gemini", "codex", "cursor"}
+    assert sims >= {"claude", "copilot", "gemini", "codex", "cursor", "anthropic_admin"}
     for sim, checks in grouped:
         assert checks, f"{sim} catalog empty"
         ids = [c.id for c in checks]

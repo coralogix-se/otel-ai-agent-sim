@@ -14,7 +14,7 @@ routes prompts into the old dataset (see `docs/nomessages*.har`).
 | `test_dashboard_queries.py` | pytest runner (`catalog` + `live`) |
 | `cx_client.py` | `cx dataprime` / `cx metrics` wrapper |
 
-Sims covered: **claude**, **copilot**, **gemini**, **codex**, **cursor**.
+Sims covered: **claude**, **copilot**, **gemini**, **codex**, **cursor**, **anthropic_admin**.
 
 ## Run
 

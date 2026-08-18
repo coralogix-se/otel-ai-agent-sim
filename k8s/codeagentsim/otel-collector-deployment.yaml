@@ -17,6 +17,7 @@ spec:
     spec:
       containers:
         - name: otelcol
+          # Live cluster was 0.115.1 until this rollout; 0.158.0 supports translation_strategy: NoTranslation.
           image: otel/opentelemetry-collector-contrib:0.158.0
           args:
             - --config=/etc/otelcol/config.yaml

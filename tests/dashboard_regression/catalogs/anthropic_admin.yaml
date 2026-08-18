@@ -1,0 +1,162 @@
+sim: anthropic_admin
+description: Anthropic Admin / analytics / compliance gauges for Governance & Risk Audit, plus Claude Products analytics.
+
+checks:
+  - id: anthropic_admin.spend
+    title: Total tracked spend (actual)
+    kind: promql
+    expect: has_nonzero
+    notes: Dashboard gauge; amount_type=actual. Metric is a gauge, not a counter.
+    query: |
+      sum(max_over_time(anthropic_analytics_user_cost{amount_type="actual",job="otel-anthropic-admin-sim"}[86400s]))
+
+  - id: anthropic_admin.active_users
+    title: Active users (any usage)
+    kind: promql
+    expect: has_nonzero
+    query: |
+      count(count by (user_email) (max_over_time(anthropic_analytics_user_tokens{job="otel-anthropic-admin-sim"}[86400s])))
+
+  - id: anthropic_admin.licensed_members
+    title: Licensed org members
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum(max_over_time(anthropic_compliance_org_users_total{job="otel-anthropic-admin-sim"}[86400s]))
+
+  - id: anthropic_admin.distinct_keys
+    title: Distinct API keys seen
+    kind: promql
+    expect: has_nonzero
+    query: |
+      count(count by (api_key_id) (max_over_time(anthropic_admin_api_key_usage{job="otel-anthropic-admin-sim"}[86400s])))
+
+  - id: anthropic_admin.usage.by_model
+    title: API key usage by key and model
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (api_key_id, model, token_type) (max_over_time(anthropic_admin_api_key_usage{job="otel-anthropic-admin-sim"}[86400s]))
+
+  - id: anthropic_admin.rate_limit
+    title: Admin rate-limit gauges present
+    kind: promql
+    expect: has_nonzero
+    query: |
+      max(anthropic_admin_rate_limit_value{job="otel-anthropic-admin-sim"})
+
+  - id: anthropic_admin.cost
+    title: Admin cost gauge (minor USD units)
+    kind: promql
+    expect: has_nonzero
+    query: |
+      max(anthropic_admin_cost_amount{job="otel-anthropic-admin-sim"})
+
+  - id: anthropic_admin.requests_by_user
+    title: Requests by user
+    kind: promql
+    expect: has_nonzero
+    query: |
+      topk(25, sum by (user_email) (max_over_time(anthropic_analytics_user_requests{job="otel-anthropic-admin-sim"}[86400s])))
+
+  - id: anthropic_admin.org_roles
+    title: Org roles breakdown
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (role) (max_over_time(anthropic_compliance_org_users_total{job="otel-anthropic-admin-sim"}[86400s]))
+
+  - id: anthropic_admin.activity
+    title: Compliance activity events
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (type, user_id, user_ip, user_type) (max_over_time(anthropic_compliance_activity_events_total{job="otel-anthropic-admin-sim"}[86400s]))
+
+  - id: anthropic_admin.logs.api_keys_usage
+    title: anthropic.api_keys_usage integration logs
+    kind: dataprime
+    expect: has_rows
+    window: 24h
+    limit: 5
+    tier: archive
+    notes: TCO medium; query archive. Application is anthropic / testing.
+    query: |
+      source logs
+      | filter $l.applicationname == 'anthropic'
+      | filter firstNonNull($d.attributes['stream'], $d.stream) == 'anthropic.api_keys_usage'
+      | limit 5
+
+  - id: anthropic_admin.tokens.by_product
+    title: Claude Products tokens by product
+    kind: promql
+    expect: has_nonzero
+    notes: AI Center Claude products; daily snapshot gauges, use max_over_time.
+    query: |
+      sum by (product) (max_over_time(anthropic_analytics_tokens{job="otel-anthropic-admin-sim"}[10d]))
+
+  - id: anthropic_admin.seats
+    title: Assigned seats
+    kind: promql
+    expect: has_nonzero
+    query: |
+      max(max_over_time(anthropic_analytics_seats_assigned{job="otel-anthropic-admin-sim"}[10d]))
+
+  - id: anthropic_admin.user_sessions
+    title: User sessions by product
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (product) (max_over_time(anthropic_analytics_user_sessions{job="otel-anthropic-admin-sim"}[10d]))
+
+  - id: anthropic_admin.logs.summary_active_users
+    title: anthropic.summary.active_users integration logs
+    kind: dataprime
+    expect: has_rows
+    window: 24h
+    limit: 5
+    tier: archive
+    query: |
+      source logs
+      | filter $l.applicationname == 'anthropic'
+      | filter firstNonNull($d.attributes['stream'], $d.stream) == 'anthropic.summary.active_users'
+      | limit 5
+
+  - id: anthropic_admin.logs.user_activity
+    title: anthropic.user_activity integration logs
+    kind: dataprime
+    expect: has_rows
+    window: 24h
+    limit: 5
+    tier: archive
+    query: |
+      source logs
+      | filter $l.applicationname == 'anthropic'
+      | filter firstNonNull($d.attributes['stream'], $d.stream) == 'anthropic.user_activity'
+      | limit 5
+
+  - id: anthropic_admin.logs.skills
+    title: anthropic.skills integration logs
+    kind: dataprime
+    expect: has_rows
+    window: 24h
+    limit: 5
+    tier: archive
+    query: |
+      source logs
+      | filter $l.applicationname == 'anthropic'
+      | filter firstNonNull($d.attributes['stream'], $d.stream) == 'anthropic.skills'
+      | limit 5
+
+  - id: anthropic_admin.logs.connectors
+    title: anthropic.connectors integration logs
+    kind: dataprime
+    expect: has_rows
+    window: 24h
+    limit: 5
+    tier: archive
+    query: |
+      source logs
+      | filter $l.applicationname == 'anthropic'
+      | filter firstNonNull($d.attributes['stream'], $d.stream) == 'anthropic.connectors'
+      | limit 5

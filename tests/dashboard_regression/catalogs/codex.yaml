@@ -38,6 +38,24 @@ checks:
       | choose model, sessions
       | limit 20
 
+  - id: codex.logs.top_tools
+    title: Codex tool_result logs expose tool_name and user.email (Top Used Tools)
+    kind: dataprime
+    expect: has_rows
+    tier: archive
+    window: 24h
+    limit: 5
+    xfail: tool_name and user.email require sim image rollout
+    query: |
+      source logs
+      | filter $d.resource.attributes['service.name']:string == 'codex_cli_rs' || $d.resource.attributes['service.name']:string == 'codex-app-server'
+      | filter firstNonNull($d.logRecord.attributes['event.name'], $d.attributes['event.name']) == 'codex.tool_result'
+      | create tool_name from firstNonNull($d.logRecord.attributes['tool_name'], $d.attributes['tool_name'])
+      | create user_email from firstNonNull($d.logRecord.attributes['user.email'], $d.attributes['user.email'])
+      | filter tool_name != null && user_email != null
+      | countby tool_name into tool_count desc
+      | limit 5
+
   - id: codex.spans.run_turn
     title: Codex run_turn spans present
     kind: dataprime

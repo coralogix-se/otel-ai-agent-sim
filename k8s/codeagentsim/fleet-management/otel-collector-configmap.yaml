@@ -77,6 +77,7 @@ data:
           insecure: false
         headers:
           Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_US2}
+        translation_strategy: UnderscoreEscapingWithoutSuffixes
 
       prometheusremotewrite/eu1:
         endpoint: https://ingress.eu1.coralogix.com/prometheus/v1
@@ -84,6 +85,7 @@ data:
           insecure: false
         headers:
           Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_EU1}
+        translation_strategy: UnderscoreEscapingWithoutSuffixes
 
       prometheusremotewrite/us2-onlineboutique:
         endpoint: https://ingress.us2.coralogix.com/prometheus/v1
@@ -91,6 +93,7 @@ data:
           insecure: false
         headers:
           Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_ONLINEBOUTIQUE_DEV}
+        translation_strategy: UnderscoreEscapingWithoutSuffixes
 
     service:
       extensions: [health_check]

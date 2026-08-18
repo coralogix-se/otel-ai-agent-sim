@@ -174,6 +174,7 @@ def emit_codex_user_prompt_span(conversation_id: str, profile: dict) -> None:
                 "model_reasoning_effort": os.environ.get("SIM_CODEX_MODEL_REASONING_EFFORT", "medium"),
                 "app.version": ver,
                 "conversation.id": conversation_id,
+                **user_attrs,
             },
             trace_id=ctx_run.trace_id,
             span_id=ctx_run.span_id,
@@ -226,6 +227,7 @@ def emit_codex_user_prompt_span(conversation_id: str, profile: dict) -> None:
                 "prompt_length": len(prompt),
                 "model": model,
                 "conversation.id": conversation_id,
+                **user_attrs,
             }
             if _env_bool("SIM_CODEX_LOG_USER_PROMPT", False):
                 up_log["prompt"] = prompt
@@ -292,11 +294,13 @@ def emit_codex_user_prompt_span(conversation_id: str, profile: dict) -> None:
             attributes={
                 "event.name": "codex.tool_decision",
                 "tool": last_tool,
+                "tool_name": last_tool,
                 "decision": random.choice(
                     ("approved", "approved_with_amendment", "approved_for_session", "denied", "abort")
                 ),
                 "source": random.choice(("config", "user")),
                 "conversation.id": conversation_id,
+                **user_attrs,
             },
             trace_id=ctx_run.trace_id,
             span_id=ctx_run.span_id,
@@ -307,10 +311,12 @@ def emit_codex_user_prompt_span(conversation_id: str, profile: dict) -> None:
             attributes={
                 "event.name": "codex.tool_result",
                 "tool": last_tool,
+                "tool_name": last_tool,
                 "success": tool_ok,
                 "duration_ms": random.randint(15, 1200),
                 "output_snippet": ("ok" if tool_ok else "error: rejected")[:200],
                 "conversation.id": conversation_id,
+                **user_attrs,
             },
             trace_id=ctx_run.trace_id,
             span_id=ctx_run.span_id,

@@ -13,7 +13,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--sim",
         action="append",
         default=[],
-        help="Only run checks for this sim (repeatable): claude, copilot, gemini, codex, cursor",
+        help="Only run checks for this sim (repeatable): claude, copilot, gemini, codex, cursor, anthropic_admin",
     )
     parser.addoption(
         "--cx-profile",

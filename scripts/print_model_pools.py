@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from sim.anthropic_admin.constants import ANTHROPIC_ADMIN_MODELS  # noqa: E402
 from sim.common.constants import (  # noqa: E402
     CLAUDE_CODE_DEFAULT_MODEL,
     CODEX_CLI_MODELS,
@@ -46,6 +47,7 @@ POOLS: dict[str, tuple[str, ...]] = {
     "cursor": CURSOR_COMPOSER_MODELS,
     "copilot": COPILOT_CLI_MODELS,
     "gemini": GEMINI_CLI_MODELS,
+    "anthropic_admin": ANTHROPIC_ADMIN_MODELS,
 }
 
 DEFAULTS: dict[str, str] = {
@@ -54,6 +56,7 @@ DEFAULTS: dict[str, str] = {
     "cursor": CURSOR_DEFAULT_MODEL,
     "copilot": COPILOT_DEFAULT_MODEL,
     "gemini": GEMINI_DEFAULT_MODEL,
+    "anthropic_admin": "claude-sonnet-5",
 }
 
 # Glasswing / limited — must stay out of general Claude pool.

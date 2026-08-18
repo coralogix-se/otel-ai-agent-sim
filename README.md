@@ -53,6 +53,7 @@ So you have **multiple Coralogix exporters** in one collector config: two keys h
 3. `kubectl apply -f k8s/codeagentsim/otel-collector-configmap.yaml`
 4. `kubectl apply -f k8s/codeagentsim/otel-collector-deployment.yaml`
 5. Edit `k8s/codeagentsim/sim-deployment.yaml` if needed (image name, env), then `kubectl apply -f k8s/codeagentsim/sim-deployment.yaml`
+6. Optional **Anthropic Admin** usage/cost + Claude Products analytics sim (separate Deployment, same image, `python -m sim.anthropic_admin`): apply the collector ConfigMap (scrape job `otel-anthropic-admin-sim`) then `kubectl apply -f k8s/codeagentsim/anthropic-admin-sim-deployment.yaml`. This process also feeds AI Center → Claude products.
 
 The sim is configured to use `OTLP_ENDPOINT=otel-collector-codeagentsim:24317` and `OTLP_INSECURE=true` (in-cluster gRPC without TLS to the collector). The collector listens on **24317/24318** so it does not collide with another collector using `4317/4318` in the same cluster.
 
@@ -78,8 +79,9 @@ If a cluster-wide Coralogix OpenTelemetry integration scrapes the sim, these val
 
 | Path | Purpose |
 |------|---------|
-| `app.py` | Simulator entrypoint and wiring |
-| `sim/` | Per-agent packages (`claude/`, `copilot/`, `gemini/`, `codex/`, `cursor/`, `generic/`) plus shared `common/` |
+| `app.py` | CLI-agent simulator entrypoint (Claude Code, Gemini, Codex, Cursor, Copilot) |
+| `sim/` | Per-agent packages (`claude/`, `copilot/`, `gemini/`, `codex/`, `cursor/`, `generic/`, `anthropic_admin/`) plus shared `common/` |
+| `sim/anthropic_admin/` | **Separate** Anthropic Admin + Claude Products analytics simulator (`python -m sim.anthropic_admin`) |
 | `tests/dashboard_regression/` | Live AI Center dashboard query regressions (grouped by sim) |
 | `prompb/`, `prometheus_rw.py`, `otlp_metrics.py` | Metrics / remote write helpers |
 | `k8s/codeagentsim/` | Namespace, collector + sim, **multi-exporter** Coralogix fan-out |

@@ -22,6 +22,7 @@ data:
           http:
             endpoint: 0.0.0.0:24318
       prometheus:
+        trim_metric_suffixes: false
         config:
           scrape_configs:
             - job_name: otel-ai-agent-sim
@@ -29,6 +30,11 @@ data:
               static_configs:
                 - targets:
                     - otel-ai-agent-sim:9090
+            - job_name: otel-anthropic-admin-sim
+              scrape_interval: 15s
+              static_configs:
+                - targets:
+                    - otel-anthropic-admin-sim:9090
 
     processors:
       # Backpressure before the kernel OOM killer; keep limit_mib ~75–80% of the pod memory limit (3Gi).
@@ -70,6 +76,10 @@ data:
           insecure: false
         headers:
           Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_US2}
+        # Keep scrape names as-is (cxai-dev claude_code_active_time_total_s_total).
+        # Default UnderscoreEscapingWithSuffixes rewrites that to claude_code_active_time_s_total.
+        # NoTranslation requires Prometheus Remote Write 2.0; this cluster uses PRW 1.0.
+        translation_strategy: UnderscoreEscapingWithoutSuffixes
 
       prometheusremotewrite/eu1:
         endpoint: https://ingress.eu1.coralogix.com/prometheus/v1
@@ -77,6 +87,7 @@ data:
           insecure: false
         headers:
           Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_EU1}
+        translation_strategy: UnderscoreEscapingWithoutSuffixes
 
       prometheusremotewrite/us2-onlineboutique:
         endpoint: https://ingress.us2.coralogix.com/prometheus/v1
@@ -84,6 +95,7 @@ data:
           insecure: false
         headers:
           Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_ONLINEBOUTIQUE_DEV}
+        translation_strategy: UnderscoreEscapingWithoutSuffixes
 
     service:
       extensions: [health_check]

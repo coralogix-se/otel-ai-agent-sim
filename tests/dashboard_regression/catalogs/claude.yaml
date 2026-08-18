@@ -88,6 +88,14 @@ checks:
     query: |
       count(count by (repository_name) (max_over_time(claude_code_session_repo_info{job="otel-ai-agent-sim"}[86400s])))
 
+  - id: claude.metrics.active_time
+    title: Claude active time (cxai-dev name)
+    kind: promql
+    expect: has_nonzero
+    notes: Must stay claude_code_active_time_total_s_total; collector PRW suffix translation used to rewrite this to claude_code_active_time_s_total.
+    query: |
+      sum(increase(claude_code_active_time_total_s_total{job="otel-ai-agent-sim"}[86400s]))
+
   # --- Tool / non-session logs still land in source logs ---
   - id: claude.logs.tool_results
     title: Claude tool_result logs present in default logs dataset
