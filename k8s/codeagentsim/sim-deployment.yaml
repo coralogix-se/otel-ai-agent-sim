@@ -26,7 +26,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:demo-models-202609021030
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:demo-roster-list-202608261130
           imagePullPolicy: Always
           env:
             # OTLP -> otel-collector-codeagentsim; collector exports to Coralogix US2 + EU1 (no API key in this pod).
@@ -233,8 +233,13 @@ spec:
             # user per slot for ``SIM_CURSOR_LONG_SESSION_SEC`` or (if unset) the same ``SIM_CLAUDE_LONG_SESSION_SEC``
             # window — parallel sessions stay on distinct pinned users. Set ``SIM_CURSOR_LONG_SESSION_SEC=0`` for a new
             # user every emit (legacy). Optional: ``SIM_CURSOR_CONCURRENT_LONG_SESSIONS``, ``SIM_CURSOR_SESSION_SLOT_STRATEGY``.
+            # Align Claude Code session/repo metrics with Anthropic Admin Claude Products users (first 24 roster rows).
+            - name: SIM_CLAUDE_ALIGN_PRODUCTS_ROSTER
+              value: "true"
+            - name: SIM_PRODUCTS_ROSTER_SIZE
+              value: "24"
             - name: SIM_CLAUDE_CONCURRENT_LONG_SESSIONS
-              value: "18"
+              value: "24"
             # - name: SIM_CLAUDE_SESSION_SLOT_STRATEGY
             #   value: "round_robin"
             - name: SIM_CLAUDE_STABLE_SESSION_PER_USER

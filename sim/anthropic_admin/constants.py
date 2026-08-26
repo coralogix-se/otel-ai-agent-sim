@@ -97,6 +97,9 @@ ANALYTICS_PRODUCT_WEIGHTS: dict[str, float] = {
 # Claude Products "Cost by group" joins org gauges by group label:
 # sum by (group, amount_type|token_type) on anthropic_analytics_cost|tokens
 # and sum by (group) on anthropic_org_requests_total (see getCostByGroup in UI).
+# Claude Products UI ``amount_type="list"`` expects ~8% above actual on user/org cost gauges.
+LIST_PRICE_FACTOR = 1.08
+
 ANALYTICS_GROUPS: tuple[str, ...] = (
     "Engineering",
     "Product",

@@ -40,6 +40,7 @@ from sim.anthropic_admin.constants import (
     ANTHROPIC_ADMIN_MODELS,
     CACHE_CREATION_TOKEN_TYPES,
     LIMIT_TYPES,
+    LIST_PRICE_FACTOR,
     ORG_ROLES,
     RATE_LIMIT_EXTRA_MODELS,
     SERVICE_TIERS,
@@ -832,7 +833,10 @@ class AnthropicAdminSim:
                 token_type=token_type,
             ).set(self._analytics_tokens[tkey])
             token_usd = _usd_for_tokens(model, token_type, amt)
-            for amount_type, usd in (("actual", token_usd), ("list", token_usd)):
+            for amount_type, usd in (
+                ("actual", token_usd),
+                ("list", token_usd * LIST_PRICE_FACTOR),
+            ):
                 ckey = tkey + (amount_type,)
                 self._inc(self._analytics_cost_usd, ckey, usd)
                 self.analytics_cost.labels(
@@ -882,7 +886,7 @@ class AnthropicAdminSim:
             round(self._user_cost_usd[uk], 4)
         )
         self.user_cost.labels(**user_l, amount_type="list", currency="USD").set(
-            round(self._user_cost_usd[uk] * 1.08, 4)
+            round(self._user_cost_usd[uk] * LIST_PRICE_FACTOR, 4)
         )
         # User-detail "Tokens over time" maps these token_type ids (not total_tokens).
         user_token_parts = {

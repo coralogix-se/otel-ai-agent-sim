@@ -104,7 +104,28 @@ def _build_roster_agent_affinity() -> tuple[frozenset[str], ...]:
 _ROSTER_AGENT_AFFINITY: tuple[frozenset[str], ...] = _build_roster_agent_affinity()
 
 
+def products_roster_size() -> int:
+    """Roster rows shared with Anthropic Admin / Claude Products (``SIM_ANTHROPIC_ADMIN_USERS``)."""
+    default_n = max(1, _env_int("SIM_ANTHROPIC_ADMIN_USERS", 24))
+    n = max(1, _env_int("SIM_PRODUCTS_ROSTER_SIZE", default_n))
+    return min(n, _CORALOGIX_TEAM_ROSTER_SIZE)
+
+
+def products_roster_indices() -> tuple[int, ...]:
+    return tuple(range(products_roster_size()))
+
+
+def products_roster_users() -> tuple[dict[str, str], ...]:
+    return tuple(dict(u) for u in _CORALOGIX_TEAM_USERS[: products_roster_size()])
+
+
+def _claude_align_products_roster() -> bool:
+    return _env_bool("SIM_CLAUDE_ALIGN_PRODUCTS_ROSTER", True)
+
+
 def roster_indices_for_agent(agent_product: str) -> tuple[int, ...]:
+    if agent_product == "claude_code" and _claude_align_products_roster():
+        return products_roster_indices()
     if not _roster_agent_affinity_enabled():
         return tuple(range(len(_CORALOGIX_TEAM_USERS)))
     return tuple(i for i, agents in enumerate(_ROSTER_AGENT_AFFINITY) if agent_product in agents)

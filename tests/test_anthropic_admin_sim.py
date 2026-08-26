@@ -145,6 +145,36 @@ def test_emit_cycle_creates_dashboard_gauge_series() -> None:
     assert "api_key_id" not in USER_COST_LABELS
 
 
+def test_analytics_list_cost_above_actual() -> None:
+    """Users table ``costList`` reads ``amount_type=\"list\"``; org token cost must not mirror actual."""
+    from sim.anthropic_admin.constants import LIST_PRICE_FACTOR
+
+    registry = CollectorRegistry()
+    sim = AnthropicAdminSim(registry=registry, logger=None, emits_per_cycle=32)
+    sim.emit_cycle(now=datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc))
+    body = generate_latest(registry).decode()
+    org_actual = org_list = user_actual = user_list = 0.0
+    for line in body.splitlines():
+        if line.startswith("#"):
+            continue
+        if line.startswith("anthropic_analytics_cost{"):
+            val = float(line.rsplit(" ", 1)[-1])
+            if 'amount_type="actual"' in line:
+                org_actual += val
+            elif 'amount_type="list"' in line:
+                org_list += val
+        if line.startswith("anthropic_analytics_user_cost{"):
+            val = float(line.rsplit(" ", 1)[-1])
+            if 'amount_type="actual"' in line:
+                user_actual += val
+            elif 'amount_type="list"' in line:
+                user_list += val
+    assert org_actual > 0 and org_list > org_actual
+    assert user_actual > 0 and user_list > user_actual
+    assert abs(org_list / org_actual - LIST_PRICE_FACTOR) < 0.05
+    assert abs(user_list / user_actual - LIST_PRICE_FACTOR) < 0.05
+
+
 def test_usage_label_set_matches_live_admin_series() -> None:
     assert USAGE_LABELS == (
         "cx_application_name",
