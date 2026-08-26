@@ -14,9 +14,11 @@ from sim.anthropic_admin.runtime import (
     USAGE_LABELS,
     USER_COST_LABELS,
     USER_CHAT_LABELS,
+    USER_PRODUCT_LABELS,
     USER_REQUEST_LABELS,
     USER_SESSION_LABELS,
     USER_TOKEN_LABELS,
+    USER_TOOL_LABELS,
 )
 
 
@@ -74,6 +76,8 @@ def test_emit_cycle_creates_dashboard_gauge_series() -> None:
     assert "group" in USER_REQUEST_LABELS
     assert "group" in USER_SESSION_LABELS
     assert "group" in USER_CHAT_LABELS
+    assert "group" in USER_PRODUCT_LABELS
+    assert "group" in USER_TOOL_LABELS
     assert "model" in USER_SESSION_LABELS
     assert "group" in ANALYTICS_COST_LABELS
     assert "group" in ANALYTICS_TOKEN_LABELS
@@ -92,6 +96,14 @@ def test_emit_cycle_creates_dashboard_gauge_series() -> None:
     )
     assert any(
         line.startswith("anthropic_analytics_user_chat_activity{") and 'group="' in line
+        for line in body.splitlines()
+    )
+    assert any(
+        line.startswith("anthropic_analytics_user_skills_used{") and 'group="' in line
+        for line in body.splitlines()
+    )
+    assert any(
+        line.startswith("anthropic_analytics_user_tool_decisions{") and 'group="' in line
         for line in body.splitlines()
     )
     assert any(

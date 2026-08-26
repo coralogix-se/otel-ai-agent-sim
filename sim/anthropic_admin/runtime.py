@@ -149,11 +149,13 @@ USER_TOOL_LABELS = _ANALYTICS_BASE + (
     "user_id",
     "tool",
     "decision",
+    "group",
 )
 USER_PRODUCT_LABELS = _ANALYTICS_BASE + (
     "product",
     "user_email",
     "user_id",
+    "group",
 )
 # Claude Products session filters: Organization / Application / Subsystem (via _ANALYTICS_BASE),
 # Product, Model, User, Group.
@@ -757,6 +759,22 @@ class AnthropicAdminSim:
             self._cost_day = day
             self._cost_accrued_usd.clear()
             self._clear_analytics_day()
+            self._seed_chat_activity_for_day()
+
+    def _seed_chat_activity_for_day(self) -> None:
+        """Seed chat/cowork gauges with group so group-filtered max_over_time works from UTC midnight."""
+        base = self._analytics_base()
+        for user in self.users:
+            for product in ("chat", "cowork"):
+                chats = random.randint(4, 28) + (user.roster_index % 9)
+                self._user_chats[(user.email, product)] = chats
+                self.user_chat_activity.labels(
+                    **base,
+                    product=product,
+                    user_email=user.email,
+                    user_id=user.user_id,
+                    group=user.group,
+                ).set(chats)
 
     def _accrue_line_cost(self, *, workspace_id: str, description: str, usd: float) -> None:
         if usd <= 0:
@@ -930,9 +948,10 @@ class AnthropicAdminSim:
                 user_id=user.user_id,
                 tool=tool,
                 decision=decision,
+                group=user.group,
             ).set(self._user_tools[tkey])
             # Claude Products user-detail widgets: max_over_time(anthropic_analytics_user_commits|lines_*|pull_requests).
-            # Labels match USER_PRODUCT_LABELS (product + user; no model).
+            # Labels match USER_PRODUCT_LABELS (product + user + group; no model).
             commits = random.randint(0, 3)
             lines_added = random.randint(40, 400)
             lines_removed = random.randint(5, 80)
@@ -947,6 +966,7 @@ class AnthropicAdminSim:
                 "product": product,
                 "user_email": user.email,
                 "user_id": user.user_id,
+                "group": user.group,
             }
             self.user_commits.labels(**user_prod).set(self._user_commits[product_key])
             self.user_lines_added.labels(**user_prod).set(self._user_lines_added[product_key])
@@ -960,10 +980,18 @@ class AnthropicAdminSim:
             self._inc(self._user_skills, skey, 1)
             self._user_skill_set.setdefault(skey, set()).add(skill)
             self.user_skills_used.labels(
-                **base, product=product, user_email=user.email, user_id=user.user_id
+                **base,
+                product=product,
+                user_email=user.email,
+                user_id=user.user_id,
+                group=user.group,
             ).set(self._user_skills[skey])
             self.user_distinct_skills.labels(
-                **base, product=product, user_email=user.email, user_id=user.user_id
+                **base,
+                product=product,
+                user_email=user.email,
+                user_id=user.user_id,
+                group=user.group,
             ).set(len(self._user_skill_set[skey]))
             sk = (skill, surface, user.group)
             self._inc(self._skill_sessions, sk, 1)
@@ -1002,10 +1030,18 @@ class AnthropicAdminSim:
             self._inc(self._user_connectors, ckey, 1)
             self._user_connector_set.setdefault(ckey, set()).add(connector)
             self.user_connectors_used.labels(
-                **base, product=product, user_email=user.email, user_id=user.user_id
+                **base,
+                product=product,
+                user_email=user.email,
+                user_id=user.user_id,
+                group=user.group,
             ).set(self._user_connectors[ckey])
             self.user_distinct_connectors.labels(
-                **base, product=product, user_email=user.email, user_id=user.user_id
+                **base,
+                product=product,
+                user_email=user.email,
+                user_id=user.user_id,
+                group=user.group,
             ).set(len(self._user_connector_set[ckey]))
             ck = (connector, surface, user.group)
             self._inc(self._connector_sessions, ck, 1)
@@ -1029,7 +1065,11 @@ class AnthropicAdminSim:
             okey = (user.email, office_product, model)
             self._user_connector_set.setdefault((user.email, office_product), set()).add("office")
             self.user_office_connectors.labels(
-                **base, product=office_product, user_email=user.email, user_id=user.user_id
+                **base,
+                product=office_product,
+                user_email=user.email,
+                user_id=user.user_id,
+                group=user.group,
             ).set(len(self._user_connector_set[(user.email, office_product)]))
             self._inc(self._user_sessions, okey, 1)
             self.user_sessions.labels(
@@ -1054,10 +1094,18 @@ class AnthropicAdminSim:
             self._inc(self._skill_sessions, (skill, surface, user.group), 1)
             self._inc(self._skill_cost_usd, (skill, user.group), 0.12)
             self.user_skills_used.labels(
-                **base, product="claude_code", user_email=user.email, user_id=user.user_id
+                **base,
+                product="claude_code",
+                user_email=user.email,
+                user_id=user.user_id,
+                group=user.group,
             ).set(self._user_skills[skey])
             self.user_distinct_skills.labels(
-                **base, product="claude_code", user_email=user.email, user_id=user.user_id
+                **base,
+                product="claude_code",
+                user_email=user.email,
+                user_id=user.user_id,
+                group=user.group,
             ).set(len(self._user_skill_set[skey]))
             self.skill_sessions.labels(
                 **base, skill_name=skill, surface=surface, group=user.group
@@ -1092,10 +1140,18 @@ class AnthropicAdminSim:
             self._user_connector_set.setdefault(ckey, set()).add(connector)
             self._inc(self._connector_sessions, (connector, surface, user.group), 1)
             self.user_connectors_used.labels(
-                **base, product="cowork", user_email=user.email, user_id=user.user_id
+                **base,
+                product="cowork",
+                user_email=user.email,
+                user_id=user.user_id,
+                group=user.group,
             ).set(1)
             self.user_distinct_connectors.labels(
-                **base, product="cowork", user_email=user.email, user_id=user.user_id
+                **base,
+                product="cowork",
+                user_email=user.email,
+                user_id=user.user_id,
+                group=user.group,
             ).set(1)
             self.connector_sessions.labels(
                 **base, connector_name=connector, surface=surface, group=user.group
@@ -1174,6 +1230,8 @@ class AnthropicAdminSim:
     def emit_cycle(self, now: datetime | None = None) -> None:
         now = now or datetime.now(timezone.utc)
         self._maybe_roll_cost_day(now)
+        if not self._user_chats:
+            self._seed_chat_activity_for_day()
         volume = max(0.01, _env_float("SIM_ANTHROPIC_ADMIN_VOLUME", 0.08))
         day = now.date().isoformat()
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1411,6 +1469,7 @@ class AnthropicAdminSim:
                     "report_date": day,
                     "user_email": user.email,
                     "user_id": user.user_id,
+                    "group": user.group,
                 },
             )
 
