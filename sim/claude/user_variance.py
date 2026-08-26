@@ -59,6 +59,10 @@ def claude_user_should_emit_this_cycle(roster_user: dict | None) -> bool:
     """Some users skip a Claude cycle (light / intermittent usage)."""
     if roster_user is None:
         return True
+    from sim.common.identity import is_products_roster_user, products_roster_always_emit_otel
+
+    if products_roster_always_emit_otel() and is_products_roster_user(roster_user):
+        return True
     return random.random() < claude_user_variance(roster_user)["activity"]
 
 
@@ -115,6 +119,13 @@ def claude_user_session_rotate_duration_from_env(roster_user: dict | None) -> fl
     else:
         base = max(0.0, _env_float("SIM_CLAUDE_SESSION_ID_ROTATE_SEC", 3600.0))
     return claude_user_session_rotate_duration(base, roster_user)
+
+
+def claude_long_session_slots_enabled() -> bool:
+    """Re-export for Claude session-slot helpers."""
+    from sim.common.env import claude_long_session_slots_enabled as _enabled
+
+    return _enabled()
 
 
 def claude_user_long_session_pin_base_sec() -> float:

@@ -26,7 +26,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:demo-roster-list-202608261130
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:demo-otel-only-202608262125
           imagePullPolicy: Always
           env:
             # OTLP -> otel-collector-codeagentsim; collector exports to Coralogix US2 + EU1 (no API key in this pod).
@@ -220,10 +220,13 @@ spec:
               value: "900"
             - name: SIM_CLAUDE_PREFILL_SESSION_SLOTS
               value: "true"
-            # Fan-out when Claude wins selection: ``SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT`` parallel emits (keep
-            # ``SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS=false`` so overview usage-by-agent pie stays ~balanced).
+            # Fan-out when Claude wins selection: all Products/API roster users emit OTEL (repo + cost).
             - name: SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS
-              value: "false"
+              value: "true"
+            - name: SIM_CLAUDE_PRODUCTS_ROSTER_ALWAYS_EMIT
+              value: "true"
+            - name: SIM_CLAUDE_PREFILL_PRODUCTS_ROSTER_OTEL
+              value: "true"
             - name: SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT
               value: "1"
             # Target ~$10K/day (observed ~$4K/day @ 120 → ~2.5× after Sonnet 5 intro-rate cut).
@@ -238,8 +241,11 @@ spec:
               value: "true"
             - name: SIM_PRODUCTS_ROSTER_SIZE
               value: "24"
+            # OTEL-only Claude Code users (roster indices 24..31): tokens/sessions/repos but no Admin API row.
+            - name: SIM_CLAUDE_OTEL_ONLY_ROSTER_SIZE
+              value: "8"
             - name: SIM_CLAUDE_CONCURRENT_LONG_SESSIONS
-              value: "24"
+              value: "32"
             # - name: SIM_CLAUDE_SESSION_SLOT_STRATEGY
             #   value: "round_robin"
             - name: SIM_CLAUDE_STABLE_SESSION_PER_USER

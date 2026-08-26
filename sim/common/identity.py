@@ -15,7 +15,7 @@ from sim.claude.user_variance import (
 )
 from sim.common.otel import tool_version_for, _stable_uuid
 from sim.common.constants import _CLAUDE_CODE_MODELS
-from sim.common.env import _env_bool, _env_float, _env_int
+from sim.common.env import _env_bool, _env_float, _env_int, claude_long_session_slots_enabled
 from sim.common.state import st
 
 _FIRST_NAMES = (
@@ -119,8 +119,88 @@ def products_roster_users() -> tuple[dict[str, str], ...]:
     return tuple(dict(u) for u in _CORALOGIX_TEAM_USERS[: products_roster_size()])
 
 
-def _claude_align_products_roster() -> bool:
+def claude_align_products_roster() -> bool:
     return _env_bool("SIM_CLAUDE_ALIGN_PRODUCTS_ROSTER", True)
+
+
+def _claude_align_products_roster() -> bool:
+    return claude_align_products_roster()
+
+
+def products_roster_always_emit_otel() -> bool:
+    """When aligned with Products, emit OTEL/repo metrics for every roster user each Claude cycle."""
+    if not claude_align_products_roster():
+        return False
+    return _env_bool("SIM_CLAUDE_PRODUCTS_ROSTER_ALWAYS_EMIT", True)
+
+
+def is_products_roster_user(user: dict) -> bool:
+    email = str(user.get("user.email", "")).strip()
+    return any(email == row["user.email"] for row in products_roster_users())
+
+
+def otel_only_roster_size() -> int:
+    """Claude Code OTEL users outside the Anthropic Admin / Products API roster."""
+    if not claude_align_products_roster():
+        return 0
+    return max(0, _env_int("SIM_CLAUDE_OTEL_ONLY_ROSTER_SIZE", 8))
+
+
+def otel_only_roster_indices() -> tuple[int, ...]:
+    start = products_roster_size()
+    return tuple(range(start, start + otel_only_roster_size()))
+
+
+def otel_only_roster_users() -> tuple[dict[str, str], ...]:
+    return tuple(dict(_CORALOGIX_TEAM_USERS[i]) for i in otel_only_roster_indices())
+
+
+def is_otel_only_roster_user(user: dict) -> bool:
+    email = str(user.get("user.email", "")).strip()
+    return any(email == row["user.email"] for row in otel_only_roster_users())
+
+
+def claude_aligned_slot_count() -> int:
+    """Parallel Claude session slots: Products/API roster + optional OTEL-only rows."""
+    if not claude_align_products_roster():
+        return max(1, _env_int("SIM_CLAUDE_CONCURRENT_LONG_SESSIONS", 15))
+    return products_roster_size() + otel_only_roster_size()
+
+
+def otel_only_slot_user(slot_index: int, n_products_slots: int) -> dict[str, str] | None:
+    if otel_only_roster_size() <= 0:
+        return None
+    otel_slot = slot_index - n_products_slots
+    if otel_slot < 0 or otel_slot >= otel_only_roster_size():
+        return None
+    return dict(_CORALOGIX_TEAM_USERS[products_roster_size() + otel_slot])
+
+
+def claude_slot_roster_user(slot_index: int, n_products_slots: int) -> dict[str, str]:
+    """Pin slot *i* to Products row *i*, then OTEL-only rows — else hash/rr pick."""
+    pinned = products_roster_slot_user(n_products_slots, slot_index)
+    if pinned is not None:
+        return pinned
+    otel = otel_only_slot_user(slot_index, n_products_slots)
+    if otel is not None:
+        return otel
+    return _claude_roster_core_user(str(uuid.uuid4()) + f":slot:{slot_index}")
+
+
+def products_roster_user_for_slot(slot_index: int) -> dict[str, str]:
+    users = products_roster_users()
+    if not users:
+        return dict(_CORALOGIX_TEAM_USERS[0])
+    return dict(users[slot_index % len(users)])
+
+
+def products_roster_slot_user(n_slots: int, slot_index: int) -> dict[str, str] | None:
+    """When Products-aligned, pin slot *i* to roster row *i* (demo: all API users get OTEL)."""
+    if not claude_align_products_roster():
+        return None
+    if slot_index >= products_roster_size() or slot_index >= n_slots:
+        return None
+    return products_roster_user_for_slot(slot_index)
 
 
 def roster_indices_for_agent(agent_product: str) -> tuple[int, ...]:
@@ -342,10 +422,26 @@ def _claude_session_id_for_roster_user(user: dict) -> str:
 
 
 def _claude_emit_all_session_slots() -> bool:
-    """When true and ``SIM_CLAUDE_LONG_SESSION_SEC`` > 0, emit once per active slot user each Claude cycle."""
+    """When true and long-session slots are active, emit once per active slot user each Claude cycle."""
+    if not claude_long_session_slots_enabled():
+        return False
+    if claude_align_products_roster() and products_roster_always_emit_otel():
+        return True
     if not _env_bool("SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS", True):
         return False
-    return _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0) > 0
+    return True
+
+
+def _claude_slot_user(n_slots: int, slot_index: int) -> dict[str, str]:
+    n_products = products_roster_size() if claude_align_products_roster() else 0
+    return claude_slot_roster_user(slot_index, n_products)
+
+
+def _claude_prefill_slot_user(slot_index: int, allowed: tuple[int, ...], base: int) -> dict[str, str]:
+    if claude_align_products_roster():
+        return claude_slot_roster_user(slot_index, products_roster_size())
+    idx = allowed[(base + slot_index) % len(allowed)]
+    return dict(_CORALOGIX_TEAM_USERS[idx])
 
 
 def _claude_emit_session_slot_count(n_slots: int) -> int:
@@ -377,28 +473,31 @@ def _claude_pick_session_slot_indices(n_emit: int, n_slots: int) -> list[int]:
 
 def _claude_ensure_session_slots() -> int:
     """Initialize / refresh parallel Claude user slots; return slot count."""
-    dur = _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0)
-    n_slots = max(1, _env_int("SIM_CLAUDE_CONCURRENT_LONG_SESSIONS", 15))
+    slots_on = claude_long_session_slots_enabled()
+    n_slots = claude_aligned_slot_count() if claude_align_products_roster() else max(
+        1, _env_int("SIM_CLAUDE_CONCURRENT_LONG_SESSIONS", 15)
+    )
+    if claude_align_products_roster():
+        n_slots = max(n_slots, _env_int("SIM_CLAUDE_CONCURRENT_LONG_SESSIONS", n_slots))
     if len(st.cc_slot_users) != n_slots:
         st.cc_slot_users = [None] * n_slots
         st.cc_slot_deadlines = [0.0] * n_slots
         st.cc_slot_rr = 0
-        if dur > 0 and _env_bool("SIM_CLAUDE_PREFILL_SESSION_SLOTS", True):
+        if slots_on and _env_bool("SIM_CLAUDE_PREFILL_SESSION_SLOTS", True):
             now = time.monotonic()
             allowed = roster_indices_for_agent("claude_code")
             base = random.randrange(len(allowed))
             for i in range(n_slots):
-                idx = allowed[(base + i) % len(allowed)]
-                user = dict(_CORALOGIX_TEAM_USERS[idx])
+                user = _claude_prefill_slot_user(i, allowed, base)
                 st.cc_slot_users[i] = user
                 st.cc_slot_deadlines[i] = claude_slot_pin_deadline(
                     now, slot_index=i, n_slots=n_slots, roster_user=user, initial=True
                 )
-    if dur > 0:
+    if slots_on:
         now = time.monotonic()
         for i in range(n_slots):
             if st.cc_slot_users[i] is None or now >= st.cc_slot_deadlines[i]:
-                user = _claude_roster_core_user(str(uuid.uuid4()) + f":slot:{i}")
+                user = _claude_slot_user(n_slots, i)
                 st.cc_slot_users[i] = user
                 st.cc_slot_deadlines[i] = claude_slot_pin_deadline(
                     now, slot_index=i, n_slots=n_slots, roster_user=user, initial=False
@@ -408,8 +507,11 @@ def _claude_ensure_session_slots() -> int:
 
 def _claude_roster_users_for_claude_code_emit() -> list[dict]:
     """Active slot users to emit this Claude cycle (1, capped N, or all slots)."""
-    dur = _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0)
-    if dur <= 0:
+    if not claude_long_session_slots_enabled():
+        if claude_align_products_roster() and products_roster_always_emit_otel():
+            users = [dict(u) for u in products_roster_users()]
+            users.extend(dict(u) for u in otel_only_roster_users())
+            return users
         return [_claude_roster_core_user(str(uuid.uuid4()))]
     n_slots = _claude_ensure_session_slots()
     n_emit = _claude_emit_session_slot_count(n_slots)
