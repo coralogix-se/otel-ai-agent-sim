@@ -94,6 +94,17 @@ ANALYTICS_PRODUCT_WEIGHTS: dict[str, float] = {
     "claude_in_chrome": 0.06,
 }
 
+# Claude Products "Cost by group" joins org gauges by group label:
+# sum by (group, amount_type|token_type) on anthropic_analytics_cost|tokens
+# and sum by (group) on anthropic_org_requests_total (see getCostByGroup in UI).
+ANALYTICS_GROUPS: tuple[str, ...] = (
+    "Engineering",
+    "Product",
+    "Customer Success",
+    "Security",
+    "Default",
+)
+
 # Org token gauges on cxai use these ids (cache writes live on anthropic_org_cache_creation).
 ANALYTICS_TOKEN_TYPES: tuple[str, ...] = (
     "uncached_input_tokens",

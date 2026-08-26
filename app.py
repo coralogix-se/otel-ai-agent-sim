@@ -22,7 +22,10 @@ import prometheus_rw
 from sim.claude.dashboard import emit_claude_code_dashboard
 from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.constants import claude_prompt_for_session
-from sim.common.repos import sim_rogue_user_token_multiplier
+from sim.common.repos import (
+    sim_heavy_session_token_multiplier,
+    sim_rogue_user_token_multiplier,
+)
 from sim.claude.user_variance import (
     claude_user_emit_turns_this_cycle,
     claude_user_productivity_multiplier,
@@ -4026,6 +4029,7 @@ def main() -> None:
                     turn_prompt = claude_prompt_for_session(emit_sid)
                     input_tokens, output_tokens = _sim_claude_usage_token_counts()
                     rogue_mult = sim_rogue_user_token_multiplier(_ru)
+                    heavy_mult = sim_heavy_session_token_multiplier(_ru)
                     turn_jitter = random.uniform(0.82, 1.18)
                     if mult != 1.0:
                         input_tokens = max(1, int(input_tokens * mult))
@@ -4035,6 +4039,9 @@ def main() -> None:
                     if rogue_mult != 1.0:
                         input_tokens = max(1, int(input_tokens * rogue_mult))
                         output_tokens = max(1, int(output_tokens * rogue_mult))
+                    if heavy_mult != 1.0:
+                        input_tokens = max(1, int(input_tokens * heavy_mult))
+                        output_tokens = max(1, int(output_tokens * heavy_mult))
                     if _env_bool("SIM_CLAUDE_OTLP_TRACES_ENABLED", False) and user_idx == 0 and b == 0:
                         t0 = time.perf_counter()
                         emit_claude_code_user_prompt_span(

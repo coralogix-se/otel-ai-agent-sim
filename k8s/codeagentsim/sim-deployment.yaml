@@ -26,7 +26,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:latest
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:demo-models-202609021030
           imagePullPolicy: Always
           env:
             # OTLP -> otel-collector-codeagentsim; collector exports to Coralogix US2 + EU1 (no API key in this pod).
@@ -293,19 +293,23 @@ spec:
             # All sessions emit linkable ``org/repo`` names on ``claude_code_session_repo_info`` (no ``unknown``).
             # Managed = repos in GitHub integration scan (``GetScan``), not all coralogix/* on GitHub.
             # obdev scan (2026-06): ``coralogix/cxai-observability-demo-playground`` only.
-            # Rogue users (roster indices 17,42,88): mild token/cost bump (defaults 1.5–2.5×).
+            # Rogue users (roster indices 17,42,88): elevated spend for costConcentration insight.
             - name: SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MIN
-              value: "1.5"
+              value: "4"
             - name: SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MAX
-              value: "2.5"
+              value: "8"
             - name: SIM_CLAUDE_ORG_REPOS
               value: "coralogix/cxai-observability-demo-playground"
-            # - name: SIM_CLAUDE_ROGUE_USER_INDICES
-            #   value: "17,42,88"
-            # - name: SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MIN
-            #   value: "4"
-            # - name: SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MAX
-            #   value: "8"
+            # More unmanaged repo traffic for unmanagedRepoSpend (>10% of total tokens).
+            - name: SIM_CLAUDE_UNMANAGED_REPO_FRAC
+              value: "0.15"
+            # Claude Products insights (docs/insights.txt): multi-org sessions + heavy sessions.
+            - name: SIM_CLAUDE_MULTI_ORG_USER_INDICES
+              value: "17,42"
+            - name: SIM_CLAUDE_HEAVY_SESSION_USER_INDICES
+              value: "17"
+            - name: SIM_CLAUDE_HEAVY_SESSION_TOKEN_MULT
+              value: "5"
             # - name: SIM_FORCE_AGENT
             #   value: claude_code
             # - name: SIM_FORCE_AGENT

@@ -1,6 +1,6 @@
 """Per-model USD pricing for simulated LLM cost (input/output/cache tokens).
 
-Rates are USD per 1M tokens, aligned with vendor list prices (August 2026):
+Rates are USD per 1M tokens, aligned with vendor list prices (September 2026):
 - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 - OpenAI / Codex: https://developers.openai.com/api/docs/pricing
 - Google Gemini: https://ai.google.dev/gemini-api/docs/pricing
@@ -37,7 +37,7 @@ def _r(inp: float, out: float, *, cache_read: float | None = None, cache_write: 
 # Explicit ids used in sim pools (and common aliases).
 _EXACT: dict[str, ModelRates] = {
     # --- Anthropic Claude (Opus/Sonnet/Haiku/Fable) ---
-    # Sonnet 5: introductory $2/$10 through 2026-08-31; standard $3/$15 from 2026-09-01.
+    # Sonnet 5: $2/$10 is the standard price (intro rate made permanent; no Sep 2026 increase).
     "claude-fable-5": _r(10.0, 50.0),
     "claude-sonnet-5": _r(2.0, 10.0),
     "claude-opus-5": _r(5.0, 25.0),
@@ -58,9 +58,9 @@ _EXACT: dict[str, ModelRates] = {
     "claude-opus-4.7": _r(5.0, 25.0),
     "claude-opus-4.6": _r(5.0, 25.0),
     "claude-opus-4.5": _r(5.0, 25.0),
-    # --- OpenAI / Codex (GPT-5.6 Sol/Terra/Luna + prior; Terra/Luna cut 2026-07-30) ---
-    "gpt-5.6": _r(5.0, 30.0, cache_read=0.50, cache_write=6.25),
-    "gpt-5.6-sol": _r(5.0, 30.0, cache_read=0.50, cache_write=6.25),
+    # --- OpenAI / Codex (GPT-5.6 Sol/Terra/Luna; Sol promo $4/$20 through ≥2026-11-21) ---
+    "gpt-5.6": _r(4.0, 20.0, cache_read=0.40, cache_write=5.00),
+    "gpt-5.6-sol": _r(4.0, 20.0, cache_read=0.40, cache_write=5.00),
     "gpt-5.6-terra": _r(2.0, 12.0, cache_read=0.20, cache_write=2.50),
     "gpt-5.6-luna": _r(0.20, 1.20, cache_read=0.02, cache_write=0.25),
     "gpt-5.5": _r(5.0, 30.0, cache_read=0.50),
@@ -80,6 +80,7 @@ _EXACT: dict[str, ModelRates] = {
     "gpt-4o-mini": _r(0.15, 0.60, cache_read=0.075),
     "gpt-4.1": _r(2.0, 8.0, cache_read=0.50),
     # --- Google Gemini ---
+    "gemini-3.7-flash": _r(0.75, 3.50, cache_read=0.075),
     "gemini-3.6-flash": _r(1.50, 7.50, cache_read=0.15),
     "gemini-3.5-flash": _r(1.50, 9.00, cache_read=0.15),
     "gemini-3.1-pro-preview": _r(2.00, 12.00),
@@ -98,12 +99,15 @@ _EXACT: dict[str, ModelRates] = {
     "gemma-4-26b-a4b-it": _r(0.20, 0.80),
     # --- Copilot / Cursor / misc routed ids ---
     "mai-code-1-flash": _r(0.75, 4.50),
+    "mai-code-1.1-flash": _r(0.75, 4.50),
     "raptor-mini": _r(0.75, 4.50),
     "kimi-k2.7-code": _r(0.95, 4.00, cache_read=0.19),
+    "kimi-k3": _r(3.00, 15.00, cache_read=0.30),
     "composer-2": _r(0.50, 2.50),  # legacy Cursor-native
     "composer-2.5": _r(0.50, 2.50),
     "composer-2.5-fast": _r(3.00, 15.00),
     # --- Third-party models routable via Cursor / Claude Code ---
+    "grok-4.6": _r(2.00, 6.00, cache_read=0.50),
     "grok-4.5": _r(2.00, 6.00, cache_read=0.50),
     "grok-4.3": _r(1.25, 2.50, cache_read=0.20),
     "grok-4.20": _r(2.00, 6.00, cache_read=0.20),
@@ -115,13 +119,13 @@ _EXACT: dict[str, ModelRates] = {
 _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
     ("claude-fable", _r(10.0, 50.0)),
     ("claude-opus", _r(5.0, 25.0)),
-    ("claude-sonnet-5", _r(2.0, 10.0)),  # intro rate through 2026-08-31
+    ("claude-sonnet-5", _r(2.0, 10.0)),  # standard $2/$10 (Anthropic, Sep 2026)
     ("claude-sonnet", _r(3.0, 15.0)),
     ("claude-haiku", _r(1.0, 5.0)),
-    ("gpt-5.6-sol", _r(5.0, 30.0, cache_read=0.50, cache_write=6.25)),
+    ("gpt-5.6-sol", _r(4.0, 20.0, cache_read=0.40, cache_write=5.00)),
     ("gpt-5.6-terra", _r(2.0, 12.0, cache_read=0.20, cache_write=2.50)),
     ("gpt-5.6-luna", _r(0.20, 1.20, cache_read=0.02, cache_write=0.25)),
-    ("gpt-5.6", _r(5.0, 30.0, cache_read=0.50, cache_write=6.25)),
+    ("gpt-5.6", _r(4.0, 20.0, cache_read=0.40, cache_write=5.00)),
     ("gpt-5.5-pro", _r(30.0, 180.0)),
     ("gpt-5.5", _r(5.0, 30.0, cache_read=0.50)),
     ("gpt-5.4-mini", _r(0.75, 4.50, cache_read=0.075)),
@@ -129,13 +133,16 @@ _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
     ("gpt-5.4", _r(2.50, 15.0, cache_read=0.25)),
     ("gpt-5.3-codex", _r(1.75, 14.0, cache_read=0.175)),
     ("gpt-5-codex", _r(1.75, 14.0, cache_read=0.175)),
+    ("gemini-3.7", _r(0.75, 3.50, cache_read=0.075)),
     ("gemini-3.6", _r(1.50, 7.50, cache_read=0.15)),
     ("gemini-3.5", _r(1.50, 9.00, cache_read=0.15)),
     ("gemini-3.1-pro", _r(2.00, 12.00)),
     ("gemini-3-pro", _r(2.00, 12.00)),
     ("gemini-3-flash", _r(0.50, 3.00)),
     ("gemma-4", _r(0.20, 0.80)),
+    ("kimi-k3", _r(3.00, 15.00, cache_read=0.30)),
     ("kimi-k2", _r(0.95, 4.00, cache_read=0.19)),
+    ("grok-4.6", _r(2.00, 6.00, cache_read=0.50)),
     ("grok-4.5", _r(2.00, 6.00, cache_read=0.50)),
     ("grok-build", _r(1.00, 2.00, cache_read=0.20)),
     ("gemini-3.1-flash", _r(0.10, 0.40)),

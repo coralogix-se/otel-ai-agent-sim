@@ -118,7 +118,7 @@ CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES = (
 # Model pools below (Claude, Codex, Cursor, Copilot, Gemini) should be reviewed regularly against
 # each vendor's current model list. ``claude-fable-5`` restored globally Jul 2026 (was briefly suspended
 # Jun 2026). Do not simulate ``claude-mythos-5`` in general pools — Glasswing / limited release only.
-# Last reviewed 2026-08-10 against Claude Code / Codex / Cursor / Copilot / Gemini CLI docs + vendor pricing.
+# Last reviewed 2026-09-02 against Claude Code / Codex / Cursor / Copilot / Gemini CLI docs + vendor pricing.
 # Dump pools + assert rates: ``python3 scripts/print_model_pools.py --check``.
 
 # Default when ``SIM_CLAUDE_MODEL`` unset and profile has no model.
@@ -127,18 +127,18 @@ CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-5"
 # Claude Code API model ids (https://code.claude.com/docs/en/model-config).
 # ``model`` on ``claude_code.api_request`` logs, Prometheus counters, and spans uses full ids
 # (e.g. ``claude-sonnet-5``), not ``/model`` aliases like ``sonnet``. ``SIM_CLAUDE_MODEL`` overrides.
-# Weighted toward Sonnet/Haiku for realistic spend; Opus and Fable remain but are rare.
+# Weighted toward Sonnet/Haiku for realistic spend; Opus 5 + Fable remain but are rare.
 _CLAUDE_CODE_MODELS = (
     "claude-sonnet-5",
     "claude-sonnet-5",
     "claude-sonnet-5",
     "claude-sonnet-5",
     "claude-sonnet-4-6",
-    "claude-sonnet-4-6",
     "claude-sonnet-4-5-20250929",
     "claude-haiku-4-5",
     "claude-haiku-4-5",
     "claude-haiku-4-5-20251001",
+    "claude-opus-5",
     "claude-opus-4-8",
     "claude-fable-5",
 )
@@ -178,15 +178,15 @@ CODEX_SAMPLE_PROMPTS = (
 # Codex CLI default (https://developers.openai.com/codex/models — Power uses Sol).
 CODEX_DEFAULT_MODEL = "gpt-5.6-sol"
 
-# Codex CLI pool: GPT-5.6 Sol / Terra / Luna. Legacy gpt-5.5 / gpt-5.3-codex are deprecated for
-# ChatGPT sign-in; keep a light gpt-5.5 weight for mixed telemetry during migration.
+# Codex CLI pool: GPT-5.6 Sol / Terra / Luna (gpt-5.5 / gpt-5.3-codex deprecated for ChatGPT sign-in).
 CODEX_CLI_MODELS = (
+    "gpt-5.6-sol",
     "gpt-5.6-sol",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
-    "gpt-5.5",
+    "gpt-5.6-luna",
 )
 
 # Cursor Composer: Cursor-native + API-pool models (https://cursor.com/docs/models).
@@ -197,11 +197,15 @@ CURSOR_COMPOSER_MODELS = (
     "composer-2.5",
     "composer-2.5-fast",
     "composer-2.5-fast",
+    "grok-4.6",
+    "grok-4.5",
     "claude-sonnet-5",
     "claude-sonnet-4-6",
+    "claude-opus-5",
     "claude-opus-4-8",
     "claude-haiku-4-5",
     "claude-fable-5",
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3.1-pro",
@@ -211,7 +215,6 @@ CURSOR_COMPOSER_MODELS = (
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
-    "grok-4.5",
     "kimi-k2.7-code",
 )
 
@@ -345,13 +348,12 @@ COPILOT_DEFAULT_MODEL = "gpt-5.4-mini"
 COPILOT_CLI_MODELS = (
     "gpt-5.4-mini",
     "gpt-5.4-mini",
-    "gpt-5.4-mini",
-    "gpt-5-mini",
+    "gpt-5.6-terra",
+    "gpt-5.6-terra",
     "gpt-5-mini",
     "gpt-5.4",
     "gpt-5.5",
     "gpt-5.6-luna",
-    "gpt-5.6-terra",
     "gpt-5.6-sol",
     "gpt-5.3-codex",
     "claude-haiku-4-5",
@@ -359,15 +361,21 @@ COPILOT_CLI_MODELS = (
     "claude-sonnet-5",
     "claude-sonnet-5",
     "claude-sonnet-4-6",
+    "claude-opus-5",
     "claude-opus-4-8",
     "claude-fable-5",
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
+    "gemini-3.1-pro",
     "gemini-3-flash",
-    "gemini-2.5-pro",
+    "mai-code-1.1-flash",
     "mai-code-1-flash",
     "raptor-mini",
     "kimi-k2.7-code",
+    "kimi-k3",
+    "grok-4.6",
+    "grok-4.5",
 )
 
 # Gemini CLI model ids (https://geminicli.com/docs/reference/configuration/ ``model`` aliases).
@@ -384,6 +392,7 @@ GEMINI_CLI_MODELS = (
     "gemini-3.5-flash",
     "gemini-3.5-flash",
     "gemini-3.6-flash",
+    "gemini-3.7-flash",
     "gemini-3.1-flash-lite",
     "gemma-4-31b-it",
     "gemma-4-26b-a4b-it",

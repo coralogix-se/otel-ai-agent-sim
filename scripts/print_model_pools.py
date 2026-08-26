@@ -63,11 +63,10 @@ DEFAULTS: dict[str, str] = {
 EXCLUDED_FROM_CLAUDE_POOL = ("claude-mythos-5",)
 
 # Vendor list rates the sim should charge (input, output) USD per 1M tokens.
-# Source notes: Anthropic pricing page (Sonnet 5 intro through 2026-08-31),
-# OpenAI GPT-5.6 table (Terra/Luna cut 2026-07-30). Extend as pools grow.
+# Sonnet 5: $2/$10 is standard (Anthropic, Sep 2026). GPT-5.6 Sol: promo $4/$20 through ≥2026-11-21.
 EXPECTED_RATES: dict[str, tuple[float, float]] = {
     "claude-fable-5": (10.0, 50.0),
-    "claude-sonnet-5": (2.0, 10.0),  # intro; bump to (3.0, 15.0) on 2026-09-01
+    "claude-sonnet-5": (2.0, 10.0),
     "claude-opus-5": (5.0, 25.0),
     "claude-opus-4-8": (5.0, 25.0),
     "claude-opus-4-7": (5.0, 25.0),
@@ -77,8 +76,8 @@ EXPECTED_RATES: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-5-20250929": (3.0, 15.0),
     "claude-haiku-4-5": (1.0, 5.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
-    "gpt-5.6": (5.0, 30.0),
-    "gpt-5.6-sol": (5.0, 30.0),
+    "gpt-5.6": (4.0, 20.0),
+    "gpt-5.6-sol": (4.0, 20.0),
     "gpt-5.6-terra": (2.0, 12.0),
     "gpt-5.6-luna": (0.20, 1.20),
     "gpt-5.5": (5.0, 30.0),
@@ -87,11 +86,18 @@ EXPECTED_RATES: dict[str, tuple[float, float]] = {
     "gpt-5.4-nano": (0.20, 1.25),
     "gpt-5.3-codex": (1.75, 14.0),
     "gpt-5-codex": (1.75, 14.0),
+    "gemini-3.7-flash": (0.75, 3.50),
+    "gemini-3.6-flash": (1.50, 7.50),
     "gemini-3.5-flash": (1.50, 9.00),
     "gemini-3.1-pro": (2.00, 12.00),
+    "gemini-3-flash": (0.50, 3.00),
     "gemini-3-flash-preview": (0.50, 3.00),
     "gemini-3.1-flash-lite": (0.10, 0.40),
     "composer-2.5-fast": (3.00, 15.00),
+    "grok-4.6": (2.00, 6.00),
+    "grok-4.5": (2.00, 6.00),
+    "kimi-k3": (3.00, 15.00),
+    "mai-code-1.1-flash": (0.75, 4.50),
 }
 
 

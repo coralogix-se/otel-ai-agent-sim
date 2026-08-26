@@ -27,7 +27,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:latest
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:demo-models-202609021030
           imagePullPolicy: Always
           command: ["python", "-m", "sim.anthropic_admin"]
           env:
@@ -52,12 +52,14 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             # Minute-level Admin usage buckets. Cost reports once per UTC day (first cycle also emits).
+            # Volume tuned so org daily tokens land ~80–150M (≈3–6M/user), near Anthropic Claude Code
+            # averages (~$13/active day ≈ a few million tokens), not multi-billion sim floods.
             - name: SIM_ANTHROPIC_ADMIN_INTERVAL_SEC
               value: "60"
             - name: SIM_ANTHROPIC_ADMIN_EMITS_PER_CYCLE
-              value: "12"
+              value: "6"
             - name: SIM_ANTHROPIC_ADMIN_VOLUME
-              value: "1"
+              value: "0.08"
             - name: SIM_ANTHROPIC_ADMIN_API_KEYS
               value: "6"
             - name: SIM_ANTHROPIC_ADMIN_USERS

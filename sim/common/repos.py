@@ -31,6 +31,12 @@ _UNMANAGED_REPOS: tuple[str, ...] = (
 # Roster indices pinned as “rogue” users: heavy unmanaged-repo use + elevated spend (stable across runs).
 _DEFAULT_ROGUE_USER_INDICES: tuple[int, ...] = (17, 42, 88)
 
+# Users whose sessions always span managed + unmanaged repos (Claude ``multiOrgUser`` insight).
+_DEFAULT_MULTI_ORG_USER_INDICES: tuple[int, ...] = (17, 42)
+
+# Users with extra token volume so at least one session crosses heavy-session thresholds.
+_DEFAULT_HEAVY_SESSION_USER_INDICES: tuple[int, ...] = (17,)
+
 # One roster user per agent doing company-like work on a personal GitHub repo (policy violation).
 # Indices must have ``claude_code`` / ``copilot_cli`` in ``SIM_ROSTER_AGENT_AFFINITY`` (default on).
 # 27 → quinn.bernstein@coralogix.com (claude_code); 54 → quinn.bernstein2@coralogix.com (copilot_cli).
@@ -114,6 +120,52 @@ def sim_rogue_user_token_multiplier(roster_user: dict | None) -> float:
 
 
 claude_rogue_user_token_multiplier = sim_rogue_user_token_multiplier
+
+
+def sim_multi_org_user_roster_indices() -> frozenset[int]:
+    """Roster users that emit two repo owners on the same ``session_id`` (managed + unmanaged)."""
+    raw = os.environ.get("SIM_CLAUDE_MULTI_ORG_USER_INDICES", "").strip()
+    if not raw:
+        return frozenset(_DEFAULT_MULTI_ORG_USER_INDICES)
+    out: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.add(int(part))
+    return frozenset(out) if out else frozenset(_DEFAULT_MULTI_ORG_USER_INDICES)
+
+
+def is_sim_multi_org_user(roster_user: dict | None) -> bool:
+    if roster_user is None:
+        return False
+    idx = _roster_index_for_user(roster_user)
+    return idx is not None and idx in sim_multi_org_user_roster_indices()
+
+
+def sim_heavy_session_user_roster_indices() -> frozenset[int]:
+    """Roster users with elevated per-session token totals (``heavySessions`` insight)."""
+    raw = os.environ.get("SIM_CLAUDE_HEAVY_SESSION_USER_INDICES", "").strip()
+    if not raw:
+        return frozenset(_DEFAULT_HEAVY_SESSION_USER_INDICES)
+    out: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.add(int(part))
+    return frozenset(out) if out else frozenset(_DEFAULT_HEAVY_SESSION_USER_INDICES)
+
+
+def sim_heavy_session_token_multiplier(roster_user: dict | None) -> float:
+    """Extra token scale for pinned users so one session exceeds 5M and 10× the daily average."""
+    if roster_user is None:
+        return 1.0
+    idx = _roster_index_for_user(roster_user)
+    if idx is None or idx not in sim_heavy_session_user_roster_indices():
+        return 1.0
+    return max(1.0, _env_float("SIM_CLAUDE_HEAVY_SESSION_TOKEN_MULT", 4.0))
+
+
+claude_heavy_session_token_multiplier = sim_heavy_session_token_multiplier
 
 
 def _roster_index_for_user(roster_user: dict | None) -> int | None:
@@ -247,6 +299,12 @@ def sim_session_repository_names(
         return [sim_personal_violation_repository(roster_user)]
 
     rng = _session_repo_rng(session_id)
+    if roster_user is not None and is_sim_multi_org_user(roster_user):
+        managed = _pick_repo_name("managed", rng)
+        unmanaged = _pick_repo_name("unmanaged", rng)
+        if managed == unmanaged:
+            unmanaged = _pick_repo_name("unmanaged", random.Random(rng.randint(0, 2**31 - 1)))
+        return [managed, unmanaged]
     rogue = is_sim_rogue_user(roster_user)
     if n_repos is None:
         lo = _env_int("SIM_CLAUDE_REPOS_PER_SESSION_MIN", 1)

@@ -6,7 +6,18 @@ from datetime import datetime, timezone
 from prometheus_client import CollectorRegistry, generate_latest
 
 from sim.anthropic_admin.constants import TOKEN_TYPES, default_organization_id
-from sim.anthropic_admin.runtime import AnthropicAdminSim, USAGE_LABELS, USER_COST_LABELS
+from sim.anthropic_admin.runtime import (
+    ANALYTICS_COST_LABELS,
+    ANALYTICS_TOKEN_LABELS,
+    AnthropicAdminSim,
+    ORG_REQUEST_LABELS,
+    USAGE_LABELS,
+    USER_COST_LABELS,
+    USER_CHAT_LABELS,
+    USER_REQUEST_LABELS,
+    USER_SESSION_LABELS,
+    USER_TOKEN_LABELS,
+)
 
 
 def _series_names(text: bytes) -> set[str]:
@@ -41,6 +52,15 @@ def test_emit_cycle_creates_dashboard_gauge_series() -> None:
     assert "anthropic_analytics_adoption_rate" in names
     assert "anthropic_analytics_pending_invites" in names
     assert "anthropic_analytics_user_sessions" in names
+    assert "anthropic_analytics_user_chat_activity" in names
+    assert "anthropic_analytics_user_commits" in names
+    assert "anthropic_analytics_user_lines_added" in names
+    assert "anthropic_analytics_user_lines_removed" in names
+    assert "anthropic_analytics_user_pull_requests" in names
+    assert "anthropic_analytics_skill_users" in names
+    assert "anthropic_analytics_skill_invocations" in names
+    assert "anthropic_analytics_connector_users" in names
+    assert "anthropic_analytics_connector_calls" in names
     assert "anthropic_compliance_org_users_total" in names
     assert "anthropic_compliance_activity_events_total" in names
     body = payload.decode()
@@ -49,7 +69,59 @@ def test_emit_cycle_creates_dashboard_gauge_series() -> None:
     assert 'source="compliance"' in body
     assert 'amount_type="actual"' in body
     assert 'product="claude_code"' in body
-    assert 'token_type="total_tokens"' in body
+    assert "group" in USER_COST_LABELS
+    assert "group" in USER_TOKEN_LABELS
+    assert "group" in USER_REQUEST_LABELS
+    assert "group" in USER_SESSION_LABELS
+    assert "group" in USER_CHAT_LABELS
+    assert "model" in USER_SESSION_LABELS
+    assert "group" in ANALYTICS_COST_LABELS
+    assert "group" in ANALYTICS_TOKEN_LABELS
+    assert "group" in ORG_REQUEST_LABELS
+    assert any(
+        line.startswith("anthropic_analytics_cost{") and 'group="' in line
+        for line in body.splitlines()
+    )
+    assert any(
+        line.startswith("anthropic_analytics_user_sessions{")
+        and 'group="' in line
+        and 'model="' in line
+        and 'user_email="' in line
+        and 'product="' in line
+        for line in body.splitlines()
+    )
+    assert any(
+        line.startswith("anthropic_analytics_user_chat_activity{") and 'group="' in line
+        for line in body.splitlines()
+    )
+    assert any(
+        line.startswith("anthropic_analytics_skill_sessions{") and 'group="' in line
+        for line in body.splitlines()
+    )
+    assert any(
+        line.startswith("anthropic_analytics_connector_sessions{") and 'group="' in line
+        for line in body.splitlines()
+    )
+    assert any(
+        line.startswith("anthropic_org_requests_total{") and 'group="' in line
+        for line in body.splitlines()
+    )
+    assert 'token_type="uncached_input_tokens"' in body
+    assert 'token_type="output_tokens"' in body
+    assert 'token_type="cache_read_input_tokens"' in body
+    assert 'token_type="cache_creation_input_tokens"' in body
+    assert any(
+        line.startswith("anthropic_analytics_user_tokens{") and 'group="' in line
+        for line in body.splitlines()
+    )
+    assert any(
+        line.startswith("anthropic_analytics_user_requests{") and 'group="' in line
+        for line in body.splitlines()
+    )
+    assert any(
+        line.startswith("anthropic_analytics_user_tokens{") and 'token_type="output_tokens"' in line
+        for line in body.splitlines()
+    )
     assert 'window="daily"' in body
     assert 'cx_application_name="Claude"' in body
     assert 'cx_subsystem_name="Enterprise API"' in body

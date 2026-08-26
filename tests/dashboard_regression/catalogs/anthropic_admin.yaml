@@ -109,6 +109,80 @@ checks:
     query: |
       sum by (product) (max_over_time(anthropic_analytics_user_sessions{job="otel-anthropic-admin-sim"}[10d]))
 
+  - id: anthropic_admin.user_commits
+    title: User commits (Claude Products detail)
+    kind: promql
+    expect: has_nonzero
+    notes: >
+      HAR widget max_over_time(anthropic_analytics_user_commits[86400s]);
+      labels user_id/user_email/product (USER_PRODUCT_LABELS).
+    query: |
+      sum by (product) (max_over_time(anthropic_analytics_user_commits{job="otel-anthropic-admin-sim"}[10d]))
+
+  - id: anthropic_admin.user_lines_added
+    title: User lines added
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (product) (max_over_time(anthropic_analytics_user_lines_added{job="otel-anthropic-admin-sim"}[10d]))
+
+  - id: anthropic_admin.user_pull_requests
+    title: User pull requests
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (product) (max_over_time(anthropic_analytics_user_pull_requests{job="otel-anthropic-admin-sim"}[10d]))
+
+  - id: anthropic_admin.skill_users
+    title: Skill users (Claude Products)
+    kind: promql
+    expect: has_nonzero
+    notes: Org skill tile; cxai labels skill_name (+ share_status when present).
+    query: |
+      sum by (skill_name) (max_over_time(anthropic_analytics_skill_users{job="otel-anthropic-admin-sim"}[10d]))
+
+  - id: anthropic_admin.skill_invocations
+    title: Skill invocations
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (skill_name) (max_over_time(anthropic_analytics_skill_invocations{job="otel-anthropic-admin-sim"}[10d]))
+
+  - id: anthropic_admin.connector_users
+    title: Connector users
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (connector_name) (max_over_time(anthropic_analytics_connector_users{job="otel-anthropic-admin-sim"}[10d]))
+
+  - id: anthropic_admin.connector_calls
+    title: Connector calls by type
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (connector_name, call_type) (max_over_time(anthropic_analytics_connector_calls{job="otel-anthropic-admin-sim"}[10d]))
+
+  - id: anthropic_admin.users_by_group
+    title: Users view tokens/requests with group filter
+    kind: promql
+    expect: has_nonzero
+    notes: >
+      Claude Products Users table injects group= on user_tokens and user_requests;
+      empty when those series lack a group label.
+    query: |
+      sum by (user_email, group) (max_over_time(anthropic_analytics_user_tokens{job="otel-anthropic-admin-sim"}[10d]))
+
+  - id: anthropic_admin.cost.by_group
+    title: Cost by group (Claude Products widget)
+    kind: promql
+    expect: has_nonzero
+    notes: >
+      UI getCostByGroup joins sum by (group, amount_type) on anthropic_analytics_cost,
+      sum by (group, token_type) on anthropic_analytics_tokens, and sum by (group) on
+      anthropic_org_requests_total. Empty when those org series lack a group label.
+    query: |
+      sum by (group) (max_over_time(anthropic_analytics_cost{amount_type="actual",job="otel-anthropic-admin-sim"}[10d]))
+
   - id: anthropic_admin.logs.summary_active_users
     title: anthropic.summary.active_users integration logs
     kind: dataprime
