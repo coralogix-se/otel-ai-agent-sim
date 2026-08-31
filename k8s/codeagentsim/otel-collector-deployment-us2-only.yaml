@@ -1,0 +1,88 @@
+# Single-tenant collector Deployment (US2 key only). Pairs with otel-collector-configmap-us2-only.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector-codeagentsim
+  namespace: codeagentsim
+  labels:
+    app: otel-collector-codeagentsim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector-codeagentsim
+  template:
+    metadata:
+      labels:
+        app: otel-collector-codeagentsim
+    spec:
+      # EKS nodes here are IPv4-only; ingress.us2.coralogix.com publishes AAAA and gRPC dials
+      # IPv6 first ("network is unreachable"). Resolve the A record at pod start and pin /etc/hosts.
+      initContainers:
+        - name: coralogix-ipv4-hosts
+          image: busybox:1.36
+          command:
+            - sh
+            - -ec
+            - |
+              IP=$(nslookup ingress.us2.coralogix.com 2>/dev/null | awk '/^Address: / { print $2 }' | grep -E '^[0-9]+\.' | tail -1)
+              if [ -z "$IP" ]; then echo "failed to resolve ingress.us2.coralogix.com A record"; exit 1; fi
+              grep -v '[[:space:]]ingress\.us2\.coralogix\.com$' /etc/hosts > /work/hosts
+              echo "$IP ingress.us2.coralogix.com" >> /work/hosts
+          volumeMounts:
+            - name: etc-hosts
+              mountPath: /work
+      containers:
+        - name: otelcol
+          image: otel/opentelemetry-collector-contrib:0.158.0
+          args:
+            - --config=/etc/otelcol/config.yaml
+          ports:
+            - name: otlp-grpc
+              containerPort: 24317
+              protocol: TCP
+            - name: otlp-http
+              containerPort: 24318
+              protocol: TCP
+            - name: health
+              containerPort: 13134
+              protocol: TCP
+          env:
+            - name: CORALOGIX_PRIVATE_KEY_US2
+              valueFrom:
+                secretKeyRef:
+                  name: coralogix-multi-export
+                  key: private_key_us2
+          volumeMounts:
+            - name: etc-hosts
+              mountPath: /etc/hosts
+              subPath: hosts
+              readOnly: true
+            - name: config
+              mountPath: /etc/otelcol
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 1536Mi
+            limits:
+              cpu: "1"
+              memory: 3Gi
+      volumes:
+        - name: etc-hosts
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: otel-collector-codeagentsim-config

@@ -1,0 +1,18 @@
+---
+description: Prefer current EKS Kubernetes versions when creating or recreating clusters
+alwaysApply: true
+---
+
+# EKS cluster version
+
+When creating or recreating EKS clusters for this project (eksctl, CloudFormation, Terraform, or console):
+
+- Prefer the **latest** EKS Kubernetes version available at create time.
+- As of 2026-08-24 that is **1.36** — use `1.36` unless the user asks otherwise or it is unavailable in the region.
+- Before creating, confirm with:
+  `aws eks describe-cluster-versions --region <region>`
+  and pick the newest `STANDARD_SUPPORT` version (do not copy an older cluster’s version).
+- Do **not** upgrade existing clusters unless the user explicitly asks.
+- Historical note: `otel-ai-agent-sim` was created on **1.31**. Do not repeat that for new clusters.
+
+Also for this sim cluster's nodegroup: keep **`minSize=1`** (not 0) so telemetry keeps flowing; desired=0 has repeatedly killed the stack.

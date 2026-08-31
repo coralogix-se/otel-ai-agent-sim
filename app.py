@@ -71,6 +71,11 @@ from sim.common.constants import (
 )
 from sim.copilot.cli import emit_copilot_cli_session
 from sim.copilot.collector_metrics import copilot_collector_enabled, register_copilot_collector_metrics
+from sim.cursor.usage_v2 import (
+    emit_cursor_usage_metrics_cycle,
+    register_cursor_usage_metrics,
+    usage_metrics_enabled,
+)
 from sim.common.state import st
 from opentelemetry import trace
 from opentelemetry._logs import set_logger_provider
@@ -3763,6 +3768,15 @@ def main() -> None:
         if copilot_collector_enabled()
         else None
     )
+    _cursor_usage_collector = (
+        register_cursor_usage_metrics(_prom_registry) if usage_metrics_enabled() else None
+    )
+    if _cursor_usage_collector is not None:
+        print(
+            "Cursor Usage v2 metrics enabled (cursor_* Admin APIs family; "
+            "SIM_CURSOR_USAGE_METRICS_ENABLED=true)",
+            flush=True,
+        )
 
     _cc_tok_l = _CC_BASE_LABEL_NAMES + ("type", "model")
     _cc_cost_l = _CC_BASE_LABEL_NAMES + ("model",)
@@ -4207,9 +4221,11 @@ def main() -> None:
         if iterations_raw is not None and iterations_raw != "":
             for _ in range(int(iterations_raw)):
                 run_sophisticated_trace()
+                emit_cursor_usage_metrics_cycle()
         else:
             while True:
                 run_sophisticated_trace()
+                emit_cursor_usage_metrics_cycle()
                 time.sleep(interval)
     finally:
         if _prom_rw_stop is not None:

@@ -26,7 +26,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:demo-otel-only-202608262125
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:cursor-usage-labels-202608311656
           imagePullPolicy: Always
           env:
             # OTLP -> otel-collector-codeagentsim; collector exports to Coralogix US2 + EU1 (no API key in this pod).
@@ -229,13 +229,24 @@ spec:
               value: "true"
             - name: SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT
               value: "1"
-            # Target ~$10K/day (observed ~$4K/day @ 120 → ~2.5× after Sonnet 5 intro-rate cut).
+            # Keep at 1 when PRODUCTS_ROSTER_ALWAYS_EMIT fans out all 32 users each cycle.
+            # mult=300 × always-emit produced multi-million $/day and hundreds of billions of tokens.
             - name: SIM_CLAUDE_PER_EMIT_TOKEN_MULT
-              value: "300"
+              value: "1"
             # Cursor Composer: ``SIM_CURSOR_STABLE_SESSION_PER_USER`` (app default true) + slots below reuse one roster
             # user per slot for ``SIM_CURSOR_LONG_SESSION_SEC`` or (if unset) the same ``SIM_CLAUDE_LONG_SESSION_SEC``
             # window — parallel sessions stay on distinct pinned users. Set ``SIM_CURSOR_LONG_SESSION_SEC=0`` for a new
             # user every emit (legacy). Optional: ``SIM_CURSOR_CONCURRENT_LONG_SESSIONS``, ``SIM_CURSOR_SESSION_SLOT_STRATEGY``.
+            # Cursor Usage dashboard (Admin APIs cursor_* gauges). Dual-path with Composer OTLP spans.
+            # date label = UTC calendar day YYYY-MM-DD (matches live cxai Admin API samples).
+            - name: SIM_CURSOR_USAGE_METRICS_ENABLED
+              value: "true"
+            - name: SIM_CURSOR_USAGE_TEAM_ID
+              value: "3405693"
+            - name: SIM_CURSOR_USAGE_ROSTER_SIZE
+              value: "24"
+            - name: SIM_CURSOR_USAGE_EMITS_PER_CYCLE
+              value: "6"
             # Align Claude Code session/repo metrics with Anthropic Admin Claude Products users (first 24 roster rows).
             - name: SIM_CLAUDE_ALIGN_PRODUCTS_ROSTER
               value: "true"
@@ -293,7 +304,7 @@ spec:
             #   value: round_robin
             - name: SIM_CLAUDE_TOKEN_EMIT_BATCH
               value: "1"
-            # SIM_CLAUDE_PER_EMIT_TOKEN_MULT set above (~300 for ~$10K/day spend).
+            # SIM_CLAUDE_PER_EMIT_TOKEN_MULT set above (1 with always-emit roster fan-out).
             # Productivity ratio (active time): app default min 2s/turn per type=cli|user; set "1" to match older sim.
             # - name: SIM_CLAUDE_ACTIVE_TIME_MIN_S
             #   value: "1"

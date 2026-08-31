@@ -800,8 +800,6 @@ class AnthropicAdminSim:
         model: str,
         context_window: str,
         amounts: dict[str, int],
-        usd_this: float,
-        tokens_this: int,
     ) -> None:
         speed = "standard"
         group = user.group
@@ -869,9 +867,18 @@ class AnthropicAdminSim:
                 token_type=token_type,
             ).set(self._org_cache[ckey])
 
+        # Price user cost from the same token set as org ``anthropic_analytics_cost``
+        # so Σ users ≈ Σ groups ≈ org (cache-write / web-search stay on Admin usage only).
+        analytics_usd = 0.0
+        analytics_tokens = 0
+        for token_type in ANALYTICS_TOKEN_TYPES:
+            amt = int(amounts.get(token_type, 0))
+            analytics_usd += _usd_for_tokens(model, token_type, amt)
+            analytics_tokens += amt
+
         uk = (user.email, product, model)
-        self._inc(self._user_cost_usd, uk, usd_this)
-        self._inc(self._user_tokens_total, uk, tokens_this)
+        self._inc(self._user_cost_usd, uk, analytics_usd)
+        self._inc(self._user_tokens_total, uk, analytics_tokens)
         self._inc(self._user_requests, uk, 1)
         user_l = {
             **base,
@@ -999,27 +1006,38 @@ class AnthropicAdminSim:
             ).set(len(self._user_skill_set[skey]))
             sk = (skill, surface, user.group)
             self._inc(self._skill_sessions, sk, 1)
-            self._inc(self._skill_cost_usd, (skill, user.group), usd_this * 0.08)
+            # Full emit attribution: skill cost is a partition of the same analytics USD
+            # (not an independent 8% slice that undershoots org/user totals).
+            self._inc(self._skill_cost_usd, (skill, user.group), analytics_usd)
             self._inc(self._skill_invocations, (skill, user.group), 1)
             self._skill_user_emails.setdefault((skill, user.group), set()).add(user.email)
             share = "public" if skill in ("cx-catalog", "review", "brainstorming", "create-pr") else "private"
             self.skill_sessions.labels(
                 **base, skill_name=skill, surface=surface, group=user.group
             ).set(self._skill_sessions[sk])
+            skill_actual = self._skill_cost_usd[(skill, user.group)]
+            skill_list = skill_actual * LIST_PRICE_FACTOR
+            self.skill_cost.labels(
+                **base,
+                skill_name=skill,
+                amount_type="actual",
+                currency="USD",
+                group=user.group,
+            ).set(round(skill_actual, 4))
             self.skill_cost.labels(
                 **base,
                 skill_name=skill,
                 amount_type="list",
                 currency="USD",
                 group=user.group,
-            ).set(round(self._skill_cost_usd[(skill, user.group)], 4))
+            ).set(round(skill_list, 4))
             self.skill_cost.labels(
                 **base,
                 skill_name=skill,
                 amount_type="overage",
                 currency="USD",
                 group=user.group,
-            ).set(round(self._skill_cost_usd[(skill, user.group)] * 0.99, 4))
+            ).set(round(skill_list * 0.99, 4))
             self.skill_invocations.labels(
                 **base, skill_name=skill, share_status=share, group=user.group
             ).set(self._skill_invocations[(skill, user.group)])
@@ -1096,7 +1114,7 @@ class AnthropicAdminSim:
             self._inc(self._user_skills, skey, 1)
             self._user_skill_set.setdefault(skey, set()).add(skill)
             self._inc(self._skill_sessions, (skill, surface, user.group), 1)
-            self._inc(self._skill_cost_usd, (skill, user.group), 0.12)
+            # Seed invocations/users only — do not invent skill USD outside emit attribution.
             self.user_skills_used.labels(
                 **base,
                 product="claude_code",
@@ -1114,20 +1132,6 @@ class AnthropicAdminSim:
             self.skill_sessions.labels(
                 **base, skill_name=skill, surface=surface, group=user.group
             ).set(1)
-            self.skill_cost.labels(
-                **base,
-                skill_name=skill,
-                amount_type="list",
-                currency="USD",
-                group=user.group,
-            ).set(0.12)
-            self.skill_cost.labels(
-                **base,
-                skill_name=skill,
-                amount_type="overage",
-                currency="USD",
-                group=user.group,
-            ).set(0.12)
             self._inc(self._skill_invocations, (skill, user.group), 1)
             self._skill_user_emails.setdefault((skill, user.group), set()).add(user.email)
             self.skill_invocations.labels(
@@ -1278,8 +1282,6 @@ class AnthropicAdminSim:
                 model=model,
                 context_window=context_window,
                 amounts=amounts,
-                usd_this=usd_this,
-                tokens_this=tokens_this,
             )
 
             log_data = {

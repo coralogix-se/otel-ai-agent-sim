@@ -175,6 +175,41 @@ def test_analytics_list_cost_above_actual() -> None:
     assert abs(user_list / user_actual - LIST_PRICE_FACTOR) < 0.05
 
 
+def test_analytics_cost_dimensions_reconcile() -> None:
+    """Org, user, group, and skill costs share one priced budget (ANALYTICS_TOKEN_TYPES)."""
+    registry = CollectorRegistry()
+    sim = AnthropicAdminSim(registry=registry, logger=None, emits_per_cycle=48)
+    for minute in range(6):
+        sim.emit_cycle(now=datetime(2026, 8, 26, 12, minute, tzinfo=timezone.utc))
+    body = generate_latest(registry).decode()
+    org_actual = user_actual = skill_actual = 0.0
+    group_actual: dict[str, float] = {}
+    for line in body.splitlines():
+        if line.startswith("#") or " " not in line:
+            continue
+        name, val_s = line.rsplit(" ", 1)
+        val = float(val_s)
+        if name.startswith("anthropic_analytics_cost{") and 'amount_type="actual"' in name:
+            org_actual += val
+            # group="..." label
+            gstart = name.find('group="')
+            if gstart >= 0:
+                gend = name.find('"', gstart + 7)
+                group = name[gstart + 7 : gend]
+                group_actual[group] = group_actual.get(group, 0.0) + val
+        elif name.startswith("anthropic_analytics_user_cost{") and 'amount_type="actual"' in name:
+            user_actual += val
+        elif name.startswith("anthropic_analytics_skill_cost{") and 'amount_type="actual"' in name:
+            skill_actual += val
+    assert org_actual > 0
+    assert abs(user_actual - org_actual) / org_actual < 0.02
+    assert abs(sum(group_actual.values()) - org_actual) / org_actual < 0.02
+    # Skills are a subset (skill-tagged code/cowork emits), not an independent budget.
+    assert skill_actual > 0
+    assert skill_actual <= org_actual * 1.01
+    assert skill_actual >= org_actual * 0.05
+
+
 def test_usage_label_set_matches_live_admin_series() -> None:
     assert USAGE_LABELS == (
         "cx_application_name",

@@ -1,0 +1,105 @@
+sim: cursor_usage
+description: >
+  Cursor Usage dashboard (Admin APIs cursor_* family). Samples are per-bucket
+  deltas — PromQL must use sum_over_time / max_over_time / last_over_time only
+  (never rate/increase). Dual-path with legacy Composer spans in cursor.yaml.
+
+checks:
+  - id: cursor_usage.has_data
+    title: Usage gate — cursor_events_total present
+    kind: promql
+    expect: has_nonzero
+    notes: Mirrors checkHasData(); unfiltered integration presence.
+    query: |
+      count(last_over_time(cursor_events_total{cx_application_name="Cursor"}[48h]))
+
+  - id: cursor_usage.events_cost
+    title: Event cost (windowed)
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum(sum_over_time(cursor_event_cost_usd{cx_application_name="Cursor",team_id="3405693"}[24h]))
+
+  - id: cursor_usage.events_total
+    title: Events total (windowed)
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum(sum_over_time(cursor_events_total{cx_application_name="Cursor",team_id="3405693"}[24h]))
+
+  - id: cursor_usage.tokens
+    title: Event tokens by type
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (token_type) (sum_over_time(cursor_event_tokens_total{cx_application_name="Cursor",team_id="3405693"}[24h]))
+
+  - id: cursor_usage.member_roster
+    title: Member roster snapshots
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum(last_over_time(cursor_member_info{cx_application_name="Cursor",team_id="3405693"}[26h]))
+
+  - id: cursor_usage.member_active
+    title: Active members today
+    kind: promql
+    expect: has_nonzero
+    query: |
+      count(count by (email) (last_over_time(cursor_member_active{cx_application_name="Cursor",team_id="3405693"}[26h])))
+
+  - id: cursor_usage.daily_spend
+    title: Member daily spend
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum(sum_over_time(cursor_member_daily_spend_usd{cx_application_name="Cursor",team_id="3405693"}[24h]))
+
+  - id: cursor_usage.spend_gross
+    title: Cycle gross spend snapshot
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum(last_over_time(cursor_member_spend_gross_usd{cx_application_name="Cursor",team_id="3405693"}[26h]))
+
+  - id: cursor_usage.requests_by_surface
+    title: Requests by surface
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (surface) (sum_over_time(cursor_requests_total{cx_application_name="Cursor",team_id="3405693"}[24h]))
+
+  - id: cursor_usage.ai_code_lines
+    title: AI code lines
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (direction, commit_source) (sum_over_time(cursor_ai_code_lines_total{cx_application_name="Cursor",team_id="3405693"}[24h]))
+
+  - id: cursor_usage.groups
+    title: Billing groups
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (group_name) (last_over_time(cursor_group_members{cx_application_name="Cursor",team_id="3405693"}[26h]))
+
+  - id: cursor_usage.org_team
+    title: Org team membership
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum(last_over_time(cursor_org_team_membership_info{cx_application_name="Cursor",team_id="3405693"}[26h]))
+
+  - id: cursor_usage.billing_cycle
+    title: Billing cycle end scalar
+    kind: promql
+    expect: has_nonzero
+    query: |
+      max(last_over_time(cursor_billing_cycle_end_seconds{cx_application_name="Cursor",team_id="3405693"}[26h]))
+
+  - id: cursor_usage.conversations_by_model
+    title: Events by model
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (model) (sum_over_time(cursor_events_total{cx_application_name="Cursor",team_id="3405693"}[24h]))

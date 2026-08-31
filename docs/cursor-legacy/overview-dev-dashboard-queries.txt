@@ -1,0 +1,215 @@
+AI Center Code Agents — Overview dashboard queries
+Source HAR: overview-dev.app.cx498.coralogix.com.har
+Tenant: cx498 (overview-dev.app.cx498.coralogix.com)
+Page: ai-center/code-agents/overview (from RUM context in HAR)
+
+Notes:
+- Official widget titles are not exported in this HAR; labels below are inferred from query shape.
+- Each section lists the engine (PromQL or DataPrime), parameters when present, and the full query text.
+- PromQL windows observed: [86400s] for 24h instant panels; [864s] step for 24h range charts.
+
+Total unique queries captured: 17
+
+========================================================================
+
+Widget 1: Overview — Non-CLI agent span count (inventory panel)
+Engine: DataPrime
+First seen (HAR entry time): 2026-06-15T18:06:23.336Z
+Query:
+source spans
+| filter ((tags['gen_ai.system']:string != null || tags['gen_ai.provider.name']:string != null || tags['gen_ai.operation.name']:string != null) && !(['cursor-agent','codex_cli_rs','codex-app-server','github-copilot','gemini-cli'].arrayContains($l.serviceName)) || tags['gen_ai.provider.name']:string != null || tags['gen_ai.operation.name']:string != null) && !(['cursor-agent','codex_cli_rs','codex-app-server','github-copilot','gemini-cli'].arrayContains($l.serviceName))
+| count into total_spans
+------------------------------------------------------------------------
+
+Widget 2: Claude — Active users (distinct sessions by user_email, via cost metric)
+Engine: PromQL (instant)
+First seen (HAR entry time): 2026-06-15T18:06:23.627Z
+Parameters:
+  time: 1781546783
+Query:
+count by (user_email) (count by (user_email, session_id) (increase(claude_code_cost_usage_USD_total[86400s])))
+------------------------------------------------------------------------
+
+Widget 3: Gemini — Active users (sessions by user_email)
+Engine: PromQL (instant)
+First seen (HAR entry time): 2026-06-15T18:06:23.631Z
+Parameters:
+  time: 1781546783
+Query:
+sum by (user_email) (increase(gemini_cli_session_count_total[86400s]))
+------------------------------------------------------------------------
+
+Widget 4: Claude — Usage by model (distinct sessions by model, via cost metric)
+Engine: PromQL (instant)
+First seen (HAR entry time): 2026-06-15T18:06:23.634Z
+Parameters:
+  time: 1781546783
+Query:
+count by (model) (count by (model, session_id) (increase(claude_code_cost_usage_USD_total[86400s])))
+------------------------------------------------------------------------
+
+Widget 5: Gemini — API requests by model
+Engine: PromQL (instant)
+First seen (HAR entry time): 2026-06-15T18:06:23.637Z
+Parameters:
+  time: 1781546783
+Query:
+sum by (model) (increase(gemini_cli_api_request_count_total[86400s]))
+------------------------------------------------------------------------
+
+Widget 6: Gemini — Total sessions (single-stat summary)
+Engine: PromQL (instant)
+First seen (HAR entry time): 2026-06-15T18:06:23.639Z
+Parameters:
+  time: 1781546783
+Query:
+sum(increase(gemini_cli_session_count_total[86400s]))
+------------------------------------------------------------------------
+
+Widget 7: Claude — Active sessions over time (range chart)
+Engine: PromQL (range)
+First seen (HAR entry time): 2026-06-15T18:06:23.642Z
+Parameters:
+  start: 1781460383
+  end: 1781546783
+  step: 864s
+Query:
+count(count by (session_id) (increase(claude_code_token_usage_tokens_total[864s])))
+------------------------------------------------------------------------
+
+Widget 8: Gemini — Sessions over time (range chart)
+Engine: PromQL (range)
+First seen (HAR entry time): 2026-06-15T18:06:23.645Z
+Parameters:
+  start: 1781460383
+  end: 1781546783
+  step: 864s
+Query:
+sum(increase(gemini_cli_session_count_total[864s]))
+------------------------------------------------------------------------
+
+Widget 9: Cursor — Active users (from spans)
+Engine: DataPrime
+First seen (HAR entry time): 2026-06-15T18:06:23.658Z
+Query:
+source spans
+| filter $l.serviceName == 'cursor-agent'
+| filter tags['cursor.user_email'] != null
+| filter tags['cursor.conversation_id'] != null
+| create user_email from tags['cursor.user_email']
+| groupby user_email aggregate distinct_count(tags['cursor.conversation_id']) as sessions
+| choose user_email as userEmail, sessions
+------------------------------------------------------------------------
+
+Widget 10: Codex — Active users (from logs)
+Engine: DataPrime
+First seen (HAR entry time): 2026-06-15T18:06:23.658Z
+Query:
+source logs
+| filter $d.resource.attributes['service.name']:string == 'codex_cli_rs' || $d.resource.attributes['service.name']:string == 'codex-app-server'
+| filter firstNonNull($d.logRecord.attributes['event.name'], $d.attributes['event.name']) == 'codex.sse_event'
+| filter firstNonNull($d.logRecord.attributes['event.kind'], $d.attributes['event.kind']) == 'response.completed'
+| create user_email from firstNonNull($d.logRecord.attributes['user.email'], $d.attributes['user.email'])
+| create conversation_id from firstNonNull($d.logRecord.attributes['conversation.id'], $d.attributes['conversation.id'])
+| filter user_email != null && conversation_id != null
+| groupby user_email aggregate distinct_count(conversation_id) as sessions
+| choose user_email as userEmail, sessions
+------------------------------------------------------------------------
+
+Widget 11: Copilot — Active users (from invoke_agent spans)
+Engine: DataPrime
+First seen (HAR entry time): 2026-06-15T18:06:23.658Z
+Query:
+source spans
+| filter $l.serviceName == 'github-copilot' || tags['otel.scope.name'] == 'github.copilot'
+| filter tags['gen_ai.operation.name'] == 'invoke_agent'
+| create user_email from tags['enduser.pseudo.id']
+| create conversation_id from tags['gen_ai.conversation.id']
+| filter user_email != null && conversation_id != null
+| groupby user_email aggregate approx_count_distinct(conversation_id) as sessions
+| choose user_email as userEmail, sessions
+------------------------------------------------------------------------
+
+Widget 12: Cursor — Usage by model (from spans)
+Engine: DataPrime
+First seen (HAR entry time): 2026-06-15T18:06:23.658Z
+Query:
+source spans
+| filter $l.serviceName == 'cursor-agent'
+| filter tags['gen_ai.request.model'] != null
+| filter tags['gen_ai.request.model'] != 'unknown'
+| filter tags['cursor.conversation_id'] != null
+| create model from tags['gen_ai.request.model']
+| groupby model aggregate distinct_count(tags['cursor.conversation_id']) as sessions
+| choose model, sessions
+------------------------------------------------------------------------
+
+Widget 13: Codex — Usage by model (from logs)
+Engine: DataPrime
+First seen (HAR entry time): 2026-06-15T18:06:23.658Z
+Query:
+source logs
+| filter $d.resource.attributes['service.name']:string == 'codex_cli_rs' || $d.resource.attributes['service.name']:string == 'codex-app-server'
+| filter firstNonNull($d.logRecord.attributes['event.name'], $d.attributes['event.name']) == 'codex.sse_event'
+| filter firstNonNull($d.logRecord.attributes['event.kind'], $d.attributes['event.kind']) == 'response.completed'
+| create model from firstNonNull($d.logRecord.attributes['model'], $d.attributes['model'])
+| create conversation_id from firstNonNull($d.logRecord.attributes['conversation.id'], $d.attributes['conversation.id'])
+| filter model != null && conversation_id != null
+| groupby model aggregate distinct_count(conversation_id) as sessions
+| choose model, sessions
+------------------------------------------------------------------------
+
+Widget 14: Copilot — Usage by model (from invoke_agent spans)
+Engine: DataPrime
+First seen (HAR entry time): 2026-06-15T18:06:23.658Z
+Query:
+source spans
+| filter $l.serviceName == 'github-copilot' || tags['otel.scope.name'] == 'github.copilot'
+| filter tags['gen_ai.operation.name'] == 'invoke_agent'
+| create model from tags['gen_ai.request.model']
+| create conversation_id from tags['gen_ai.conversation.id']
+| filter model != null && conversation_id != null
+| groupby model aggregate approx_count_distinct(conversation_id) as sessions
+| choose model, sessions
+------------------------------------------------------------------------
+
+Widget 15: Cursor — Sessions over time (timeseries from spans)
+Engine: DataPrime
+First seen (HAR entry time): 2026-06-15T18:06:23.659Z
+Query:
+source spans
+| filter $l.serviceName == 'cursor-agent'
+| filter tags['cursor.conversation_id'] != null
+| groupby roundTime($m.timestamp, 1800000ms) as Time aggregate distinct_count(tags['cursor.conversation_id']) as sessionCount
+| sort by Time asc
+| choose Time, sessionCount
+------------------------------------------------------------------------
+
+Widget 16: Codex — Sessions over time (from logs)
+Engine: DataPrime
+First seen (HAR entry time): 2026-06-15T18:06:23.659Z
+Query:
+source logs
+| filter $d.resource.attributes['service.name']:string == 'codex_cli_rs' || $d.resource.attributes['service.name']:string == 'codex-app-server'
+| filter firstNonNull($d.logRecord.attributes['event.name'], $d.attributes['event.name']) == 'codex.sse_event'
+| filter firstNonNull($d.logRecord.attributes['event.kind'], $d.attributes['event.kind']) == 'response.completed'
+| create conversation_id from firstNonNull($d.logRecord.attributes['conversation.id'], $d.attributes['conversation.id'])
+| filter conversation_id != null
+| groupby roundTime($m.timestamp, 1800000ms) as Time aggregate distinct_count(conversation_id) as sessions
+| sort by Time asc
+| choose Time, sessions
+------------------------------------------------------------------------
+
+Widget 17: Copilot — Sessions over time (timeseries from invoke_agent spans)
+Engine: DataPrime
+First seen (HAR entry time): 2026-06-15T18:06:23.659Z
+Query:
+source spans
+| filter $l.serviceName == 'github-copilot' || tags['otel.scope.name'] == 'github.copilot'
+| filter tags['gen_ai.operation.name'] == 'invoke_agent'
+| create conversation_id from tags['gen_ai.conversation.id']
+| filter conversation_id != null
+| groupby roundTime($m.timestamp, 86400000ms) as Time aggregate approx_count_distinct(conversation_id) as sessions
+| sort by Time asc
+| choose Time, sessions
+------------------------------------------------------------------------
