@@ -237,3 +237,18 @@ def test_idle_seats_and_surface_user_diversity(monkeypatch) -> None:
     assert chart_counts["cmdk"] < chart_counts["chat"]
     assert chart_counts["bugbot"] < chart_counts["cmdk"]
     assert len(set(chart_counts.values())) > 1
+
+
+def test_client_versions_mostly_latest_two_stale(monkeypatch) -> None:
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "24")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_IDLE_SEATS", "2")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_STALE_CLIENT_SEATS", "2")
+
+    roster = _roster()
+    active = [m for m in roster if not m.is_idle]
+    stale = [m for m in active if m.client_version in ("0.48.2", "0.47.8")]
+    latest = [m for m in active if m.client_version == "0.50.5"]
+
+    assert len(stale) == 2
+    assert len(latest) >= len(active) - 4  # allow ~2 on 0.49.6

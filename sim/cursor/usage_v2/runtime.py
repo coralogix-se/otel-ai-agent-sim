@@ -20,7 +20,9 @@ from sim.cursor.usage_v2.constants import (
     CURSOR_BUGBOT_SEVERITIES,
     CURSOR_CHANGE_SOURCES,
     CURSOR_CHART_SURFACES,
-    CURSOR_CLIENT_VERSIONS,
+    CURSOR_CLIENT_VERSION_LATEST,
+    CURSOR_CLIENT_VERSION_ONE_BEHIND,
+    CURSOR_CLIENT_VERSION_STALE,
     CURSOR_COMMANDS,
     CURSOR_COMMIT_SOURCES,
     CURSOR_CONVERSATION_DIMENSIONS,
@@ -40,6 +42,7 @@ from sim.cursor.usage_v2.constants import (
     CURSOR_USAGE_MODEL_WEIGHTS,
     CURSOR_USAGE_MODELS,
     cursor_usage_idle_seats,
+    cursor_usage_stale_client_seats,
     cursor_usage_roster_size,
     cursor_usage_team_id,
 )
@@ -106,6 +109,27 @@ def _pick_member_surface(member: _UsageMember) -> str:
     return _pick(member.surfaces, _surface_weights(member.surfaces))
 
 
+def _client_version_rank(email: str) -> str:
+    return hashlib.sha256(f"cursor-client:{email}".encode()).hexdigest()
+
+
+def _stale_client_version_map(active_emails: list[str]) -> dict[str, str]:
+    """Pick 1–2 stable stale-client seats; everyone else gets latest (or one-behind)."""
+    stale_n = min(cursor_usage_stale_client_seats(), max(0, len(active_emails) - 1))
+    ranked = sorted(active_emails, key=_client_version_rank)
+    stale_map: dict[str, str] = {}
+    for i, email in enumerate(ranked[:stale_n]):
+        stale_map[email] = CURSOR_CLIENT_VERSION_STALE[i % len(CURSOR_CLIENT_VERSION_STALE)]
+    for email in ranked[stale_n:]:
+        digest = hashlib.sha256(f"cursor-client-near:{email}".encode()).hexdigest()
+        stale_map[email] = (
+            CURSOR_CLIENT_VERSION_ONE_BEHIND
+            if int(digest[:4], 16) % 10 == 0
+            else CURSOR_CLIENT_VERSION_LATEST
+        )
+    return stale_map
+
+
 def _build_roster() -> list[_UsageMember]:
     n = cursor_usage_roster_size()
     allowed = list(roster_indices_for_agent("cursor"))
@@ -122,8 +146,15 @@ def _build_roster() -> list[_UsageMember]:
         if i not in ordered:
             ordered.append(i)
     idle_count = min(cursor_usage_idle_seats(), max(0, n - 2))
+    roster_rows = [(rank, idx) for rank, idx in enumerate(ordered[:n])]
+    active_emails = [
+        _CORALOGIX_TEAM_USERS[idx]["user.email"]
+        for rank, idx in roster_rows
+        if rank < n - idle_count
+    ]
+    client_versions = _stale_client_version_map(active_emails)
     members: list[_UsageMember] = []
-    for rank, idx in enumerate(ordered[:n]):
+    for rank, idx in roster_rows:
         row = _CORALOGIX_TEAM_USERS[idx]
         email = row["user.email"]
         gid, gname = CURSOR_GROUPS[rank % len(CURSOR_GROUPS)]
@@ -142,7 +173,7 @@ def _build_roster() -> list[_UsageMember]:
                 group_name=gname,
                 is_unassigned=is_unassigned,
                 monthly_limit_usd=_stable_limit_usd(email),
-                client_version=_pick(CURSOR_CLIENT_VERSIONS),
+                client_version=client_versions.get(email, CURSOR_CLIENT_VERSION_LATEST),
                 may_exceed_limit=(not is_idle) and rank < overage_slots,
                 is_idle=is_idle,
                 surfaces=() if is_idle else _stable_surface_affinity(email),

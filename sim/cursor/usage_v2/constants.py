@@ -190,6 +190,10 @@ CURSOR_CLIENT_VERSIONS: tuple[str, ...] = (
     "0.48.2",
     "0.47.8",
 )
+# FE stale-client insight: ≥2 semver releases behind the newest harvested version.
+CURSOR_CLIENT_VERSION_LATEST = CURSOR_CLIENT_VERSIONS[0]
+CURSOR_CLIENT_VERSION_ONE_BEHIND = CURSOR_CLIENT_VERSIONS[1]
+CURSOR_CLIENT_VERSION_STALE: tuple[str, ...] = CURSOR_CLIENT_VERSIONS[2:]
 
 CURSOR_REPOS: tuple[str, ...] = (
     "coralogix/cxai-observability-demo-playground",
@@ -236,3 +240,9 @@ def cursor_usage_idle_seats() -> int:
     from sim.common.env import _env_int
 
     return max(0, min(4, _env_int("SIM_CURSOR_USAGE_IDLE_SEATS", 2)))
+
+
+def cursor_usage_stale_client_seats() -> int:
+    from sim.common.env import _env_int
+
+    return max(0, min(4, _env_int("SIM_CURSOR_USAGE_STALE_CLIENT_SEATS", 2)))
