@@ -19,6 +19,7 @@ from sim.cursor.usage_v2.constants import (
     CURSOR_BUGBOT_ISSUE_STATES,
     CURSOR_BUGBOT_SEVERITIES,
     CURSOR_CHANGE_SOURCES,
+    CURSOR_CHART_SURFACES,
     CURSOR_CLIENT_VERSIONS,
     CURSOR_COMMANDS,
     CURSOR_COMMIT_SOURCES,
@@ -32,11 +33,13 @@ from sim.cursor.usage_v2.constants import (
     CURSOR_ROLES,
     CURSOR_SERVICE_ACCOUNTS,
     CURSOR_SKILLS,
+    CURSOR_SURFACE_ADOPTION,
     CURSOR_SURFACE_WEIGHTS,
     CURSOR_SURFACES,
     CURSOR_TOKEN_TYPES,
     CURSOR_USAGE_MODEL_WEIGHTS,
     CURSOR_USAGE_MODELS,
+    cursor_usage_idle_seats,
     cursor_usage_roster_size,
     cursor_usage_team_id,
 )
@@ -60,6 +63,8 @@ class _UsageMember:
     monthly_limit_usd: float
     client_version: str
     may_exceed_limit: bool
+    is_idle: bool
+    surfaces: tuple[str, ...]
 
 
 def _stable_user_id(email: str) -> str:
@@ -73,6 +78,32 @@ def _stable_limit_usd(email: str) -> float:
     # 500..1700 inclusive in $10 steps.
     bucket = int(digest[:8], 16) % 121  # 0..120
     return float(500 + bucket * 10)
+
+
+def _stable_surface_affinity(email: str) -> tuple[str, ...]:
+    """Per-member chart surfaces — drives distinct Active Users by Surface counts."""
+    chosen: list[str] = []
+    for surface in CURSOR_CHART_SURFACES:
+        digest = hashlib.sha256(f"cursor-surface:{email}:{surface}".encode()).hexdigest()
+        pct = int(digest[:8], 16) % 100
+        if pct < int(CURSOR_SURFACE_ADOPTION[surface] * 100):
+            chosen.append(surface)
+    if not chosen:
+        # Everyone uses at least agent or composer.
+        fallback = hashlib.sha256(f"cursor-surface-fallback:{email}".encode()).hexdigest()
+        chosen.append("composer" if int(fallback[:2], 16) % 2 else "agent")
+    return tuple(chosen)
+
+
+def _surface_weights(surfaces: tuple[str, ...]) -> tuple[float, ...]:
+    idx = {s: i for i, s in enumerate(CURSOR_SURFACES)}
+    raw = [CURSOR_SURFACE_WEIGHTS[idx[s]] for s in surfaces]
+    total = sum(raw)
+    return tuple(w / total for w in raw)
+
+
+def _pick_member_surface(member: _UsageMember) -> str:
+    return _pick(member.surfaces, _surface_weights(member.surfaces))
 
 
 def _build_roster() -> list[_UsageMember]:
@@ -90,14 +121,17 @@ def _build_roster() -> list[_UsageMember]:
             break
         if i not in ordered:
             ordered.append(i)
+    idle_count = min(cursor_usage_idle_seats(), max(0, n - 2))
     members: list[_UsageMember] = []
     for rank, idx in enumerate(ordered[:n]):
         row = _CORALOGIX_TEAM_USERS[idx]
         email = row["user.email"]
         gid, gname = CURSOR_GROUPS[rank % len(CURSOR_GROUPS)]
         is_unassigned = gid == "unassigned"
-        # ~10% of the roster may exceed their monthly limit.
-        overage_slots = max(1, round(n * 0.10))
+        # ~10% of the roster may exceed their monthly limit (idle seats excluded).
+        active_n = n - idle_count
+        overage_slots = max(1, round(active_n * 0.10))
+        is_idle = rank >= n - idle_count
         members.append(
             _UsageMember(
                 email=email,
@@ -109,7 +143,9 @@ def _build_roster() -> list[_UsageMember]:
                 is_unassigned=is_unassigned,
                 monthly_limit_usd=_stable_limit_usd(email),
                 client_version=_pick(CURSOR_CLIENT_VERSIONS),
-                may_exceed_limit=rank < overage_slots,
+                may_exceed_limit=(not is_idle) and rank < overage_slots,
+                is_idle=is_idle,
+                surfaces=() if is_idle else _stable_surface_affinity(email),
             )
         )
     return members
@@ -301,13 +337,14 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
     volume = max(0.05, _env_float("SIM_CURSOR_USAGE_VOLUME", 1.0))
 
     active_today: set[str] = set()
+    active_members = [m for m in _roster() if not m.is_idle]
 
     for _ in range(emits):
-        member = random.choice(_roster())
+        member = random.choice(active_members)
         active_today.add(member.email)
         model = _pick(CURSOR_USAGE_MODELS, CURSOR_USAGE_MODEL_WEIGHTS)
         _MODEL_USERS_TODAY.setdefault(model, set()).add(member.email)
-        surface = _pick(CURSOR_SURFACES, CURSOR_SURFACE_WEIGHTS)
+        surface = _pick_member_surface(member)
         kind = _pick(CURSOR_BILLING_KINDS, CURSOR_BILLING_KIND_WEIGHTS)
         billing_class = _pick(CURSOR_BILLING_CLASSES, CURSOR_BILLING_CLASS_WEIGHTS)
         # ~15% API-key / automation traffic gets a real service_account (not "none").
@@ -648,6 +685,27 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                 1,
             )
 
+    # Per-surface request bursts — distinct user counts differ by surface adoption.
+    for surface in CURSOR_CHART_SURFACES:
+        candidates = [m for m in active_members if surface in m.surfaces]
+        if not candidates:
+            continue
+        touch_n = max(1, int(len(candidates) * 0.14 * volume))
+        for member in random.sample(candidates, min(touch_n, len(candidates))):
+            active_today.add(member.email)
+            req_n = max(1, int(random.randint(1, 3) * volume))
+            collector.add_delta(
+                "cursor_requests_total",
+                {
+                    **base,
+                    "email": member.email,
+                    "user_id": member.user_id,
+                    "surface": surface,
+                    "date": day,
+                },
+                req_n,
+            )
+
     # Bugbot activity (team-level — no email).
     for repo in CURSOR_REPOS:
         if random.random() < 0.55:
@@ -682,9 +740,11 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                         n,
                     )
 
-    # Active flags for members touched this cycle (+ a few idle roster rows stay unset).
+    # Active flags — idle licensed seats never get cursor_member_active.
     for m in _roster():
-        if m.email in active_today or random.random() < 0.15:
+        if m.is_idle:
+            continue
+        if m.email in active_today or random.random() < 0.22:
             collector.set_snapshot(
                 "cursor_member_active",
                 {

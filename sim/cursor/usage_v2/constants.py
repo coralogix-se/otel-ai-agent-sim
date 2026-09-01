@@ -48,6 +48,23 @@ CURSOR_SURFACES: tuple[str, ...] = (
 )
 CURSOR_SURFACE_WEIGHTS: tuple[float, ...] = (0.28, 0.16, 0.14, 0.10, 0.12, 0.06, 0.06, 0.08)
 
+# Surfaces shown on the "Active Users by Surface" chart (distinct users per day).
+CURSOR_CHART_SURFACES: tuple[str, ...] = (
+    "agent",
+    "chat",
+    "composer",
+    "cmdk",
+    "bugbot",
+)
+# Stable per-member adoption — fraction of non-idle roster that uses each surface.
+CURSOR_SURFACE_ADOPTION: dict[str, float] = {
+    "agent": 0.88,
+    "chat": 0.52,
+    "composer": 0.70,
+    "cmdk": 0.26,
+    "bugbot": 0.14,
+}
+
 CURSOR_BILLING_KINDS: tuple[str, ...] = (
     "Included in Business",
     "Included in Pro",
@@ -213,3 +230,9 @@ def cursor_usage_roster_size() -> int:
     from sim.common.env import _env_int
 
     return max(4, min(64, _env_int("SIM_CURSOR_USAGE_ROSTER_SIZE", 24)))
+
+
+def cursor_usage_idle_seats() -> int:
+    from sim.common.env import _env_int
+
+    return max(0, min(4, _env_int("SIM_CURSOR_USAGE_IDLE_SEATS", 2)))

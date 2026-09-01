@@ -17,6 +17,17 @@ from sim.cursor.usage_v2.runtime import (
 )
 
 
+def _users_by_surface(payload: bytes) -> dict[str, set[str]]:
+    by_surface: dict[str, set[str]] = {}
+    for line in _metric_lines(payload, "cursor_requests_total"):
+        if 'surface="' not in line:
+            continue
+        surface = line.split('surface="', 1)[1].split('"', 1)[0]
+        email = line.split('email="', 1)[1].split('"', 1)[0]
+        by_surface.setdefault(surface, set()).add(email)
+    return by_surface
+
+
 def _series_names(text: bytes) -> set[str]:
     names: set[str] = set()
     for line in text.decode().splitlines():
@@ -189,3 +200,40 @@ def test_usage_metrics_gated_off_by_default(monkeypatch) -> None:
     assert usage_metrics_enabled() is False
     monkeypatch.setenv("SIM_CURSOR_USAGE_METRICS_ENABLED", "true")
     assert usage_metrics_enabled() is True
+
+
+def test_idle_seats_and_surface_user_diversity(monkeypatch) -> None:
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "24")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_IDLE_SEATS", "2")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "24")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_VOLUME", "1.5")
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    now = datetime(2026, 8, 28, 18, 0, tzinfo=timezone.utc)
+    for _ in range(8):
+        emit_cursor_usage_cycle(now=now)
+    payload = generate_latest(registry)
+
+    roster = _roster()
+    idle = [m for m in roster if m.is_idle]
+    assert len(idle) == 2
+    idle_emails = {m.email for m in idle}
+
+    active_lines = _metric_lines(payload, "cursor_member_active")
+    active_emails = {line.split('email="', 1)[1].split('"', 1)[0] for line in active_lines}
+    assert idle_emails.isdisjoint(active_emails)
+
+    request_emails = {
+        line.split('email="', 1)[1].split('"', 1)[0]
+        for line in _metric_lines(payload, "cursor_requests_total")
+    }
+    assert idle_emails.isdisjoint(request_emails)
+
+    by_surface = _users_by_surface(payload)
+    chart_counts = {s: len(by_surface.get(s, set())) for s in ("agent", "chat", "composer", "cmdk", "bugbot")}
+    assert chart_counts["agent"] > chart_counts["composer"] > chart_counts["chat"]
+    assert chart_counts["cmdk"] < chart_counts["chat"]
+    assert chart_counts["bugbot"] < chart_counts["cmdk"]
+    assert len(set(chart_counts.values())) > 1
