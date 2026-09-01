@@ -95,15 +95,22 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
         for line in _metric_lines(payload, "cursor_bugbot_issues_total")
     )
     assert CURSOR_CONVERSATION_DIMENSIONS["intents"] == (
-        "bugfix",
-        "docs",
-        "explain",
-        "feature",
-        "ktlo",
-        "refactor",
-        "tests",
+        "Ask",
+        "Plan",
+        "Task Automation",
+        "Write Code",
     )
     assert CURSOR_CONVERSATION_DIMENSIONS["workTypes"] == ("bug", "ktlo", "new_feature")
+    assert any(
+        'dimension="intents"' in line
+        and (
+            'value="Ask"' in line
+            or 'value="Plan"' in line
+            or 'value="Task Automation"' in line
+            or 'value="Write Code"' in line
+        )
+        for line in _metric_lines(payload, "cursor_conversation_total")
+    )
 
     # Probabilistic MCP / file-line series — force a second dense cycle and check if present.
     emit_cursor_usage_cycle(now=datetime(2026, 8, 28, 18, 0, tzinfo=timezone.utc))

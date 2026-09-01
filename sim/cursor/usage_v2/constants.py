@@ -105,11 +105,11 @@ CURSOR_CONVERSATION_DIMENSIONS: dict[str, tuple[str, ...]] = {
         "Testing",
         "UI/Styling",
     ),
-    # Conversations Over Time intents filter (lowercase catalog — not Ask/Plan/…).
-    "intents": ("bugfix", "docs", "explain", "feature", "ktlo", "refactor", "tests"),
-    "complexity": ("low", "medium", "high", "trivial"),
+    # Conversations Over Time filters client-side to this FE catalog (see cx498 HAR / Qr.intents).
+    "intents": ("Ask", "Plan", "Task Automation", "Write Code"),
+    "complexity": ("trivial", "low", "medium", "high"),
     "guidanceLevels": ("low", "medium", "high"),
-    # FE workTypes catalog (narrow).
+    # FE workTypes catalog (HAR Qr.workTypes).
     "workTypes": ("bug", "ktlo", "new_feature"),
 }
 

@@ -583,8 +583,21 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             round(overage, 4),
         )
 
-        # Conversation dimensions (team-level — no email).
+        # Conversation dimensions (team-level — no email; FE omits email on this family).
+        # Always emit intents so Conversations Over Time (client-filtered to Ask/Plan/…) stays populated.
+        collector.add_delta(
+            "cursor_conversation_total",
+            {
+                **base,
+                "dimension": "intents",
+                "value": _pick(CURSOR_CONVERSATION_DIMENSIONS["intents"]),
+                "date": day,
+            },
+            1,
+        )
         for dimension, values in CURSOR_CONVERSATION_DIMENSIONS.items():
+            if dimension == "intents":
+                continue
             if random.random() < 0.55:
                 collector.add_delta(
                     "cursor_conversation_total",
