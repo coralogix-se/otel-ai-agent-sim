@@ -53,6 +53,7 @@ _EVENT = _BASE + (
     "automation_id",
     "discount_pct",
     "date",
+    "service_account",
 )
 _TOKEN_EVENT = _BASE + (
     "email",
@@ -65,6 +66,7 @@ _TOKEN_EVENT = _BASE + (
     "is_headless",
     "token_type",
     "date",
+    "service_account",
 )
 _EMAIL_TEAM = _BASE + ("email", "user_id")
 _EMAIL_DATE = _BASE + ("email", "date")
@@ -103,6 +105,10 @@ _MCP = _BASE + ("email", "mcp_server_name", "tool_name", "date")
 _SKILL = _BASE + ("email", "skill_name", "date")
 _REPO_LINES = _BASE + ("email", "user_id", "repo_name", "date")
 _COMMITS = _BASE + ("email", "user_id", "repo_name", "branch_name", "date")
+_BUGBOT_PR = _BASE + ("repo_name", "date")
+_BUGBOT_ISSUES = _BASE + ("repo_name", "severity", "state", "date")
+_BUGBOT_ISSUES_SNAP = _BASE + ("state",)
+_BUGBOT_REPOS = _BASE + ("enabled", "manual_only")
 
 
 _SPECS: tuple[_SeriesSpec, ...] = (
@@ -304,25 +310,25 @@ _SPECS: tuple[_SeriesSpec, ...] = (
     _SeriesSpec(
         "cursor_member_spend_gross_usd",
         "Cursor member cycle gross spend (level)",
-        _EMAIL_TEAM + ("name",),
+        _EMAIL_TEAM + ("name", "role"),
         "snapshot",
     ),
     _SeriesSpec(
         "cursor_member_spend_overage_usd",
         "Cursor member cycle overage (level)",
-        _EMAIL_TEAM + ("name",),
+        _EMAIL_TEAM + ("name", "role"),
         "snapshot",
     ),
     _SeriesSpec(
         "cursor_member_monthly_limit_usd",
         "Cursor member monthly limit (level)",
-        _EMAIL_TEAM + ("name",),
+        _EMAIL_TEAM + ("name", "role"),
         "snapshot",
     ),
     _SeriesSpec(
         "cursor_member_effective_limit_usd",
         "Cursor member effective limit (level)",
-        _EMAIL_TEAM + ("name",),
+        _EMAIL_TEAM + ("name", "role"),
         "snapshot",
     ),
     _SeriesSpec(
@@ -341,6 +347,37 @@ _SPECS: tuple[_SeriesSpec, ...] = (
         "cursor_model_distinct_users",
         "Cursor distinct users per model (daily grain)",
         _BASE + ("model",),
+        "snapshot",
+    ),
+    # Bugbot
+    _SeriesSpec(
+        "cursor_bugbot_prs_reviewed",
+        "Cursor Bugbot PRs reviewed (bucket delta)",
+        _BUGBOT_PR,
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_bugbot_pr_reviews_total",
+        "Cursor Bugbot PR reviews (bucket delta)",
+        _BUGBOT_PR,
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_bugbot_issues_total",
+        "Cursor Bugbot issues by severity/state (bucket delta)",
+        _BUGBOT_ISSUES,
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_bugbot_issues_snapshot",
+        "Cursor Bugbot findings snapshot by state",
+        _BUGBOT_ISSUES_SNAP,
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_bugbot_repos",
+        "Cursor Bugbot repo coverage count",
+        _BUGBOT_REPOS,
         "snapshot",
     ),
 )

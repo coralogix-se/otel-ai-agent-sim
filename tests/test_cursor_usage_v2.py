@@ -5,8 +5,16 @@ from datetime import datetime, timezone
 from prometheus_client import CollectorRegistry, generate_latest
 
 from sim.cursor.usage_v2.collector import register_cursor_usage_metrics
-from sim.cursor.usage_v2.constants import DEFAULT_CX_APPLICATION, DEFAULT_TEAM_ID
-from sim.cursor.usage_v2.runtime import emit_cursor_usage_cycle, reset_cursor_usage_runtime_for_tests
+from sim.cursor.usage_v2.constants import (
+    CURSOR_CONVERSATION_DIMENSIONS,
+    DEFAULT_CX_APPLICATION,
+    DEFAULT_TEAM_ID,
+)
+from sim.cursor.usage_v2.runtime import (
+    emit_cursor_usage_cycle,
+    reset_cursor_usage_runtime_for_tests,
+    _roster,
+)
 
 
 def _series_names(text: bytes) -> set[str]:
@@ -51,6 +59,11 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
         "cursor_ai_code_lines_total",
         "cursor_billing_cycle_start_seconds",
         "cursor_billing_cycle_end_seconds",
+        "cursor_bugbot_repos",
+        "cursor_bugbot_issues_snapshot",
+        "cursor_bugbot_prs_reviewed",
+        "cursor_bugbot_pr_reviews_total",
+        "cursor_bugbot_issues_total",
     ):
         assert required in names, required
 
@@ -63,26 +76,38 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
         and 'conversation_id="' in line
         and 'model="' in line
         and 'date="2026-08-28"' in line
+        and 'service_account="' in line
         for line in _metric_lines(payload, "cursor_events_total")
     )
     assert any(
-        'date="2026-08-28"' in line
+        'service_account="' in line and 'date="2026-08-28"' in line
         for line in _metric_lines(payload, "cursor_event_cost_usd")
     )
     assert any(
-        'date="2026-08-28"' in line
-        for line in _metric_lines(payload, "cursor_member_daily_spend_usd")
+        'role="' in line for line in _metric_lines(payload, "cursor_member_monthly_limit_usd")
     )
     assert any(
-        'commit_source="ide"' in line
-        for line in _metric_lines(payload, "cursor_ai_code_lines_total")
+        'enabled="true"' in line and 'manual_only="false"' in line
+        for line in _metric_lines(payload, "cursor_bugbot_repos")
     )
+    assert any(
+        'severity="' in line and 'state="' in line
+        for line in _metric_lines(payload, "cursor_bugbot_issues_total")
+    )
+    assert CURSOR_CONVERSATION_DIMENSIONS["intents"] == (
+        "bugfix",
+        "docs",
+        "explain",
+        "feature",
+        "ktlo",
+        "refactor",
+        "tests",
+    )
+    assert CURSOR_CONVERSATION_DIMENSIONS["workTypes"] == ("bug", "ktlo", "new_feature")
+
     # Probabilistic MCP / file-line series — force a second dense cycle and check if present.
     emit_cursor_usage_cycle(now=datetime(2026, 8, 28, 18, 0, tzinfo=timezone.utc))
-    # Don't scrape yet; accumulate then scrape once.
-    from prometheus_client import generate_latest as _gl
-
-    payload2 = _gl(registry)
+    payload2 = generate_latest(registry)
     mcp_lines = _metric_lines(payload2, "cursor_user_mcp_usage_total")
     if mcp_lines:
         assert any('tool_name="' in line and 'mcp_server_name="' in line for line in mcp_lines)
@@ -93,6 +118,37 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
         line.startswith("cursor_member_info{") and 'role="' in line and 'is_removed="false"' in line
         for line in body.splitlines()
     )
+
+
+def test_limits_and_overage_share(monkeypatch) -> None:
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "20")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "40")
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    now = datetime(2026, 8, 28, 18, 0, tzinfo=timezone.utc)
+    for _ in range(30):
+        emit_cursor_usage_cycle(now=now)
+    # Keep latest snapshots without clearing via an unused scrape mid-loop.
+    payload = generate_latest(registry)
+
+    limits = []
+    for line in _metric_lines(payload, "cursor_member_monthly_limit_usd"):
+        val = float(line.rsplit(" ", 1)[-1])
+        limits.append(val)
+        assert 500.0 <= val <= 1700.0
+
+    assert limits
+    overages = []
+    for line in _metric_lines(payload, "cursor_member_spend_overage_usd"):
+        overages.append(float(line.rsplit(" ", 1)[-1]))
+    assert overages
+    over_count = sum(1 for v in overages if v > 0)
+    # ~10% of roster (2 of 20) should exceed; allow 1..4 after many emits.
+    assert 1 <= over_count <= 4, over_count
+    roster = _roster()
+    assert sum(1 for m in roster if m.may_exceed_limit) == 2
 
 
 def test_deltas_clear_on_scrape_snapshots_restated(monkeypatch) -> None:
@@ -108,6 +164,7 @@ def test_deltas_clear_on_scrape_snapshots_restated(monkeypatch) -> None:
     first = generate_latest(registry)
     assert "cursor_events_total" in _series_names(first)
     assert "cursor_member_info" in _series_names(first)
+    assert "cursor_bugbot_repos" in _series_names(first)
 
     # No new emit: deltas should be gone; roster snapshots remain.
     second = generate_latest(registry)
@@ -115,6 +172,7 @@ def test_deltas_clear_on_scrape_snapshots_restated(monkeypatch) -> None:
     assert "cursor_events_total" not in names2
     assert "cursor_member_info" in names2
     assert "cursor_billing_cycle_start_seconds" in names2
+    assert "cursor_bugbot_repos" in names2
 
 
 def test_usage_metrics_gated_off_by_default(monkeypatch) -> None:

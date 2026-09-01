@@ -103,3 +103,32 @@ checks:
     expect: has_nonzero
     query: |
       sum by (model) (sum_over_time(cursor_events_total{cx_application_name="Cursor",team_id="3405693"}[24h]))
+
+  - id: cursor_usage.service_account
+    title: Event cost carries service_account
+    kind: promql
+    expect: has_nonzero
+    notes: API Key Cost discovery drops service_account="none".
+    query: |
+      sum by (service_account) (sum_over_time(cursor_event_cost_usd{cx_application_name="Cursor",team_id="3405693"}[24h]))
+
+  - id: cursor_usage.bugbot_repos
+    title: Bugbot repo coverage snapshot
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (enabled) (last_over_time(cursor_bugbot_repos{cx_application_name="Cursor",team_id="3405693"}[26h]))
+
+  - id: cursor_usage.bugbot_issues
+    title: Bugbot issues by severity
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (severity) (sum_over_time(cursor_bugbot_issues_total{cx_application_name="Cursor",team_id="3405693",state="found"}[24h]))
+
+  - id: cursor_usage.work_types
+    title: Conversation workTypes catalog
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum by (value) (sum_over_time(cursor_conversation_total{cx_application_name="Cursor",team_id="3405693",dimension="workTypes"}[24h]))

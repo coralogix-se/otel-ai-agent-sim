@@ -105,11 +105,26 @@ CURSOR_CONVERSATION_DIMENSIONS: dict[str, tuple[str, ...]] = {
         "Testing",
         "UI/Styling",
     ),
-    "intents": ("feature", "bugfix", "refactor", "explain", "tests", "docs", "ktlo"),
+    # Conversations Over Time intents filter (lowercase catalog — not Ask/Plan/…).
+    "intents": ("bugfix", "docs", "explain", "feature", "ktlo", "refactor", "tests"),
     "complexity": ("low", "medium", "high", "trivial"),
     "guidanceLevels": ("low", "medium", "high"),
-    "workTypes": ("feature", "bugfix", "ktlo", "chore", "spike", "new_feature", "bug"),
+    # FE workTypes catalog (narrow).
+    "workTypes": ("bug", "ktlo", "new_feature"),
 }
+
+# API-key / automation cost attribution (human traffic uses service_account="none").
+CURSOR_SERVICE_ACCOUNTS: tuple[str, ...] = (
+    "none",
+    "ci-bot",
+    "sa-demo-analytics",
+    "sa-demo-ingest",
+    "bugbot",
+)
+
+CURSOR_BUGBOT_SEVERITIES: tuple[str, ...] = ("critical", "high", "medium", "low", "info")
+CURSOR_BUGBOT_ISSUE_STATES: tuple[str, ...] = ("found", "resolved")
+
 
 CURSOR_COMMANDS: tuple[str, ...] = (
     "edit",
