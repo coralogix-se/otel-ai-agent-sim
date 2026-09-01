@@ -26,7 +26,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:cursor-usage-clients-202609011740
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:cursor-models-202609011748
           imagePullPolicy: Always
           env:
             # OTLP -> otel-collector-codeagentsim; collector exports to Coralogix US2 + EU1 (no API key in this pod).

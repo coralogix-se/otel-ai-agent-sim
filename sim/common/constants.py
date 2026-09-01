@@ -118,7 +118,7 @@ CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES = (
 # Model pools below (Claude, Codex, Cursor, Copilot, Gemini) should be reviewed regularly against
 # each vendor's current model list. ``claude-fable-5`` restored globally Jul 2026 (was briefly suspended
 # Jun 2026). Do not simulate ``claude-mythos-5`` in general pools — Glasswing / limited release only.
-# Last reviewed 2026-09-02 against Claude Code / Codex / Cursor / Copilot / Gemini CLI docs + vendor pricing.
+# Last reviewed 2026-09-01 against Claude / Codex / Cursor / Copilot / Gemini vendor docs + cxai live telemetry.
 # Dump pools + assert rates: ``python3 scripts/print_model_pools.py --check``.
 
 # Default when ``SIM_CLAUDE_MODEL`` unset and profile has no model.
@@ -216,6 +216,7 @@ CURSOR_COMPOSER_MODELS = (
     "gpt-5.4",
     "gpt-5.4-mini",
     "kimi-k2.7-code",
+    "kimi-k3",
 )
 
 CURSOR_SAMPLE_PROMPTS = (
@@ -354,6 +355,7 @@ COPILOT_CLI_MODELS = (
     "gpt-5.4",
     "gpt-5.5",
     "gpt-5.6-luna",
+    "gpt-5.6-luna",
     "gpt-5.6-sol",
     "gpt-5.3-codex",
     "claude-haiku-4-5",
@@ -363,15 +365,14 @@ COPILOT_CLI_MODELS = (
     "claude-sonnet-4-6",
     "claude-opus-5",
     "claude-opus-4-8",
+    "claude-opus-4-7",
     "claude-fable-5",
+    "gemini-3.7-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
-    "gemini-3.1-pro",
-    "gemini-3-flash",
     "mai-code-1.1-flash",
     "mai-code-1-flash",
-    "raptor-mini",
     "kimi-k2.7-code",
     "kimi-k3",
     "grok-4.6",
@@ -379,19 +380,16 @@ COPILOT_CLI_MODELS = (
 )
 
 # Gemini CLI model ids (https://geminicli.com/docs/reference/configuration/ ``model`` aliases).
-# ``gemini-3.1-flash-lite`` is the stable id; ``gemini-3.1-flash-lite-preview`` is an alias only.
-GEMINI_DEFAULT_MODEL = "gemini-3.5-flash"
+# Retired ids omitted (2.5 Pro, 3 Pro, 3.1 Pro preview — see GitHub/Cursor retirement tables).
+GEMINI_DEFAULT_MODEL = "gemini-3.7-flash"
 
 GEMINI_CLI_MODELS = (
-    "gemini-2.5-pro",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
-    "gemini-3-pro-preview",
     "gemini-3-flash-preview",
-    "gemini-3.1-pro-preview",
-    "gemini-3.5-flash",
     "gemini-3.5-flash",
     "gemini-3.6-flash",
+    "gemini-3.7-flash",
     "gemini-3.7-flash",
     "gemini-3.1-flash-lite",
     "gemma-4-31b-it",

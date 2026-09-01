@@ -38,7 +38,12 @@ from sim.common.constants import (  # noqa: E402
 from sim.common.model_pricing import (  # noqa: E402
     _DEFAULT,
     _EXACT,
+    _PREFIX_RULES,
     model_rates,
+)
+from sim.cursor.usage_v2.constants import (  # noqa: E402
+    CURSOR_USAGE_MODELS,
+    CURSOR_USAGE_MODEL_WEIGHTS,
 )
 
 POOLS: dict[str, tuple[str, ...]] = {
@@ -70,6 +75,7 @@ EXPECTED_RATES: dict[str, tuple[float, float]] = {
     "claude-opus-5": (5.0, 25.0),
     "claude-opus-4-8": (5.0, 25.0),
     "claude-opus-4-7": (5.0, 25.0),
+    "claude-opus-4-7": (5.0, 25.0),
     "claude-opus-4-6": (5.0, 25.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-sonnet-4-5": (3.0, 15.0),
@@ -83,6 +89,7 @@ EXPECTED_RATES: dict[str, tuple[float, float]] = {
     "gpt-5.5": (5.0, 30.0),
     "gpt-5.4": (2.50, 15.0),
     "gpt-5.4-mini": (0.75, 4.50),
+    "gpt-5-mini": (0.25, 2.00),
     "gpt-5.4-nano": (0.20, 1.25),
     "gpt-5.3-codex": (1.75, 14.0),
     "gpt-5-codex": (1.75, 14.0),
@@ -93,9 +100,13 @@ EXPECTED_RATES: dict[str, tuple[float, float]] = {
     "gemini-3-flash": (0.50, 3.00),
     "gemini-3-flash-preview": (0.50, 3.00),
     "gemini-3.1-flash-lite": (0.10, 0.40),
+    "composer-2.5": (0.50, 2.50),
     "composer-2.5-fast": (3.00, 15.00),
     "grok-4.6": (2.00, 6.00),
+    "grok-4.6-fast": (4.00, 12.00),
     "grok-4.5": (2.00, 6.00),
+    "grok-4.5-fast": (4.00, 18.00),
+    "kimi-k2.7-code": (0.95, 4.00),
     "kimi-k3": (3.00, 15.00),
     "mai-code-1.1-flash": (0.75, 4.50),
 }
@@ -127,6 +138,15 @@ def print_pools() -> None:
         status = "PRESENT (bug)" if model in _CLAUDE_CODE_MODELS else "absent (ok)"
         print(f"  - {model}: {status}")
     print()
+
+
+def _has_explicit_pricing(model: str) -> bool:
+    key = model.strip().lower()
+    if not key or key == "default":
+        return True
+    if key in _EXACT:
+        return True
+    return any(key.startswith(prefix) for prefix, _ in _PREFIX_RULES)
 
 
 def check_pricing() -> list[str]:
@@ -167,6 +187,19 @@ def check_pricing() -> list[str]:
             )
             if msg not in failures:
                 failures.append(msg)
+
+    if len(CURSOR_USAGE_MODELS) != len(CURSOR_USAGE_MODEL_WEIGHTS):
+        failures.append(
+            "cursor_usage: model/weight length mismatch "
+            f"({len(CURSOR_USAGE_MODELS)} vs {len(CURSOR_USAGE_MODEL_WEIGHTS)})"
+        )
+    for model in CURSOR_USAGE_MODELS:
+        if not _has_explicit_pricing(model):
+            rates = model_rates(model)
+            failures.append(
+                f"cursor_usage {model}: no pricing rule "
+                f"(resolves to ${rates.input:g}/${rates.output:g})"
+            )
 
     return failures
 

@@ -75,7 +75,7 @@ _EXACT: dict[str, ModelRates] = {
     "gpt-5-codex": _r(1.75, 14.0, cache_read=0.175),
     "codex-mini-latest": _r(0.75, 4.50, cache_read=0.075),
     "o4-mini": _r(0.55, 2.20),
-    "gpt-5-mini": _r(0.75, 4.50, cache_read=0.075),
+    "gpt-5-mini": _r(0.25, 2.00, cache_read=0.025),
     "gpt-4o": _r(2.50, 10.0, cache_read=1.25),
     "gpt-4o-mini": _r(0.15, 0.60, cache_read=0.075),
     "gpt-4.1": _r(2.0, 8.0, cache_read=0.50),
@@ -103,10 +103,12 @@ _EXACT: dict[str, ModelRates] = {
     "raptor-mini": _r(0.75, 4.50),
     "kimi-k2.7-code": _r(0.95, 4.00, cache_read=0.19),
     "kimi-k3": _r(3.00, 15.00, cache_read=0.30),
-    "composer-2": _r(0.50, 2.50),  # legacy Cursor-native
-    "composer-2.5": _r(0.50, 2.50),
-    "composer-2.5-fast": _r(3.00, 15.00),
+    "composer-2": _r(0.50, 2.50, cache_read=0.20),  # legacy Cursor-native
+    "composer-2.5": _r(0.50, 2.50, cache_read=0.20),
+    "composer-2.5-fast": _r(3.00, 15.00, cache_read=0.50),
     # --- Third-party models routable via Cursor / Claude Code ---
+    "grok-4.6-fast": _r(4.00, 12.00, cache_read=1.00),
+    "grok-4.5-fast": _r(4.00, 18.00, cache_read=1.00),
     "grok-4.6": _r(2.00, 6.00, cache_read=0.50),
     "grok-4.5": _r(2.00, 6.00, cache_read=0.50),
     "grok-4.3": _r(1.25, 2.50, cache_read=0.20),
@@ -117,7 +119,14 @@ _EXACT: dict[str, ModelRates] = {
 
 # Longest-prefix / pattern fallbacks (order matters).
 _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
+    # Cursor Admin API / Usage dashboard ids (cursor.com/docs/models, Sep 2026).
+    ("cursor-grok-4.6", _r(4.00, 12.00, cache_read=1.00)),
+    ("cursor-grok-4.5", _r(4.00, 18.00, cache_read=1.00)),
+    ("cursor-grok-", _r(2.00, 6.00, cache_read=0.50)),
     ("claude-fable", _r(10.0, 50.0)),
+    ("claude-4.6-opus", _r(5.0, 25.0)),
+    ("claude-4.5-opus", _r(5.0, 25.0)),
+    ("claude-4.6-sonnet", _r(3.0, 15.0)),
     ("claude-opus", _r(5.0, 25.0)),
     ("claude-sonnet-5", _r(2.0, 10.0)),  # standard $2/$10 (Anthropic, Sep 2026)
     ("claude-sonnet", _r(3.0, 15.0)),
@@ -142,6 +151,8 @@ _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
     ("gemma-4", _r(0.20, 0.80)),
     ("kimi-k3", _r(3.00, 15.00, cache_read=0.30)),
     ("kimi-k2", _r(0.95, 4.00, cache_read=0.19)),
+    ("grok-4.6-fast", _r(4.00, 12.00, cache_read=1.00)),
+    ("grok-4.5-fast", _r(4.00, 18.00, cache_read=1.00)),
     ("grok-4.6", _r(2.00, 6.00, cache_read=0.50)),
     ("grok-4.5", _r(2.00, 6.00, cache_read=0.50)),
     ("grok-build", _r(1.00, 2.00, cache_read=0.20)),
