@@ -250,7 +250,41 @@ def cursor_usage_cx_subsystem() -> str:
 def cursor_usage_roster_size() -> int:
     from sim.common.env import _env_int
 
-    return max(4, min(64, _env_int("SIM_CURSOR_USAGE_ROSTER_SIZE", 24)))
+    # Prefer 40–60 licensed seats so the dashboard feels busy without
+    # inflating per-user conversation_id cardinality.
+    return max(4, min(64, _env_int("SIM_CURSOR_USAGE_ROSTER_SIZE", 48)))
+
+
+def cursor_usage_conversations_per_day() -> int:
+    """New conversation_id budget per UTC day (cxai-dev ≈ 120; keep 300–500)."""
+    from sim.common.env import _env_int
+
+    return max(1, min(2000, _env_int("SIM_CURSOR_USAGE_CONVERSATIONS_PER_DAY", 400)))
+
+
+def cursor_usage_events_per_conversation() -> tuple[int, int]:
+    """Inclusive (min, max) events that reuse one conversation_id."""
+    from sim.common.env import _env_int
+
+    lo = max(1, _env_int("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", 20))
+    hi = max(lo, _env_int("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", 40))
+    return lo, hi
+
+
+def cursor_usage_events_per_user_day() -> int:
+    """Target events per active user per UTC day (~200–500)."""
+    from sim.common.env import _env_int
+
+    return max(50, min(2000, _env_int("SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY", 350)))
+
+
+def cursor_usage_events_per_user_day_max() -> int:
+    from sim.common.env import _env_int
+
+    return max(
+        cursor_usage_events_per_user_day(),
+        min(5000, _env_int("SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY_MAX", 500)),
+    )
 
 
 def cursor_usage_idle_seats() -> int:

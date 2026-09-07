@@ -26,7 +26,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:cursor-models-202609011748
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:cursor-conv-card-202609071815
           imagePullPolicy: Always
           env:
             # OTLP -> otel-collector-codeagentsim; collector exports to Coralogix US2 + EU1 (no API key in this pod).
@@ -243,10 +243,20 @@ spec:
               value: "true"
             - name: SIM_CURSOR_USAGE_TEAM_ID
               value: "3405693"
+            # ~48 seats (40–60); grow users instead of conversation_id cardinality.
             - name: SIM_CURSOR_USAGE_ROSTER_SIZE
-              value: "24"
+              value: "48"
+            # Per-loop event burst cap. Daily pacing targets ~400 conversations × 20–40 events.
             - name: SIM_CURSOR_USAGE_EMITS_PER_CYCLE
-              value: "6"
+              value: "2"
+            - name: SIM_CURSOR_USAGE_CONVERSATIONS_PER_DAY
+              value: "400"
+            - name: SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN
+              value: "20"
+            - name: SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX
+              value: "40"
+            - name: SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY
+              value: "350"
             # Align Claude Code session/repo metrics with Anthropic Admin Claude Products users (first 24 roster rows).
             - name: SIM_CLAUDE_ALIGN_PRODUCTS_ROSTER
               value: "true"

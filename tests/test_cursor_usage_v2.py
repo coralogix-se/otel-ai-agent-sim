@@ -252,3 +252,65 @@ def test_client_versions_mostly_latest_two_stale(monkeypatch) -> None:
 
     assert len(stale) == 2
     assert len(latest) >= len(active) - 4  # allow ~2 on 0.49.6
+
+
+def test_conversation_ids_reused_across_events(monkeypatch) -> None:
+    """conversation_id must be reused (20–40 events), not one UUID per event."""
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "48")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_IDLE_SEATS", "2")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "5")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_CONVERSATIONS_PER_DAY", "400")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", "20")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", "40")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY", "350")
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    # Late in the UTC day so pacing allows a meaningful burst without waiting.
+    now = datetime(2026, 8, 28, 20, 0, tzinfo=timezone.utc)
+    for _ in range(80):
+        emit_cursor_usage_cycle(now=now)
+    payload = generate_latest(registry)
+
+    conv_ids: set[str] = set()
+    event_lines = _metric_lines(payload, "cursor_events_total")
+    assert event_lines, "expected cursor_events_total samples"
+    total_events = 0.0
+    for line in event_lines:
+        conv_ids.add(line.split('conversation_id="', 1)[1].split('"', 1)[0])
+        total_events += float(line.rsplit(" ", 1)[-1])
+
+    assert total_events >= 20
+    # Many events must share conversation_ids (≈20–40 events each, not ~1:1).
+    assert len(conv_ids) <= max(1, int(total_events / 15))
+    assert len(conv_ids) < total_events / 10
+
+    from sim.cursor.usage_v2 import runtime as rt
+
+    assert rt._CONVERSATIONS_STARTED_TODAY <= 400
+    assert rt._EVENTS_EMITTED_TODAY >= 20
+    avg = rt._EVENTS_EMITTED_TODAY / max(1, rt._CONVERSATIONS_STARTED_TODAY)
+    assert avg >= 15.0
+
+
+def test_daily_conversation_budget_caps_cardinality(monkeypatch) -> None:
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "40")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_CONVERSATIONS_PER_DAY", "12")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", "20")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", "25")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "8")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY", "500")
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    now = datetime(2026, 8, 28, 23, 0, tzinfo=timezone.utc)
+    for _ in range(200):
+        emit_cursor_usage_cycle(now=now)
+
+    from sim.cursor.usage_v2 import runtime as rt
+
+    assert rt._CONVERSATIONS_STARTED_TODAY <= 12
+    # After budgets fill, further cycles should keep reusing open sessions / stop.
+    assert rt._CONVERSATIONS_STARTED_TODAY >= 1

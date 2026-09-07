@@ -41,6 +41,10 @@ from sim.cursor.usage_v2.constants import (
     CURSOR_TOKEN_TYPES,
     CURSOR_USAGE_MODEL_WEIGHTS,
     CURSOR_USAGE_MODELS,
+    cursor_usage_conversations_per_day,
+    cursor_usage_events_per_conversation,
+    cursor_usage_events_per_user_day,
+    cursor_usage_events_per_user_day_max,
     cursor_usage_idle_seats,
     cursor_usage_stale_client_seats,
     cursor_usage_roster_size,
@@ -188,12 +192,151 @@ _SPEND_CAPS: dict[str, float] = {}
 _MODEL_USERS_TODAY: dict[str, set[str]] = {}
 _ROSTER_SEEDED = False
 
+# Conversation reuse — keep conversation_id cardinality near cxai-dev (hundreds/day),
+# not tens of thousands. One open session is reused for 20–40 events.
+@dataclass
+class _OpenConversation:
+    conversation_id: str
+    member: _UsageMember
+    model: str
+    kind: str
+    max_mode: bool
+    service_account: str
+    events_remaining: int
+    day: str
+
+
+_OPEN_CONVERSATIONS: list[_OpenConversation] = []
+_USAGE_DAY = ""
+_CONVERSATIONS_STARTED_TODAY = 0
+_EVENTS_EMITTED_TODAY = 0
+_EVENTS_BY_USER_TODAY: dict[str, int] = {}
+
 
 def _roster() -> list[_UsageMember]:
     global _ROSTER
     if _ROSTER is None:
         _ROSTER = _build_roster()
     return _ROSTER
+
+
+def _roll_usage_day(day: str) -> None:
+    """Reset daily conversation / event budgets at UTC midnight."""
+    global _USAGE_DAY, _CONVERSATIONS_STARTED_TODAY, _EVENTS_EMITTED_TODAY
+    global _EVENTS_BY_USER_TODAY, _OPEN_CONVERSATIONS, _MODEL_USERS_TODAY
+    if _USAGE_DAY == day:
+        return
+    _USAGE_DAY = day
+    _CONVERSATIONS_STARTED_TODAY = 0
+    _EVENTS_EMITTED_TODAY = 0
+    _EVENTS_BY_USER_TODAY = {}
+    _OPEN_CONVERSATIONS = []
+    _MODEL_USERS_TODAY = {}
+
+
+def _day_fraction(now: datetime) -> float:
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return min(1.0, max(0.0, (now - start).total_seconds() / 86400.0))
+
+
+def _target_events_per_day(active_n: int) -> int:
+    lo, hi = cursor_usage_events_per_conversation()
+    mid = (lo + hi) / 2.0
+    from_convs = int(cursor_usage_conversations_per_day() * mid)
+    from_users = active_n * cursor_usage_events_per_user_day()
+    capped = active_n * cursor_usage_events_per_user_day_max()
+    return max(1, min(from_convs, from_users, capped))
+
+
+def _events_to_emit_this_cycle(now: datetime, target_day: int) -> int:
+    """Pace event volume across the UTC day so 7d series stay under metrics limits."""
+    expected = target_day * _day_fraction(now)
+    deficit = expected - _EVENTS_EMITTED_TODAY
+    if deficit <= 0:
+        return 0
+    # EMITS_PER_CYCLE is the per-loop burst cap (not "new conversations per loop").
+    max_burst = max(1, _env_int("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", 2))
+    return min(max_burst, max(1, int(deficit + 0.999)))
+
+
+def _can_start_conversation(now: datetime) -> bool:
+    budget = cursor_usage_conversations_per_day()
+    if _CONVERSATIONS_STARTED_TODAY >= budget:
+        return False
+    expected = budget * _day_fraction(now)
+    # Small slack so we do not starve early in the day.
+    return _CONVERSATIONS_STARTED_TODAY < expected + 2
+
+
+def _pick_member_for_new_conversation(active_members: list[_UsageMember]) -> _UsageMember | None:
+    cap = cursor_usage_events_per_user_day_max()
+    eligible = [
+        m for m in active_members if _EVENTS_BY_USER_TODAY.get(m.email, 0) < cap
+    ]
+    if not eligible:
+        return None
+    # Prefer users with fewer events so per-user volume stays even.
+    eligible.sort(key=lambda m: _EVENTS_BY_USER_TODAY.get(m.email, 0))
+    top = eligible[: max(1, len(eligible) // 3)]
+    return random.choice(top)
+
+
+def _start_conversation(member: _UsageMember, day: str) -> _OpenConversation:
+    global _CONVERSATIONS_STARTED_TODAY
+    lo, hi = cursor_usage_events_per_conversation()
+    billing_class = _pick(CURSOR_BILLING_CLASSES, CURSOR_BILLING_CLASS_WEIGHTS)
+    kind = _pick(CURSOR_BILLING_KINDS, CURSOR_BILLING_KIND_WEIGHTS)
+    if billing_class == "api_key" or kind == "API Key" or random.random() < 0.12:
+        service_account = _pick(tuple(a for a in CURSOR_SERVICE_ACCOUNTS if a != "none"))
+    else:
+        service_account = "none"
+    conv = _OpenConversation(
+        conversation_id=str(uuid.uuid4()),
+        member=member,
+        model=_pick(CURSOR_USAGE_MODELS, CURSOR_USAGE_MODEL_WEIGHTS),
+        kind=kind,
+        max_mode=random.random() < 0.12,
+        service_account=service_account,
+        events_remaining=random.randint(lo, hi),
+        day=day,
+    )
+    _OPEN_CONVERSATIONS.append(conv)
+    _CONVERSATIONS_STARTED_TODAY += 1
+    return conv
+
+
+def _acquire_conversation(
+    now: datetime, active_members: list[_UsageMember], day: str
+) -> tuple[_OpenConversation, bool] | None:
+    """Return (conversation, is_new) or None when daily budgets are exhausted."""
+    cap = cursor_usage_events_per_user_day_max()
+    eligible_open = [
+        c
+        for c in _OPEN_CONVERSATIONS
+        if c.day == day
+        and c.events_remaining > 0
+        and _EVENTS_BY_USER_TODAY.get(c.member.email, 0) < cap
+    ]
+    # Always finish open conversations (20–40 events) before opening another id.
+    # This is what keeps conversation_id cardinality near cxai-dev levels.
+    if eligible_open:
+        return random.choice(eligible_open), False
+    if _can_start_conversation(now):
+        member = _pick_member_for_new_conversation(active_members)
+        if member is not None:
+            return _start_conversation(member, day), True
+    return None
+
+
+def _consume_conversation_event(conv: _OpenConversation) -> None:
+    global _EVENTS_EMITTED_TODAY
+    conv.events_remaining -= 1
+    _EVENTS_EMITTED_TODAY += 1
+    _EVENTS_BY_USER_TODAY[conv.member.email] = (
+        _EVENTS_BY_USER_TODAY.get(conv.member.email, 0) + 1
+    )
+    if conv.events_remaining <= 0 and conv in _OPEN_CONVERSATIONS:
+        _OPEN_CONVERSATIONS.remove(conv)
 
 
 def _spend_cap_for(member: _UsageMember) -> float:
@@ -364,28 +507,33 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
     team_id = cursor_usage_team_id()
     base = collector.base_labels(team_id)
     day = now.date().isoformat()
-    emits = max(1, _env_int("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", 6))
+    _roll_usage_day(day)
     volume = max(0.05, _env_float("SIM_CURSOR_USAGE_VOLUME", 1.0))
 
     active_today: set[str] = set()
     active_members = [m for m in _roster() if not m.is_idle]
+    target_events = _target_events_per_day(max(1, len(active_members)))
+    emits = _events_to_emit_this_cycle(now, target_events)
 
     for _ in range(emits):
-        member = random.choice(active_members)
+        acquired = _acquire_conversation(now, active_members, day)
+        if acquired is None:
+            break
+        conv, is_new = acquired
+        member = conv.member
+        model = conv.model
+        kind = conv.kind
+        max_mode = conv.max_mode
+        service_account = conv.service_account
+        conversation_id = conv.conversation_id
+        _consume_conversation_event(conv)
+
         active_today.add(member.email)
-        model = _pick(CURSOR_USAGE_MODELS, CURSOR_USAGE_MODEL_WEIGHTS)
         _MODEL_USERS_TODAY.setdefault(model, set()).add(member.email)
         surface = _pick_member_surface(member)
-        kind = _pick(CURSOR_BILLING_KINDS, CURSOR_BILLING_KIND_WEIGHTS)
         billing_class = _pick(CURSOR_BILLING_CLASSES, CURSOR_BILLING_CLASS_WEIGHTS)
-        # ~15% API-key / automation traffic gets a real service_account (not "none").
-        if billing_class == "api_key" or kind == "API Key" or random.random() < 0.12:
-            service_account = _pick(tuple(a for a in CURSOR_SERVICE_ACCOUNTS if a != "none"))
-        else:
-            service_account = "none"
-        max_mode = random.random() < 0.12
-        conversation_id = str(uuid.uuid4())
-        event_n = max(1, int(random.randint(1, 4) * volume))
+        # One event per emit — conversation_id is reused across 20–40 of these.
+        event_n = 1
         cost = round(random.uniform(0.02, 1.8) * volume * (2.5 if max_mode else 1.0), 4)
         list_price = round(cost * 1.15, 4)
         units = float(random.randint(1, 12))
@@ -651,27 +799,27 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             round(overage, 4),
         )
 
-        # Conversation dimensions (team-level — no email; FE omits email on this family).
-        # Always emit intents so Conversations Over Time (client-filtered to Ask/Plan/…) stays populated.
-        collector.add_delta(
-            "cursor_conversation_total",
-            {
-                **base,
-                "dimension": "intents",
-                "value": _pick(CURSOR_CONVERSATION_DIMENSIONS["intents"]),
-                "date": day,
-            },
-            1,
-        )
-        for dimension, values in CURSOR_CONVERSATION_DIMENSIONS.items():
-            if dimension == "intents":
-                continue
-            if random.random() < 0.55:
-                collector.add_delta(
-                    "cursor_conversation_total",
-                    {**base, "dimension": dimension, "value": _pick(values), "date": day},
-                    1,
-                )
+        # Conversation dimensions count once per new conversation (team-level — no email).
+        if is_new:
+            collector.add_delta(
+                "cursor_conversation_total",
+                {
+                    **base,
+                    "dimension": "intents",
+                    "value": _pick(CURSOR_CONVERSATION_DIMENSIONS["intents"]),
+                    "date": day,
+                },
+                1,
+            )
+            for dimension, values in CURSOR_CONVERSATION_DIMENSIONS.items():
+                if dimension == "intents":
+                    continue
+                if random.random() < 0.55:
+                    collector.add_delta(
+                        "cursor_conversation_total",
+                        {**base, "dimension": dimension, "value": _pick(values), "date": day},
+                        1,
+                    )
 
         if random.random() < 0.4:
             collector.add_delta(
@@ -717,25 +865,27 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             )
 
     # Per-surface request bursts — distinct user counts differ by surface adoption.
-    for surface in CURSOR_CHART_SURFACES:
-        candidates = [m for m in active_members if surface in m.surfaces]
-        if not candidates:
-            continue
-        touch_n = max(1, int(len(candidates) * 0.14 * volume))
-        for member in random.sample(candidates, min(touch_n, len(candidates))):
-            active_today.add(member.email)
-            req_n = max(1, int(random.randint(1, 3) * volume))
-            collector.add_delta(
-                "cursor_requests_total",
-                {
-                    **base,
-                    "email": member.email,
-                    "user_id": member.user_id,
-                    "surface": surface,
-                    "date": day,
-                },
-                req_n,
-            )
+    # No conversation_id on these series; keep light so request volume stays realistic.
+    if emits > 0 or random.random() < 0.15:
+        for surface in CURSOR_CHART_SURFACES:
+            candidates = [m for m in active_members if surface in m.surfaces]
+            if not candidates:
+                continue
+            touch_n = max(1, int(len(candidates) * 0.14 * volume))
+            for member in random.sample(candidates, min(touch_n, len(candidates))):
+                active_today.add(member.email)
+                req_n = max(1, int(random.randint(1, 3) * volume))
+                collector.add_delta(
+                    "cursor_requests_total",
+                    {
+                        **base,
+                        "email": member.email,
+                        "user_id": member.user_id,
+                        "surface": surface,
+                        "date": day,
+                    },
+                    req_n,
+                )
 
     # Bugbot activity (team-level — no email).
     for repo in CURSOR_REPOS:
@@ -825,6 +975,8 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
 def reset_cursor_usage_runtime_for_tests() -> None:
     """Test helper — clear module state."""
     global _ROSTER, _CYCLE_GROSS, _SPEND_CAPS, _MODEL_USERS_TODAY, _ROSTER_SEEDED
+    global _OPEN_CONVERSATIONS, _USAGE_DAY, _CONVERSATIONS_STARTED_TODAY
+    global _EVENTS_EMITTED_TODAY, _EVENTS_BY_USER_TODAY
     from sim.cursor.usage_v2.collector import reset_cursor_usage_collector_for_tests
 
     _ROSTER = None
@@ -832,4 +984,9 @@ def reset_cursor_usage_runtime_for_tests() -> None:
     _SPEND_CAPS = {}
     _MODEL_USERS_TODAY = {}
     _ROSTER_SEEDED = False
+    _OPEN_CONVERSATIONS = []
+    _USAGE_DAY = ""
+    _CONVERSATIONS_STARTED_TODAY = 0
+    _EVENTS_EMITTED_TODAY = 0
+    _EVENTS_BY_USER_TODAY = {}
     reset_cursor_usage_collector_for_tests()
