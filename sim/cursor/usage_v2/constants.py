@@ -147,6 +147,25 @@ CURSOR_CONVERSATION_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "workTypes": ("bug", "ktlo", "new_feature"),
 }
 
+# Topic Mix — Cursor Analytics API intents.subcategories (analytics-api conversation-insights).
+# Prometheus labels: mode + subcategory (+ email). Task Automation has no subcategory bucket.
+CURSOR_CONVERSATION_INTENT_TO_MODE: dict[str, str] = {
+    "Ask": "askMode",
+    "Plan": "planMode",
+    "Write Code": "writeCode",
+}
+CURSOR_CONVERSATION_SUBCATEGORIES: dict[str, tuple[str, ...]] = {
+    "askMode": ("error_fix", "explanation"),
+    "planMode": ("implementation",),
+    "writeCode": ("feature", "refactor"),
+}
+# Slight writeCode bias (matches Analytics API sample skew toward feature work).
+CURSOR_CONVERSATION_SUBCATEGORY_WEIGHTS: dict[str, tuple[float, ...]] = {
+    "askMode": (0.55, 0.45),
+    "planMode": (1.0,),
+    "writeCode": (0.65, 0.35),
+}
+
 # API-key / automation cost attribution (human traffic uses service_account="none").
 CURSOR_SERVICE_ACCOUNTS: tuple[str, ...] = (
     "none",

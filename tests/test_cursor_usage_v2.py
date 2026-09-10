@@ -7,6 +7,8 @@ from prometheus_client import CollectorRegistry, generate_latest
 from sim.cursor.usage_v2.collector import register_cursor_usage_metrics
 from sim.cursor.usage_v2.constants import (
     CURSOR_CONVERSATION_DIMENSIONS,
+    CURSOR_CONVERSATION_INTENT_TO_MODE,
+    CURSOR_CONVERSATION_SUBCATEGORIES,
     DEFAULT_CX_APPLICATION,
     DEFAULT_TEAM_ID,
 )
@@ -112,6 +114,14 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
         "Write Code",
     )
     assert CURSOR_CONVERSATION_DIMENSIONS["workTypes"] == ("bug", "ktlo", "new_feature")
+    assert CURSOR_CONVERSATION_INTENT_TO_MODE == {
+        "Ask": "askMode",
+        "Plan": "planMode",
+        "Write Code": "writeCode",
+    }
+    assert CURSOR_CONVERSATION_SUBCATEGORIES["askMode"] == ("error_fix", "explanation")
+    assert CURSOR_CONVERSATION_SUBCATEGORIES["planMode"] == ("implementation",)
+    assert CURSOR_CONVERSATION_SUBCATEGORIES["writeCode"] == ("feature", "refactor")
     assert any(
         'dimension="intents"' in line
         and (
@@ -122,6 +132,28 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
         )
         for line in _metric_lines(payload, "cursor_conversation_total")
     )
+    subcat_lines = _metric_lines(payload, "cursor_conversation_subcategory_snapshot")
+    assert subcat_lines, "Topic Mix metric missing"
+    assert any('mode="askMode"' in line or 'mode="planMode"' in line or 'mode="writeCode"' in line for line in subcat_lines)
+    assert any(
+        any(f'subcategory="{s}"' in line for s in ("error_fix", "explanation", "implementation", "feature", "refactor"))
+        for line in subcat_lines
+    )
+    assert any('email="' in line for line in subcat_lines)
+    # Subcategory rows should only belong to active roster emails that also speak.
+    roster_emails = {m.email for m in _roster()}
+    for line in subcat_lines:
+        email = line.split('email="', 1)[1].split('"', 1)[0]
+        assert email in roster_emails
+    # Every subcategory series email should also appear on conversation-scoped events.
+    event_emails = {
+        line.split('email="', 1)[1].split('"', 1)[0]
+        for line in _metric_lines(payload, "cursor_events_total")
+        if 'email="' in line
+    }
+    for line in subcat_lines:
+        email = line.split('email="', 1)[1].split('"', 1)[0]
+        assert email in event_emails
 
     # Probabilistic MCP / file-line series — force a second dense cycle and check if present.
     emit_cursor_usage_cycle(now=datetime(2026, 8, 28, 18, 0, tzinfo=timezone.utc))

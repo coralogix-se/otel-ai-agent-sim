@@ -26,6 +26,9 @@ from sim.cursor.usage_v2.constants import (
     CURSOR_COMMANDS,
     CURSOR_COMMIT_SOURCES,
     CURSOR_CONVERSATION_DIMENSIONS,
+    CURSOR_CONVERSATION_INTENT_TO_MODE,
+    CURSOR_CONVERSATION_SUBCATEGORIES,
+    CURSOR_CONVERSATION_SUBCATEGORY_WEIGHTS,
     CURSOR_DIRECTIONS,
     CURSOR_FILE_EXTENSIONS,
     CURSOR_GROUPS,
@@ -801,12 +804,13 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
 
         # Conversation dimensions count once per new conversation (team-level — no email).
         if is_new:
+            intent = _pick(CURSOR_CONVERSATION_DIMENSIONS["intents"])
             collector.add_delta(
                 "cursor_conversation_total",
                 {
                     **base,
                     "dimension": "intents",
-                    "value": _pick(CURSOR_CONVERSATION_DIMENSIONS["intents"]),
+                    "value": intent,
                     "date": day,
                 },
                 1,
@@ -820,6 +824,35 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                         {**base, "dimension": dimension, "value": _pick(values), "date": day},
                         1,
                     )
+            # Topic Mix — mode-scoped subcategory tied to this conversation's intent + member.
+            mode = CURSOR_CONVERSATION_INTENT_TO_MODE.get(intent)
+            if mode:
+                subs = CURSOR_CONVERSATION_SUBCATEGORIES[mode]
+                weights = CURSOR_CONVERSATION_SUBCATEGORY_WEIGHTS.get(mode)
+                collector.add_delta(
+                    "cursor_conversation_subcategory_snapshot",
+                    {
+                        **base,
+                        "mode": mode,
+                        "subcategory": _pick(subs, weights),
+                        "email": member.email,
+                        "date": day,
+                    },
+                    1,
+                )
+            # Align ask/plan usage pies with the same intent when applicable.
+            if intent == "Ask":
+                collector.add_delta(
+                    "cursor_user_ask_mode_usage_total",
+                    {**base, "email": member.email, "model": model, "date": day},
+                    1,
+                )
+            elif intent == "Plan":
+                collector.add_delta(
+                    "cursor_user_plan_usage_total",
+                    {**base, "email": member.email, "model": model, "date": day},
+                    1,
+                )
 
         if random.random() < 0.4:
             collector.add_delta(

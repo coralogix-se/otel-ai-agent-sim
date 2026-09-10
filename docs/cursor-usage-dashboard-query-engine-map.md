@@ -206,6 +206,7 @@ Insight CTAs open the breakdown drawer with rows already computed above (no new 
 | Chart "Work Type Over Time" | `cursor_conversation_total` | by `value`; `dimension="workTypes"`; F | grouped series | point click → drawer from loaded series |
 | Pie "Task Complexity" | `cursor_conversation_total` | by `value`; `dimension="complexity"`; F | grouped breakdown | — |
 | Chart "Task Guidance Over Time" | `cursor_conversation_total` | by `value`; `dimension="guidanceLevels"`; F | grouped series | substitution for Cursor's "Prompt Specificity" |
+| Pie "Topic Mix" | `cursor_conversation_subcategory_snapshot` | by `subcategory`; F (+ `email` for User filter) | `sum by (subcategory)(sum_over_time(M{F}[W]))` @ `to`+`from` | Analytics API `intents.subcategories`; `mode`=`askMode`/`planMode`/`writeCode`; keeps `email` |
 
 ## AI Code (Code Impact)
 
@@ -293,3 +294,93 @@ Computed once per window/filter change at the dashboard shell; quantiles taken o
 5. **Autonomy / High-Complexity KPI numerators** scope on `value` alone while `low/medium/high` exist in two dimensions — the shares merge counts across complexity and guidanceLevels.
 6. **Adoption KPI clicks** re-issue the seat breakdown instead of reusing the loaded resource (entities + breakdown + drawer `perUserTable` per click).
 7. **Repositories external-users grid** fans out 4 engine calls × roster size per load.
+
+
+# Appendix — Live HAR extraction (cursor3, 2026-09-08)
+
+Demo material: what we reverse-engineer from a Chrome HAR of the Cursor Usage page on cx498 **before** changing the sim.
+
+| | |
+|---|---|
+| **Source** | `docs/cursor3.cx498.coralogix.com.har` |
+| **Captured** | `2026-09-08T15:37:51.455Z` |
+| **Page window** | `2026-09-07 15:37:36Z` → `2026-09-08 15:37:36Z` (**24h**) |
+
+## 1. HAR snippet (raw Network entry)
+
+One failing metrics call inside the HAR (trimmed). This is Insights **tokensByType**, evaluated at page `from` (the **previous** 24h window used for deltas):
+
+```json
+{
+  "startedDateTime": "2026-09-08T15:37:54.556Z",
+  "request": {
+    "method": "GET",
+    "url": "https://api.cx498.coralogix.com/metrics/api/v1/query",
+    "queryString": [
+      {
+        "name": "query",
+        "value": "sum by (token_type) (sum_over_time(cursor_event_tokens_total[86400s]))"
+      },
+      {
+        "name": "time",
+        "value": "1788795474"
+      }
+    ]
+  },
+  "response": {
+    "status": 422,
+    "content": {
+      "mimeType": "application/json",
+      "text": "{\"status\":\"error\",\"errorType\":\"422\",\"error\":\"Limit violation error (ViolationTypeTotalSeriesAnalyzed): series limit of 300000 exceeded, got 300716; reduce time range for the query or use more specific label filters\",\"correlationId\":\"01M20TPBWC6JG291WD7V1559MC\"}"
+    }
+  }
+}
+```
+
+Decoded PromQL + eval time:
+
+```promql
+sum by (token_type) (sum_over_time(cursor_event_tokens_total[86400s]))
+```
+
+- **time:** `2026-09-07 15:37:54Z` = page **`from`** (previous window)
+- **Same query at page `to`** (current 24h) → **HTTP 200** in this capture
+
+That dual eval (`to` + `from`) is why Insights / Users still showed errors on a “working” 24h picker.
+
+## 2. Extracted queries (from this HAR)
+
+| Area | Status | Eval time | PromQL |
+|---|---|---|---|
+| Insights · tokensByType | **422** | `from` (prev 24h) | `sum by (token_type) (sum_over_time(cursor_event_tokens_total[86400s]))` |
+| Insights · tokensByType | 200 | `to` (current 24h) | `sum by (token_type) (sum_over_time(cursor_event_tokens_total[86400s]))` |
+| Users · tokens | **422** | `from` (prev 24h) | `sum by (email) (sum_over_time(cursor_event_tokens_total[86400s]))` |
+| Users · tokens | 200 | `to` (current 24h) | `sum by (email) (sum_over_time(cursor_event_tokens_total[86400s]))` |
+| Conversations · tokens | 200 | `to` | `sum by (conversation_id, email) (sum_over_time(cursor_event_tokens_total[86400s]))` |
+| Insights · cache_read by email | 200 | `to` / `from` | `sum by (email) (sum_over_time(cursor_event_tokens_total{token_type="cache_read"}[86400s]))` |
+| Bootstrap · has-data (30d) | **422** | `to` | `count(last_over_time(cursor_events_total[2592000s]) or last_over_time(cursor_member_spend_gross_usd[2592000s]) or last_over_time(cursor_requests_total[2592000s]) or last_over_time(cursor_ai_code_lines_total[2592000s]))` |
+| Roster harvest | 200 | — | `last_over_time(cursor_member_info[26h])` (via entities$) |
+| Adoption · active | 200 | `to` | `max by (email) (last_over_time(cursor_member_active{…}[…]))` |
+| Surfaces | 200 | — | `sum by (surface) (sum_over_time(cursor_requests_total{…}[…]))` / peak-daily-users form |
+| Cost · spend | 200 | — | `sum by (email) (sum_over_time(cursor_member_daily_spend_usd[86400s]))` |
+| Intents | 200 | `to` | `sum by (value) (sum_over_time(cursor_conversation_total{dimension="intents"}[86400s]))` |
+
+### Live repro with `cx`
+
+```bash
+# Previous window (fails while old high-cardinality series remain)
+cx metrics query 'sum by (token_type) (sum_over_time(cursor_event_tokens_total[86400s]))' \
+  --time 2026-09-07T15:37:54Z
+
+# Current window (succeeds after cardinality fix)
+cx metrics query 'sum by (token_type) (sum_over_time(cursor_event_tokens_total[86400s]))' \
+  --time 2026-09-08T15:37:54Z
+```
+
+### How this feeds the sim
+
+| HAR finding | Sim change |
+|---|---|
+| Widgets need `cursor_event_tokens_total` by `token_type` / `email` / `conversation_id` | Emit those labels in `sim/cursor/usage_v2` |
+| New `conversation_id` per event → 300k+ series → 422 | Reuse each id for 20–40 events; ~400 conversations/day |
+| Dual eval at `to` and `from` | Current window greens first; previous window clears as old series age out |

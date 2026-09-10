@@ -96,6 +96,8 @@ _SPEND = _BASE + (
 )
 _ACTIVE = _BASE + ("email", "user_id", "date", "client_version")
 _CONV = _BASE + ("dimension", "value", "date")
+# Topic Mix — FE catalog keeps email (unlike cursor_conversation_total realOmitsLabels).
+_CONV_SUBCAT = _BASE + ("mode", "subcategory", "email", "date")
 _GROUP = _BASE + ("group_id", "group_name", "is_unassigned")
 _ORG_TEAM = _BASE + ("organization", "team_name", "team_role")
 _REQUESTS_CLASS = _BASE + ("email", "user_id", "billing_class", "date")
@@ -250,6 +252,12 @@ _SPECS: tuple[_SeriesSpec, ...] = (
         "cursor_conversation_total",
         "Cursor conversation dimension counts (bucket delta)",
         _CONV,
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_conversation_subcategory_snapshot",
+        "Cursor conversation subcategory counts by mode (bucket delta; Topic Mix)",
+        _CONV_SUBCAT,
         "delta",
     ),
     _SeriesSpec(

@@ -41,3 +41,17 @@ Every sample is a **per-bucket delta** (cleared on scrape) or a **snapshot**
 id across 20–40 events and caps new conversations to ~400/day so a 7-day
 `sum_over_time(cursor_event_tokens_total[…])` stays under the metrics series limit
 (~300k). Do not add other per-event unique labels.
+
+## Topic Mix
+
+`cursor_conversation_subcategory_snapshot` is a **delta** (despite the name) so Topic Mix
+can use `sum by (subcategory)(sum_over_time(…[W]))`. Emitted once per **new**
+conversation for Ask / Plan / Write Code intents:
+
+| Intent | `mode` | `subcategory` values |
+|--------|--------|----------------------|
+| Ask | `askMode` | `error_fix`, `explanation` |
+| Plan | `planMode` | `implementation` |
+| Write Code | `writeCode` | `feature`, `refactor` |
+
+`email` is the conversation member (User filter works). Task Automation skips this metric.
