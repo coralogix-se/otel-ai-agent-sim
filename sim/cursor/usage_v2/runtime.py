@@ -954,9 +954,21 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                         n,
                     )
 
-    # Active flags — idle licensed seats never get cursor_member_active.
+    # Active flags — FE seat KPIs row-source is breakdown(cursor_member_active, email).
+    # Idle licensed seats must still appear as series with value 0 (omitting them → Idle Seats 0/N).
     for m in _roster():
         if m.is_idle:
+            collector.set_snapshot(
+                "cursor_member_active",
+                {
+                    **base,
+                    "email": m.email,
+                    "user_id": m.user_id,
+                    "date": day,
+                    "client_version": m.client_version,
+                },
+                0.0,
+            )
             continue
         if m.email in active_today or random.random() < 0.22:
             collector.set_snapshot(

@@ -48,6 +48,8 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
     reset_cursor_usage_runtime_for_tests()
     monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "8")
     monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "12")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", "1")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", "1")
     monkeypatch.setenv("SIM_CURSOR_USAGE_VOLUME", "1")
 
     registry = CollectorRegistry()
@@ -254,8 +256,18 @@ def test_idle_seats_and_surface_user_diversity(monkeypatch) -> None:
     idle_emails = {m.email for m in idle}
 
     active_lines = _metric_lines(payload, "cursor_member_active")
-    active_emails = {line.split('email="', 1)[1].split('"', 1)[0] for line in active_lines}
-    assert idle_emails.isdisjoint(active_emails)
+    # Idle seats must be present as value=0 so Adoption Idle Seats KPI can count them.
+    idle_active_lines = [
+        line for line in active_lines if any(f'email="{e}"' in line for e in idle_emails)
+    ]
+    assert len(idle_active_lines) == len(idle_emails)
+    assert all("} 0.0" in line or line.endswith(" 0.0") for line in idle_active_lines)
+    active_positive = {
+        line.split('email="', 1)[1].split('"', 1)[0]
+        for line in active_lines
+        if not (line.endswith(" 0.0") or "} 0.0" in line)
+    }
+    assert idle_emails.isdisjoint(active_positive)
 
     request_emails = {
         line.split('email="', 1)[1].split('"', 1)[0]

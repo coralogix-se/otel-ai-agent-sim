@@ -84,7 +84,8 @@ Chart point clicks open the breakdown drawer from already-rendered points — no
 
 | Widget | Metric | Labels used | Query | Notes |
 | --- | --- | --- | --- | --- |
-| KPIs "Active Users" / "Adoption Rate" / "Idle Seats" | `cursor_member_active` | by `email`; F; limit = roster size | `max by (email)(max_over_time(cursor_member_active{F}[W]))` @ `to`+`from` | active = rows > 0; adoption = active/roster; idle = roster − active |
+| KPIs "Active Users" / "Adoption Rate" / "Idle Seats" | `cursor_member_active` | by `email`; F; limit = roster size | `max by (email)(max_over_time(cursor_member_active{F}[W]))` @ `to`+`from` | Seat rows come from this breakdown only (not `member_info`). Idle licensed seats must emit **value 0** so they appear; omitting the series makes Idle Seats show `0/N`. FE treats `value>0` as active, else falls back to events/spend |
+
 | Drawers "Active members" / "Idle members" (KPI click) | `cursor_member_active`  • enrichment | as above; enrichment = `perUserTable(['cursor_member_daily_spend_usd','cursor_event_tokens_total'])` | same breakdown re-issued + 2 per-email window queries | rows filtered `>0` / `=0`; drawer adds Group/Cost/Tokens columns joined by email |
 | Chart "Active Users by Surface" | `cursor_requests_total` | by `surface` (+ ungrouped total for the drawer); F | `count by (surface)((sum by (surface,user_id,email)(sum_over_time(M{F}[1d]))) > 0)` range step 1d, peak-day re-bucketed | distinct users per day; overlaid, never stacked |
 | Card "Coding Activity" (lines calendar) | `cursor_ai_change_lines_added_total` | F | `sum(sum_over_time(M{F}[1d]))`  • presence `sum(count_over_time(M[1d]))`, range step 1d | own fixed 364-day window ending today — ignores the time picker; streaks/most-active derived client-side |
