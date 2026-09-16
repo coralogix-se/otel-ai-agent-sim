@@ -802,42 +802,56 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             round(overage, 4),
         )
 
-        # Conversation dimensions count once per new conversation (team-level — no email).
+        # Conversation dimensions once per new conversation.
+        # Dual-emit: legacy team-level cursor_conversation_* (no email) + cx498
+        # cursor_user_conversation_* (with email). Snapshot is a delta despite the
+        # name — Insights uses sum_over_time on complexity / guidanceLevels.
         if is_new:
             intent = _pick(CURSOR_CONVERSATION_DIMENSIONS["intents"])
-            collector.add_delta(
-                "cursor_conversation_total",
-                {
+
+            def _emit_conversation_dimension(dimension: str, value: str) -> None:
+                team_labels = {
                     **base,
-                    "dimension": "intents",
-                    "value": intent,
+                    "dimension": dimension,
+                    "value": value,
                     "date": day,
-                },
-                1,
-            )
+                }
+                user_labels = {**team_labels, "email": member.email}
+                collector.add_delta("cursor_conversation_total", team_labels, 1)
+                collector.add_delta("cursor_user_conversation_total", user_labels, 1)
+                collector.add_delta("cursor_user_conversation_snapshot", user_labels, 1)
+
+            _emit_conversation_dimension("intents", intent)
+            # Always classify work/complexity/guidance so Work Type + Insights populate.
+            for dimension in ("workTypes", "complexity", "guidanceLevels"):
+                _emit_conversation_dimension(
+                    dimension, _pick(CURSOR_CONVERSATION_DIMENSIONS[dimension])
+                )
             for dimension, values in CURSOR_CONVERSATION_DIMENSIONS.items():
-                if dimension == "intents":
+                if dimension in ("intents", "workTypes", "complexity", "guidanceLevels"):
                     continue
                 if random.random() < 0.55:
-                    collector.add_delta(
-                        "cursor_conversation_total",
-                        {**base, "dimension": dimension, "value": _pick(values), "date": day},
-                        1,
-                    )
+                    _emit_conversation_dimension(dimension, _pick(values))
             # Topic Mix — mode-scoped subcategory tied to this conversation's intent + member.
             mode = CURSOR_CONVERSATION_INTENT_TO_MODE.get(intent)
             if mode:
                 subs = CURSOR_CONVERSATION_SUBCATEGORIES[mode]
                 weights = CURSOR_CONVERSATION_SUBCATEGORY_WEIGHTS.get(mode)
+                subcat_labels = {
+                    **base,
+                    "mode": mode,
+                    "subcategory": _pick(subs, weights),
+                    "email": member.email,
+                    "date": day,
+                }
                 collector.add_delta(
                     "cursor_conversation_subcategory_snapshot",
-                    {
-                        **base,
-                        "mode": mode,
-                        "subcategory": _pick(subs, weights),
-                        "email": member.email,
-                        "date": day,
-                    },
+                    subcat_labels,
+                    1,
+                )
+                collector.add_delta(
+                    "cursor_user_conversation_subcategory_snapshot",
+                    subcat_labels,
                     1,
                 )
             # Align ask/plan usage pies with the same intent when applicable.

@@ -44,9 +44,10 @@ id across 20–40 events and caps new conversations to ~400/day so a 7-day
 
 ## Topic Mix
 
-`cursor_conversation_subcategory_snapshot` is a **delta** (despite the name) so Topic Mix
-can use `sum by (subcategory)(sum_over_time(…[W]))`. Emitted once per **new**
-conversation for Ask / Plan / Write Code intents:
+`cursor_user_conversation_subcategory_snapshot` (and legacy
+`cursor_conversation_subcategory_snapshot`) are **deltas** (despite the name) so
+Topic Mix can use `sum by (subcategory)(sum_over_time(…[W]))`. Emitted once per
+**new** conversation for Ask / Plan / Write Code intents:
 
 | Intent | `mode` | `subcategory` values |
 |--------|--------|----------------------|
@@ -55,3 +56,11 @@ conversation for Ask / Plan / Write Code intents:
 | Write Code | `writeCode` | `feature`, `refactor` |
 
 `email` is the conversation member (User filter works). Task Automation skips this metric.
+
+## Conversation dimensions (cx498 rename)
+
+The Usage FE queries `cursor_user_conversation_total` and
+`cursor_user_conversation_snapshot` (labels `dimension`, `value`, `email`).
+Both are bucket **deltas**; Insights uses `sum_over_time` on the snapshot for
+complexity / guidanceLevels. The sim dual-emits the legacy team-level
+`cursor_conversation_total` (no `email`) for compatibility.

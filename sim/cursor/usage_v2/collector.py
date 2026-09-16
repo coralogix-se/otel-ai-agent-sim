@@ -96,6 +96,8 @@ _SPEND = _BASE + (
 )
 _ACTIVE = _BASE + ("email", "user_id", "date", "client_version")
 _CONV = _BASE + ("dimension", "value", "date")
+# cx498 FE renamed conversation metrics to cursor_user_* and keeps email (Sa=[dimension,value,email]).
+_CONV_USER = _BASE + ("dimension", "value", "email", "date")
 # Topic Mix — FE catalog keeps email (unlike cursor_conversation_total realOmitsLabels).
 _CONV_SUBCAT = _BASE + ("mode", "subcategory", "email", "date")
 _GROUP = _BASE + ("group_id", "group_name", "is_unassigned")
@@ -250,12 +252,30 @@ _SPECS: tuple[_SeriesSpec, ...] = (
     ),
     _SeriesSpec(
         "cursor_conversation_total",
-        "Cursor conversation dimension counts (bucket delta)",
+        "Cursor conversation dimension counts (bucket delta; legacy team-level)",
         _CONV,
         "delta",
     ),
     _SeriesSpec(
+        "cursor_user_conversation_total",
+        "Cursor per-user conversation dimension counts (bucket delta)",
+        _CONV_USER,
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_user_conversation_snapshot",
+        "Cursor per-user conversation dimension counts (bucket delta; Insights)",
+        _CONV_USER,
+        "delta",
+    ),
+    _SeriesSpec(
         "cursor_conversation_subcategory_snapshot",
+        "Cursor conversation subcategory counts by mode (bucket delta; Topic Mix legacy)",
+        _CONV_SUBCAT,
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_user_conversation_subcategory_snapshot",
         "Cursor conversation subcategory counts by mode (bucket delta; Topic Mix)",
         _CONV_SUBCAT,
         "delta",

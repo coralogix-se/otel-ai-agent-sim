@@ -134,17 +134,30 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
         )
         for line in _metric_lines(payload, "cursor_conversation_total")
     )
+    user_total = _metric_lines(payload, "cursor_user_conversation_total")
+    user_snap = _metric_lines(payload, "cursor_user_conversation_snapshot")
+    assert user_total, "cursor_user_conversation_total missing"
+    assert user_snap, "cursor_user_conversation_snapshot missing"
+    assert any('dimension="intents"' in line and 'email="' in line for line in user_total)
+    assert any('email="' in line for line in user_snap)
+    # Insights / Work type dimensions should appear on the user-scoped family.
+    assert any('dimension="workTypes"' in line for line in user_total)
+    assert any('dimension="complexity"' in line for line in user_snap)
+    assert any('dimension="guidanceLevels"' in line for line in user_snap)
     subcat_lines = _metric_lines(payload, "cursor_conversation_subcategory_snapshot")
+    user_subcat = _metric_lines(payload, "cursor_user_conversation_subcategory_snapshot")
     assert subcat_lines, "Topic Mix metric missing"
+    assert user_subcat, "cursor_user_conversation_subcategory_snapshot missing"
     assert any('mode="askMode"' in line or 'mode="planMode"' in line or 'mode="writeCode"' in line for line in subcat_lines)
     assert any(
         any(f'subcategory="{s}"' in line for s in ("error_fix", "explanation", "implementation", "feature", "refactor"))
         for line in subcat_lines
     )
     assert any('email="' in line for line in subcat_lines)
+    assert any('email="' in line for line in user_subcat)
     # Subcategory rows should only belong to active roster emails that also speak.
     roster_emails = {m.email for m in _roster()}
-    for line in subcat_lines:
+    for line in subcat_lines + user_subcat:
         email = line.split('email="', 1)[1].split('"', 1)[0]
         assert email in roster_emails
     # Every subcategory series email should also appear on conversation-scoped events.
@@ -153,7 +166,7 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
         for line in _metric_lines(payload, "cursor_events_total")
         if 'email="' in line
     }
-    for line in subcat_lines:
+    for line in subcat_lines + user_subcat:
         email = line.split('email="', 1)[1].split('"', 1)[0]
         assert email in event_emails
 
