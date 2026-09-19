@@ -62,6 +62,178 @@ def _pick(items: tuple[str, ...], weights: tuple[float, ...] | None = None) -> s
 
 
 @dataclass(frozen=True)
+class _UsagePersona:
+    """Stable per-member knobs that feed FE Usage Pattern tags (cx498 Ba/al/sl/ll/cl).
+
+    Tags are computed client-side from requests, daysActive, maxModeShare, acceptRate,
+    spend/CPR, and cache_read/request — not from a dedicated metric.
+    """
+
+    name: str
+    # Relative chance to get new conversations / events (power users ≫ light).
+    intensity: float
+    # P(max_mode=true) on new conversations — >0.5 share → deepThinker.
+    max_mode_p: float
+    # Mean accepts/applies — heavily weights adoption tier.
+    accept_rate: float
+    # P(active day) when the member did not already emit — lowers daysActive.
+    active_day_p: float
+    # Multiplier on cache_read token share → longSessions / shortSessions.
+    cache_read_mult: float
+    # Multiplier on event cost → overBudget / costEfficient / premiumModel.
+    spend_mult: float
+    # Cap on events/user/day as a fraction of the global max.
+    event_cap_frac: float
+
+
+# Weighted catalog — keep Balanced from dominating; spread adoption tiers.
+_PERSONA_CATALOG: tuple[tuple[_UsagePersona, float], ...] = (
+    (
+        _UsagePersona(
+            "power_user",
+            intensity=3.2,
+            max_mode_p=0.12,
+            accept_rate=0.92,
+            active_day_p=0.98,
+            cache_read_mult=1.0,
+            spend_mult=1.3,
+            event_cap_frac=1.0,
+        ),
+        0.12,
+    ),
+    (
+        _UsagePersona(
+            "deep_thinker",
+            intensity=1.1,
+            max_mode_p=0.72,
+            accept_rate=0.70,
+            active_day_p=0.85,
+            cache_read_mult=1.4,
+            spend_mult=2.2,
+            event_cap_frac=0.85,
+        ),
+        0.12,
+    ),
+    (
+        _UsagePersona(
+            "balanced",
+            intensity=1.0,
+            max_mode_p=0.10,
+            accept_rate=0.68,
+            active_day_p=0.90,
+            cache_read_mult=1.0,
+            spend_mult=1.0,
+            event_cap_frac=0.75,
+        ),
+        0.16,
+    ),
+    (
+        _UsagePersona(
+            "light_user",
+            intensity=0.22,
+            max_mode_p=0.04,
+            accept_rate=0.50,
+            active_day_p=0.35,
+            cache_read_mult=0.55,
+            spend_mult=0.35,
+            event_cap_frac=0.12,
+        ),
+        0.12,
+    ),
+    (
+        _UsagePersona(
+            "sporadic",
+            intensity=0.12,
+            max_mode_p=0.03,
+            accept_rate=0.35,
+            active_day_p=0.18,
+            cache_read_mult=0.40,
+            spend_mult=0.25,
+            event_cap_frac=0.06,
+        ),
+        0.10,
+    ),
+    (
+        _UsagePersona(
+            "manual_coder",
+            intensity=0.70,
+            max_mode_p=0.04,
+            accept_rate=0.12,
+            active_day_p=0.65,
+            cache_read_mult=0.35,
+            spend_mult=0.55,
+            event_cap_frac=0.55,
+        ),
+        0.10,
+    ),
+    (
+        _UsagePersona(
+            "cost_efficient",
+            intensity=1.6,
+            max_mode_p=0.05,
+            accept_rate=0.80,
+            active_day_p=0.90,
+            cache_read_mult=0.75,
+            spend_mult=0.28,
+            event_cap_frac=0.90,
+        ),
+        0.10,
+    ),
+    (
+        _UsagePersona(
+            "premium",
+            intensity=1.0,
+            max_mode_p=0.58,
+            accept_rate=0.72,
+            active_day_p=0.85,
+            cache_read_mult=1.2,
+            spend_mult=3.8,
+            event_cap_frac=0.80,
+        ),
+        0.08,
+    ),
+    (
+        _UsagePersona(
+            "long_context",
+            intensity=1.0,
+            max_mode_p=0.10,
+            accept_rate=0.65,
+            active_day_p=0.80,
+            cache_read_mult=4.5,
+            spend_mult=1.15,
+            event_cap_frac=0.70,
+        ),
+        0.05,
+    ),
+    (
+        _UsagePersona(
+            "short_context",
+            intensity=1.15,
+            max_mode_p=0.08,
+            accept_rate=0.70,
+            active_day_p=0.85,
+            cache_read_mult=0.12,
+            spend_mult=0.85,
+            event_cap_frac=0.75,
+        ),
+        0.05,
+    ),
+)
+
+
+def _stable_persona(email: str) -> _UsagePersona:
+    """Deterministic persona pick from the weighted catalog."""
+    digest = hashlib.sha256(f"cursor-persona:{email}".encode()).hexdigest()
+    slot = int(digest[:8], 16) / 0xFFFFFFFF
+    acc = 0.0
+    for persona, weight in _PERSONA_CATALOG:
+        acc += weight
+        if slot <= acc:
+            return persona
+    return _PERSONA_CATALOG[-1][0]
+
+
+@dataclass(frozen=True)
 class _UsageMember:
     email: str
     user_id: str
@@ -75,6 +247,7 @@ class _UsageMember:
     may_exceed_limit: bool
     is_idle: bool
     surfaces: tuple[str, ...]
+    persona: _UsagePersona
 
 
 def _stable_user_id(email: str) -> str:
@@ -184,6 +357,7 @@ def _build_roster() -> list[_UsageMember]:
                 may_exceed_limit=(not is_idle) and rank < overage_slots,
                 is_idle=is_idle,
                 surfaces=() if is_idle else _stable_surface_affinity(email),
+                persona=_stable_persona(email),
             )
         )
     return members
@@ -271,17 +445,29 @@ def _can_start_conversation(now: datetime) -> bool:
     return _CONVERSATIONS_STARTED_TODAY < expected + 2
 
 
+def _member_event_cap(member: _UsageMember) -> int:
+    """Per-persona daily event cap — light/sporadic users stay under FE lowUsage thresholds."""
+    global_cap = cursor_usage_events_per_user_day_max()
+    return max(1, int(global_cap * member.persona.event_cap_frac))
+
+
 def _pick_member_for_new_conversation(active_members: list[_UsageMember]) -> _UsageMember | None:
-    cap = cursor_usage_events_per_user_day_max()
-    eligible = [
-        m for m in active_members if _EVENTS_BY_USER_TODAY.get(m.email, 0) < cap
-    ]
+    eligible: list[_UsageMember] = []
+    weights: list[float] = []
+    for m in active_members:
+        if _EVENTS_BY_USER_TODAY.get(m.email, 0) >= _member_event_cap(m):
+            continue
+        # Soft day-off: low active_day_p personas often skip starting work today.
+        if (
+            _EVENTS_BY_USER_TODAY.get(m.email, 0) == 0
+            and random.random() > m.persona.active_day_p
+        ):
+            continue
+        eligible.append(m)
+        weights.append(max(0.01, m.persona.intensity))
     if not eligible:
         return None
-    # Prefer users with fewer events so per-user volume stays even.
-    eligible.sort(key=lambda m: _EVENTS_BY_USER_TODAY.get(m.email, 0))
-    top = eligible[: max(1, len(eligible) // 3)]
-    return random.choice(top)
+    return random.choices(eligible, weights=weights, k=1)[0]
 
 
 def _start_conversation(member: _UsageMember, day: str) -> _OpenConversation:
@@ -298,7 +484,7 @@ def _start_conversation(member: _UsageMember, day: str) -> _OpenConversation:
         member=member,
         model=_pick(CURSOR_USAGE_MODELS, CURSOR_USAGE_MODEL_WEIGHTS),
         kind=kind,
-        max_mode=random.random() < 0.12,
+        max_mode=random.random() < member.persona.max_mode_p,
         service_account=service_account,
         events_remaining=random.randint(lo, hi),
         day=day,
@@ -312,13 +498,12 @@ def _acquire_conversation(
     now: datetime, active_members: list[_UsageMember], day: str
 ) -> tuple[_OpenConversation, bool] | None:
     """Return (conversation, is_new) or None when daily budgets are exhausted."""
-    cap = cursor_usage_events_per_user_day_max()
     eligible_open = [
         c
         for c in _OPEN_CONVERSATIONS
         if c.day == day
         and c.events_remaining > 0
-        and _EVENTS_BY_USER_TODAY.get(c.member.email, 0) < cap
+        and _EVENTS_BY_USER_TODAY.get(c.member.email, 0) < _member_event_cap(c.member)
     ]
     # Always finish open conversations (20–40 events) before opening another id.
     # This is what keeps conversation_id cardinality near cxai-dev levels.
@@ -537,7 +722,13 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
         billing_class = _pick(CURSOR_BILLING_CLASSES, CURSOR_BILLING_CLASS_WEIGHTS)
         # One event per emit — conversation_id is reused across 20–40 of these.
         event_n = 1
-        cost = round(random.uniform(0.02, 1.8) * volume * (2.5 if max_mode else 1.0), 4)
+        cost = round(
+            random.uniform(0.02, 1.8)
+            * volume
+            * (2.5 if max_mode else 1.0)
+            * member.persona.spend_mult,
+            4,
+        )
         list_price = round(cost * 1.15, 4)
         units = float(random.randint(1, 12))
         ev = _event_labels(
@@ -555,11 +746,13 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
         collector.add_delta("cursor_event_list_price_usd", ev, list_price)
         collector.add_delta("cursor_event_request_units_total", ev, units)
 
-        for token_type, share in zip(
-            CURSOR_TOKEN_TYPES,
-            (0.45, 0.30, 0.18, 0.07),
-            strict=True,
-        ):
+        # Persona-skewed token mix — cache_read/request drives longSessions/shortSessions.
+        base_shares = [0.45, 0.30, 0.18, 0.07]  # input, output, cache_read, cache_write
+        shares = list(base_shares)
+        shares[2] = max(0.02, base_shares[2] * member.persona.cache_read_mult)
+        share_total = sum(shares)
+        shares = [s / share_total for s in shares]
+        for token_type, share in zip(CURSOR_TOKEN_TYPES, shares, strict=True):
             tok_labels = {
                 **base,
                 "email": member.email,
@@ -742,7 +935,8 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             )
 
         applies = random.randint(1, 5)
-        accepts = random.randint(0, applies)
+        # Persona accept_rate — drives adoption tier (acceptRate * 40 in FE score).
+        accepts = sum(1 for _ in range(applies) if random.random() < member.persona.accept_rate)
         collector.add_delta(
             "cursor_applies_total",
             {**base, "email": member.email, "user_id": member.user_id, "date": day},
@@ -970,6 +1164,7 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
 
     # Active flags — FE seat KPIs row-source is breakdown(cursor_member_active, email).
     # Idle licensed seats must still appear as series with value 0 (omitting them → Idle Seats 0/N).
+    # daysActive (Usage Patterns) counts distinct active days — persona.active_day_p sparsifies.
     for m in _roster():
         if m.is_idle:
             collector.set_snapshot(
@@ -984,7 +1179,7 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                 0.0,
             )
             continue
-        if m.email in active_today or random.random() < 0.22:
+        if m.email in active_today or random.random() < m.persona.active_day_p * 0.25:
             collector.set_snapshot(
                 "cursor_member_active",
                 {

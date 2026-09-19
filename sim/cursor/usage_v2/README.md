@@ -64,3 +64,20 @@ The Usage FE queries `cursor_user_conversation_total` and
 Both are bucket **deltas**; Insights uses `sum_over_time` on the snapshot for
 complexity / guidanceLevels. The sim dual-emits the legacy team-level
 `cursor_conversation_total` (no `email`) for compatibility.
+
+## Usage Pattern tags (Users grid)
+
+The FE assigns tags client-side (`Ba` / `al` / `sl` / `ll` / `cl` in the Usage
+bundle) from per-user window stats — there is no `cursor_*_tag` metric:
+
+| Dimension | Tags | Inputs |
+|-----------|------|--------|
+| Usage shape | Power User / Deep Thinker / Balanced / Low Usage | requests, daysActive, max_mode share |
+| Adoption tier | AI Native … Manual Coder | acceptRate, intensity vs p90, daysActive/window |
+| Cost shape | Cost Efficient / Premium Model / Over Budget | spend, spend/request, max_mode |
+| Context | Long / Short Sessions | cache_read tokens / requests |
+
+Homogeneous activity collapses everyone to **Balanced + High Adoption**. The sim
+assigns a stable per-email **persona** (intensity, max_mode_p, accept_rate,
+active_day_p, cache_read_mult, spend_mult, event_cap_frac) so the roster spans
+those buckets.

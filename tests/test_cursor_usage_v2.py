@@ -249,17 +249,65 @@ def test_usage_metrics_gated_off_by_default(monkeypatch) -> None:
     assert usage_metrics_enabled() is True
 
 
-def test_idle_seats_and_surface_user_diversity(monkeypatch) -> None:
+def test_usage_personas_diversify_tag_inputs(monkeypatch) -> None:
+    """FE Usage Patterns need heterogeneous intensity / max_mode / accept / context."""
     reset_cursor_usage_runtime_for_tests()
-    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "24")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "48")
     monkeypatch.setenv("SIM_CURSOR_USAGE_IDLE_SEATS", "2")
-    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "24")
-    monkeypatch.setenv("SIM_CURSOR_USAGE_VOLUME", "1.5")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "48")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", "1")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", "1")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_CONVERSATIONS_PER_DAY", "400")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY", "350")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY_MAX", "500")
+
+    roster = [m for m in _roster() if not m.is_idle]
+    persona_names = {m.persona.name for m in roster}
+    assert len(persona_names) >= 6, persona_names
+    assert any(m.persona.max_mode_p >= 0.5 for m in roster)  # deepThinker / premium
+    assert any(m.persona.accept_rate <= 0.2 for m in roster)  # manualCoder
+    assert any(m.persona.intensity >= 2.5 for m in roster)  # powerUser
+    assert any(m.persona.event_cap_frac <= 0.15 for m in roster)  # light / sporadic
+    assert any(m.persona.cache_read_mult >= 3.0 for m in roster)  # longSessions
+    assert any(m.persona.cache_read_mult <= 0.2 for m in roster)  # shortSessions
 
     registry = CollectorRegistry()
     register_cursor_usage_metrics(registry)
     now = datetime(2026, 8, 28, 18, 0, tzinfo=timezone.utc)
-    for _ in range(8):
+    for hour in range(12):
+        emit_cursor_usage_cycle(now=now.replace(hour=6 + hour // 2, minute=(hour % 2) * 30))
+    payload = generate_latest(registry)
+
+    # Request volume should vary across emails (not flat equalization).
+    req_by_email: dict[str, float] = {}
+    for line in _metric_lines(payload, "cursor_requests_total"):
+        email = line.split('email="', 1)[1].split('"', 1)[0]
+        val = float(line.rsplit(" ", 1)[-1])
+        req_by_email[email] = req_by_email.get(email, 0.0) + val
+    assert len(req_by_email) >= 8
+    vals = sorted(req_by_email.values())
+    assert vals[-1] >= vals[0] * 2.5, vals
+
+    # max_mode=true should appear (deep thinkers / premium).
+    event_lines = _metric_lines(payload, "cursor_events_total")
+    assert any('max_mode="true"' in line for line in event_lines)
+    assert any('max_mode="false"' in line for line in event_lines)
+
+
+def test_idle_seats_and_surface_user_diversity(monkeypatch) -> None:
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "24")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_IDLE_SEATS", "2")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "48")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_VOLUME", "1.5")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", "1")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", "2")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_CONVERSATIONS_PER_DAY", "400")
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    now = datetime(2026, 8, 28, 18, 0, tzinfo=timezone.utc)
+    for _ in range(16):
         emit_cursor_usage_cycle(now=now)
     payload = generate_latest(registry)
 
