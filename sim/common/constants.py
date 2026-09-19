@@ -207,6 +207,7 @@ CURSOR_COMPOSER_MODELS = (
     "claude-opus-4-8",
     "claude-haiku-4-5",
     "claude-fable-5",
+    "gemini-3.8-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
@@ -343,59 +344,53 @@ COPILOT_CLI_SAMPLE_ASSISTANT_REPLIES = (
     "I'll run the linter and formatter on the touched packages before suggesting the final diff.",
 )
 
-# Copilot CLI GA models (https://docs.github.com/en/copilot/reference/ai-models/supported-models).
-# Exclude ``gpt-5.4-nano`` (Codex VS Code extension only). ``claude-mythos-5`` is Glasswing-only.
-# Weighted toward mini/haiku/flash for realistic API-equivalent spend; Opus/Fable rare.
-COPILOT_DEFAULT_MODEL = "gpt-5.4-mini"
+# Copilot CLI (https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference).
+# Default is Claude Sonnet 4.6. Astra is opt-in, not the automatic default.
+# Kimi and Grok are Cursor models, not Copilot CLI.
+COPILOT_DEFAULT_MODEL = "claude-sonnet-4-6"
 
 COPILOT_CLI_MODELS = (
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-haiku-4-5",
     "gpt-5.4-mini",
     "gpt-5.4-mini",
     "gpt-5.6-terra",
-    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5-mini",
     "gpt-5.4",
     "gpt-5.5",
-    "gpt-5.6-luna",
-    "gpt-5.6-luna",
     "gpt-5.6-sol",
     "gpt-5.3-codex",
-    "claude-haiku-4-5",
-    "claude-haiku-4-5",
-    "claude-sonnet-5",
-    "claude-sonnet-5",
-    "claude-sonnet-4-6",
-    "claude-opus-5",
+    "gpt-6-astra",
     "claude-opus-4-8",
     "claude-opus-4-7",
     "claude-fable-5",
-    "gemini-3.7-flash",
+    "gemini-3.8-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
+    "gemini-3.1-pro-preview",
     "mai-code-1.1-flash",
     "mai-code-1-flash",
-    "kimi-k2.7-code",
-    "kimi-k3",
-    "grok-4.6",
-    "grok-4.5",
 )
 
-# Gemini CLI model ids (https://geminicli.com/docs/reference/configuration/ ``model`` aliases).
-# Retired ids omitted (2.5 Pro, 3 Pro, 3.1 Pro preview — see GitHub/Cursor retirement tables).
-GEMINI_DEFAULT_MODEL = "gemini-3.7-flash"
+# Gemini CLI (https://ai.google.dev/gemini-api/docs/pricing). Default is 3.8 Flash.
+# Gemma 4 has no paid API rate, so it is omitted.
+GEMINI_DEFAULT_MODEL = "gemini-3.8-flash"
 
 GEMINI_CLI_MODELS = (
+    "gemini-3.8-flash",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
-    "gemini-3-flash-preview",
-    "gemini-3.5-flash",
-    "gemini-3.6-flash",
-    "gemini-3.7-flash",
-    "gemini-3.7-flash",
-    "gemini-3.1-flash-lite",
-    "gemma-4-31b-it",
-    "gemma-4-26b-a4b-it",
 )
 
 

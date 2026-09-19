@@ -1,6 +1,6 @@
 """Per-model USD pricing for simulated LLM cost (input/output/cache tokens).
 
-Rates are USD per 1M tokens, aligned with vendor list prices (September 2026):
+Rates are USD per 1M tokens, aligned with vendor list prices (checked 2026-09-19):
 - Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
 - OpenAI / Codex: https://developers.openai.com/api/docs/pricing
 - Google Gemini: https://ai.google.dev/gemini-api/docs/pricing
@@ -81,23 +81,27 @@ _EXACT: dict[str, ModelRates] = {
     "gpt-4o-mini": _r(0.15, 0.60, cache_read=0.075),
     "gpt-4.1": _r(2.0, 8.0, cache_read=0.50),
     # --- Google Gemini ---
-    "gemini-3.7-flash": _r(0.75, 3.50, cache_read=0.075),
-    "gemini-3.6-flash": _r(1.50, 7.50, cache_read=0.15),
+    # 3.6 / 3.7 / 3.8 Flash intro rate through 2026-12-31 ($1.50/$7.50 after).
+    # Cursor's page still lists 3.7 and 3.8 output at $3.50; Google and Copilot bill $3.75.
+    "gemini-3.8-flash": _r(0.75, 3.75, cache_read=0.075),
+    "gemini-3.7-flash": _r(0.75, 3.75, cache_read=0.075),
+    "gemini-3.6-flash": _r(0.75, 3.75, cache_read=0.075),
     "gemini-3.5-flash": _r(1.50, 9.00, cache_read=0.15),
     "gemini-3.1-pro-preview": _r(2.00, 12.00),
     "gemini-3.1-pro": _r(2.00, 12.00),
     "gemini-3.1-pro-preview-customtools": _r(2.00, 12.00),
     "gemini-3-pro-preview": _r(2.00, 12.00),
     "gemini-3-flash-preview": _r(0.50, 3.00),
-    "gemini-3.1-flash-lite": _r(0.10, 0.40),
-    "gemini-3.1-flash-lite-preview": _r(0.10, 0.40),
+    "gemini-3.1-flash-lite": _r(0.25, 1.50, cache_read=0.025),
+    "gemini-3.1-flash-lite-preview": _r(0.25, 1.50, cache_read=0.025),
     "gemini-2.5-pro": _r(1.25, 10.00),
-    "gemini-2.5-flash": _r(0.15, 0.60),
-    "gemini-2.5-flash-lite": _r(0.10, 0.40),
+    "gemini-2.5-flash": _r(0.30, 2.50, cache_read=0.03),
+    "gemini-2.5-flash-lite": _r(0.10, 0.40, cache_read=0.01),
     "gemini-2.0-flash": _r(0.10, 0.40),
     "gemini-3-flash": _r(0.50, 3.00),
-    "gemma-4-31b-it": _r(0.20, 0.80),
-    "gemma-4-26b-a4b-it": _r(0.20, 0.80),
+    # Gemma 4 has no paid Gemini API rate (free tier only).
+    "gemma-4-31b-it": _r(0.0, 0.0),
+    "gemma-4-26b-a4b-it": _r(0.0, 0.0),
     # --- Copilot / Cursor / misc routed ids ---
     "mai-code-1-flash": _r(0.75, 4.50),
     "mai-code-1.1-flash": _r(0.75, 4.50),
@@ -144,13 +148,14 @@ _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
     ("gpt-5.4", _r(2.50, 15.0, cache_read=0.25)),
     ("gpt-5.3-codex", _r(1.75, 14.0, cache_read=0.175)),
     ("gpt-5-codex", _r(1.75, 14.0, cache_read=0.175)),
-    ("gemini-3.7", _r(0.75, 3.50, cache_read=0.075)),
-    ("gemini-3.6", _r(1.50, 7.50, cache_read=0.15)),
+    ("gemini-3.8", _r(0.75, 3.75, cache_read=0.075)),
+    ("gemini-3.7", _r(0.75, 3.75, cache_read=0.075)),
+    ("gemini-3.6", _r(0.75, 3.75, cache_read=0.075)),
     ("gemini-3.5", _r(1.50, 9.00, cache_read=0.15)),
     ("gemini-3.1-pro", _r(2.00, 12.00)),
     ("gemini-3-pro", _r(2.00, 12.00)),
     ("gemini-3-flash", _r(0.50, 3.00)),
-    ("gemma-4", _r(0.20, 0.80)),
+    ("gemma-4", _r(0.0, 0.0)),
     ("kimi-k3", _r(3.00, 15.00, cache_read=0.30)),
     ("kimi-k2", _r(0.95, 4.00, cache_read=0.19)),
     ("grok-4.6-fast", _r(4.00, 12.00, cache_read=1.00)),
@@ -158,10 +163,10 @@ _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
     ("grok-4.6", _r(2.00, 6.00, cache_read=0.50)),
     ("grok-4.5", _r(2.00, 6.00, cache_read=0.50)),
     ("grok-build", _r(1.00, 2.00, cache_read=0.20)),
-    ("gemini-3.1-flash", _r(0.10, 0.40)),
+    ("gemini-3.1-flash", _r(0.25, 1.50, cache_read=0.025)),
     ("gemini-2.5-pro", _r(1.25, 10.00)),
     ("gemini-2.5-flash-lite", _r(0.10, 0.40)),
-    ("gemini-2.5-flash", _r(0.15, 0.60)),
+    ("gemini-2.5-flash", _r(0.30, 2.50, cache_read=0.03)),
     ("gemini-2.0", _r(0.10, 0.40)),
     ("gpt-4o-mini", _r(0.15, 0.60, cache_read=0.075)),
     ("gpt-4o", _r(2.50, 10.0, cache_read=1.25)),
