@@ -58,7 +58,8 @@ _EXACT: dict[str, ModelRates] = {
     "claude-opus-4.7": _r(5.0, 25.0),
     "claude-opus-4.6": _r(5.0, 25.0),
     "claude-opus-4.5": _r(5.0, 25.0),
-    # --- OpenAI / Codex (GPT-5.6 Sol/Terra/Luna; Sol promo $4/$20 through ≥2026-11-21) ---
+    # --- OpenAI / Codex (Astra $10/$50; Sol promo $4/$20 through ≥2026-11-21) ---
+    "gpt-6-astra": _r(10.0, 50.0, cache_read=1.00, cache_write=12.50),
     "gpt-5.6": _r(4.0, 20.0, cache_read=0.40, cache_write=5.00),
     "gpt-5.6-sol": _r(4.0, 20.0, cache_read=0.40, cache_write=5.00),
     "gpt-5.6-terra": _r(2.0, 12.0, cache_read=0.20, cache_write=2.50),
@@ -131,6 +132,7 @@ _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
     ("claude-sonnet-5", _r(2.0, 10.0)),  # standard $2/$10 (Anthropic, Sep 2026)
     ("claude-sonnet", _r(3.0, 15.0)),
     ("claude-haiku", _r(1.0, 5.0)),
+    ("gpt-6-astra", _r(10.0, 50.0, cache_read=1.00, cache_write=12.50)),
     ("gpt-5.6-sol", _r(4.0, 20.0, cache_read=0.40, cache_write=5.00)),
     ("gpt-5.6-terra", _r(2.0, 12.0, cache_read=0.20, cache_write=2.50)),
     ("gpt-5.6-luna", _r(0.20, 1.20, cache_read=0.02, cache_write=0.25)),

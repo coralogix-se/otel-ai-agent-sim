@@ -41,6 +41,7 @@ from sim.common.otel import (
     _cx_log_record_attrs,
     tool_version_for,
 )
+from sim.claude.user_variance import scale_tokens_for_user
 from sim.common.repos import sim_session_repository_names
 from sim.copilot.repos import copilot_session_git_repo_segments
 from sim.common.constants import (
@@ -152,6 +153,19 @@ def _copilot_enduser_pseudo_id(user_attrs: dict) -> str:
     return email
 
 
+_seen_copilot_sessions: set[str] = set()
+
+
+def _copilot_note_session(conversation_id: str) -> bool:
+    """True the first time this conversation id is emitted."""
+    if conversation_id in _seen_copilot_sessions:
+        return False
+    if len(_seen_copilot_sessions) > 8000:
+        _seen_copilot_sessions.clear()
+    _seen_copilot_sessions.add(conversation_id)
+    return True
+
+
 def _copilot_github_cost_usd(
     model: str,
     input_tokens: int,
@@ -164,8 +178,8 @@ def _copilot_github_cost_usd(
     ``input_tokens`` should be the **full** prompt size (billable + cache-read). Cache-read
     tokens are billed at the discounted cache rate inside ``estimate_llm_cost_usd``.
 
-    ``SIM_COPILOT_COST_SCALE`` (default 1.0) multiplies the result so demo spend can be
-    dialed independently of per-turn token ranges (still accrued once/day when enabled).
+    ``SIM_COPILOT_COST_SCALE`` multiplies **org billing** only. Session spans stay at API
+    list rates so one conversation is not a $75k rollup.
     """
     from sim.common.model_pricing import estimate_llm_cost_usd
 
@@ -176,8 +190,11 @@ def _copilot_github_cost_usd(
         cache_read_tokens=cache_read_tokens,
         jitter_usd=random.uniform(0.0, 1e-6),
     )
-    scale = max(0.0, _env_float("SIM_COPILOT_COST_SCALE", 1.0))
-    return raw * scale
+    return raw
+
+
+def _copilot_org_cost_scale() -> float:
+    return max(0.0, _env_float("SIM_COPILOT_COST_SCALE", 1.0))
 
 
 def _copilot_turn_token_counts() -> tuple[int, int]:
@@ -493,6 +510,8 @@ def emit_copilot_cli_session(
 
                 for _ in range(seg_turns):
                     prompt_tokens, out = _copilot_turn_token_counts()
+                    prompt_tokens = scale_tokens_for_user(prompt_tokens, roster_user)
+                    out = scale_tokens_for_user(out, roster_user)
                     billable_in, cache_read_in, cached = sim_prompt_cache_token_split(
                         prompt_tokens,
                         turn_index=turn_global,
@@ -684,26 +703,19 @@ def emit_copilot_cli_session(
 
         from sim.copilot.daily_cost import (
             accrue_copilot_session_cost,
-            copilot_cost_once_per_day_enabled,
             take_copilot_daily_cost_emit,
         )
 
         accrue_copilot_session_cost(
             user_email,
-            session_cost_usd,
+            session_cost_usd * _copilot_org_cost_scale(),
             input_tokens=total_in,
             output_tokens=total_out,
             cache_read_tokens=total_cache_read_in,
         )
-
         daily_emit = take_copilot_daily_cost_emit(user_email)
-        emit_cost_usd: float | None = None
-        if daily_emit is not None:
-            emit_cost_usd = daily_emit.cost_usd
-        elif not copilot_cost_once_per_day_enabled():
-            # Legacy: stamp per-session cost on invoke_agent (optional null rate).
-            if random.random() >= float(os.environ.get("SIM_COPILOT_NULL_INVOKE_COST_RATE", "0.12")):
-                emit_cost_usd = session_cost_usd
+        # Span cost is this session's API dollars, not the scaled day rollup.
+        emit_cost_usd: float | None = session_cost_usd if session_cost_usd > 0 else None
 
         if emit_cost_usd is not None and emit_cost_usd > 0:
             # Attach daily (or legacy session) cost to the most recent invoke_agent via a
@@ -729,21 +741,16 @@ def emit_copilot_cli_session(
                         "enduser.pseudo.id": pseudo_id,
                         "github.copilot.cost": emit_cost_usd,
                         "github.copilot.nano_aiu": _copilot_nano_aiu(emit_cost_usd),
-                        "github.copilot.cost.rollup": "daily" if daily_emit is not None else "session",
-                        "github.copilot.cost.day": (
-                            daily_emit.day if daily_emit is not None else ""
-                        ),
-                        "github.copilot.cost.sessions": (
-                            daily_emit.sessions if daily_emit is not None else 1
-                        ),
+                        "github.copilot.cost.rollup": "session",
+                        "github.copilot.cost.sessions": 1,
                     }
                 )
 
         if st.prom_copilot_agent_dur is not None:
             st.prom_copilot_agent_dur.labels(cx_app, cx_sub, model).observe(wall_s)
 
-        # Prometheus increments after root span closes (same pattern as Codex).
-        if st.prom_copilot_session is not None:
+        new_session = _copilot_note_session(conversation_id)
+        if st.prom_copilot_session is not None and new_session:
             st.prom_copilot_session.labels(cx_app, cx_sub, model).inc()
         if st.prom_copilot_token is not None:
             st.prom_copilot_token.labels(cx_app, cx_sub, model, "input").inc(total_in)
@@ -765,10 +772,10 @@ def emit_copilot_cli_session(
                 n_tools=n_tools_total,
                 total_in=total_in,
                 total_out=total_out,
-                # Billing amount only on the daily rollup emit (reflects accrued usage).
-                cost_usd=emit_cost_usd if emit_cost_usd is not None else 0.0,
+                cost_usd=daily_emit.cost_usd if daily_emit is not None else 0.0,
                 productivity_ok=session_productivity_ok,
-                record_billing=emit_cost_usd is not None,
+                record_billing=daily_emit is not None,
+                count_session=new_session,
             )
 
         _emit_copilot_session_repo_metrics(

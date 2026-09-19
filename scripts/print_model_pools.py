@@ -82,6 +82,7 @@ EXPECTED_RATES: dict[str, tuple[float, float]] = {
     "claude-sonnet-4-5-20250929": (3.0, 15.0),
     "claude-haiku-4-5": (1.0, 5.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
+    "gpt-6-astra": (10.0, 50.0),
     "gpt-5.6": (4.0, 20.0),
     "gpt-5.6-sol": (4.0, 20.0),
     "gpt-5.6-terra": (2.0, 12.0),

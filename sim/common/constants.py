@@ -178,7 +178,8 @@ CODEX_SAMPLE_PROMPTS = (
 # Codex CLI default (https://developers.openai.com/codex/models — Power uses Sol).
 CODEX_DEFAULT_MODEL = "gpt-5.6-sol"
 
-# Codex CLI pool: GPT-5.6 Sol / Terra / Luna (gpt-5.5 / gpt-5.3-codex deprecated for ChatGPT sign-in).
+# Codex CLI pool: Astra (rare) + GPT-5.6 Sol / Terra / Luna.
+# gpt-5.5 retires from Codex on 2026-10-14; gpt-5.4 already retired from ChatGPT sign-in.
 CODEX_CLI_MODELS = (
     "gpt-5.6-sol",
     "gpt-5.6-sol",
@@ -187,6 +188,7 @@ CODEX_CLI_MODELS = (
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-5.6-luna",
+    "gpt-6-astra",
 )
 
 # Cursor Composer: Cursor-native + API-pool models (https://cursor.com/docs/models).

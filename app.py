@@ -2017,6 +2017,24 @@ def _claude_session_id_for_roster_user(user: dict) -> str:
     return sid
 
 
+_cli_user_session_ids: dict[str, tuple[str, float]] = {}
+
+
+def _cli_rotating_session_id(product: str, user: dict) -> str:
+    """Per-user session id that rotates on the Claude window so counts aren't 1 or unbounded."""
+    rotate = claude_user_session_rotate_duration_from_env(user)
+    key = f"{product}:{_claude_roster_user_key(user)}"
+    now = time.monotonic()
+    cached = _cli_user_session_ids.get(key)
+    if cached is not None and now < cached[1]:
+        return cached[0]
+    if rotate <= 0:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, "otel-ai-agent-sim:" + key))
+    sid = str(uuid.uuid4())
+    _cli_user_session_ids[key] = (sid, claude_session_id_rotate_deadline(now, float(rotate)))
+    return sid
+
+
 def _claude_emit_all_session_slots() -> bool:
     """When true and long-session slots are active, emit once per active slot user each Claude cycle."""
     if not claude_long_session_slots_enabled():
@@ -4040,12 +4058,14 @@ def main() -> None:
             if co >= 1.0 - 1e-9:
                 weights_run = _weights
             else:
+                # Same office / weekend / US-holiday scale as Claude, for every CLI sim.
+                _calendar = frozenset(
+                    {"claude_code", "gemini_cli", "codex", "cursor", "copilot_cli"}
+                )
                 w_adj = list(_weights)
                 for i, p in enumerate(agent_profiles):
-                    if p["agent.product"] == "claude_code":
-                        base = w_adj[i]
-                        w_adj[i] = max(1, round(float(base) * co))
-                        break
+                    if p["agent.product"] in _calendar:
+                        w_adj[i] = max(1, round(float(w_adj[i]) * co))
                 weights_run = tuple(w_adj)
             profile = random.choices(agent_profiles, weights=weights_run, k=1)[0]
 
@@ -4148,11 +4168,10 @@ def main() -> None:
             return
 
         if profile["agent.product"] == "copilot_cli":
-            gid = session_id
-            pru: dict | None = None
-            if _env_bool("SIM_COPILOT_STABLE_SESSION_PER_USER", True):
-                pru = roster_core_user_for_agent(session_id, "copilot_cli")
-                gid = _cursor_stable_session_id_from_roster_user(pru)
+            pru = roster_core_user_for_agent(str(uuid.uuid4()), "copilot_cli")
+            if not claude_user_should_emit_this_cycle(pru):
+                return
+            gid = _cli_rotating_session_id("copilot_cli", pru)
             emit_copilot_cli_session(gid, profile, roster_user=pru)
             return
 

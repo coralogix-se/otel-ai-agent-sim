@@ -498,6 +498,7 @@ def record_copilot_collector_session(
     productivity_ok: bool,
     org: str | None = None,
     record_billing: bool = True,
+    count_session: bool = True,
 ) -> None:
     """Increment org/user collector counters and refresh DAU gauges for one CLI session.
 
@@ -523,7 +524,8 @@ def record_copilot_collector_session(
     gross = cost_usd * random.uniform(1.05, 1.18)
     discount = max(0.0, gross - cost_usd)
 
-    metrics.org_cli_session.labels(organization=org_name).inc()
+    if count_session:
+        metrics.org_cli_session.labels(organization=org_name).inc()
     metrics.org_cli_request.labels(organization=org_name).inc(requests)
     metrics.org_cli_prompt_tokens.labels(organization=org_name).inc(total_in)
     metrics.org_cli_output_tokens.labels(organization=org_name).inc(total_out)
@@ -556,7 +558,8 @@ def record_copilot_collector_session(
             quantity=float(max(1, requests // 2)),
         )
 
-    metrics.user_cli_session.labels(**user_l).inc()
+    if count_session:
+        metrics.user_cli_session.labels(**user_l).inc()
     metrics.user_cli_prompt_tokens.labels(**user_l).inc(total_in)
     metrics.user_cli_output_tokens.labels(**user_l).inc(total_out)
     metrics.user_interaction.labels(**user_l).inc(interactions)

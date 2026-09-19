@@ -75,6 +75,15 @@ def claude_user_emit_turns_this_cycle(roster_user: dict | None, *, default_batch
     return random.randint(1, hi)
 
 
+def scale_tokens_for_user(count: int, roster_user: dict | None) -> int:
+    """Apply stable per-user token multiplier (same knobs as Claude) plus small jitter."""
+    n = max(0, int(count))
+    if n == 0 or roster_user is None:
+        return n
+    scaled = n * claude_user_token_multiplier(roster_user) * random.uniform(0.85, 1.15)
+    return max(1, int(scaled))
+
+
 def claude_user_token_multiplier(roster_user: dict | None) -> float:
     if roster_user is None:
         return 1.0
