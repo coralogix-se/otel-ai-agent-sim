@@ -243,10 +243,11 @@ spec:
             #   value: legacy
             # Per-session stable mapping to one of 225 fixed @coralogix.com users (see ``random_coralogix_identity``).
             # Relative selection weight per agent (higher = more traces). Others default to 1 in code.
+            # Gemini CLI: weight 0 keeps emit code in-tree but stops new Gemini traffic.
             - name: SIM_WEIGHT_CLAUDE_CODE
               value: "3"
             - name: SIM_WEIGHT_GEMINI_CLI
-              value: "5"
+              value: "0"
             - name: SIM_WEIGHT_CODEX
               value: "5"
             # Acceptance rate for code_edit_tool.decision metrics (0.0–1.0):

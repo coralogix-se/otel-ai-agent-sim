@@ -216,17 +216,19 @@ def _agent_selection_weight(agent_product: str) -> int:
     """
     Relative weights for ``random.choices`` (higher = selected more often per iteration).
     Override with env ``SIM_WEIGHT_<PRODUCT>`` e.g. ``SIM_WEIGHT_GEMINI_CLI``, ``SIM_WEIGHT_CODEX``.
+    Use ``0`` to disable a product without removing its emit path.
     """
     defaults = {
         # Slightly favor Claude so token/cost panels see samples without long waits (override with SIM_WEIGHT_*).
         "claude_code": 5,
-        "gemini_cli": 5,
+        # Gemini CLI is retired from the live mix; keep emit code, weight 0 unless overridden.
+        "gemini_cli": 0,
         "codex": 5,
         "cursor": 5,
         "copilot_cli": 5,
     }
     key = agent_product.upper().replace("-", "_")
-    return max(1, _env_int(f"SIM_WEIGHT_{key}", defaults.get(agent_product, 1)))
+    return max(0, _env_int(f"SIM_WEIGHT_{key}", defaults.get(agent_product, 1)))
 
 
 # Three release lines per simulated product (instrumentation scope + app.version / dashboards).

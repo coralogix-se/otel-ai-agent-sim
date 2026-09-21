@@ -836,17 +836,19 @@ def _agent_selection_weight(agent_product: str) -> int:
     """
     Relative weights for ``random.choices`` (higher = selected more often per iteration).
     Override with env ``SIM_WEIGHT_<PRODUCT>`` e.g. ``SIM_WEIGHT_GEMINI_CLI``, ``SIM_WEIGHT_CODEX``.
+    Use ``0`` to disable a product without removing its emit path.
     """
     defaults = {
         # Slightly favor Claude so token/cost panels see samples without long waits (override with SIM_WEIGHT_*).
         "claude_code": 5,
-        "gemini_cli": 5,
+        # Gemini CLI is retired from the live mix; keep emit code, weight 0 unless overridden.
+        "gemini_cli": 0,
         "codex": 5,
         "cursor": 5,
         "copilot_cli": 5,
     }
     key = agent_product.upper().replace("-", "_")
-    return max(1, _env_int(f"SIM_WEIGHT_{key}", defaults.get(agent_product, 1)))
+    return max(0, _env_int(f"SIM_WEIGHT_{key}", defaults.get(agent_product, 1)))
 
 
 # Three release lines per simulated product (instrumentation scope + app.version / dashboards).
@@ -4045,7 +4047,16 @@ def main() -> None:
     else:
         agent_profiles = agent_profiles_all
     by_product = {p["agent.product"]: p for p in agent_profiles_all}
-    _weights = tuple(_agent_selection_weight(p["agent.product"]) for p in agent_profiles)
+    # Drop weight-0 products from the mix (code kept; set SIM_WEIGHT_*=0 to disable).
+    _weighted = [
+        (p, _agent_selection_weight(p["agent.product"])) for p in agent_profiles
+    ]
+    agent_profiles = tuple(p for p, w in _weighted if w > 0)
+    _weights = tuple(w for _, w in _weighted if w > 0)
+    if not agent_profiles:
+        raise RuntimeError(
+            "No agent products have SIM_WEIGHT_* > 0; cannot emit traces."
+        )
 
     def run_sophisticated_trace() -> None:
         session_id = str(uuid.uuid4())
@@ -4064,7 +4075,7 @@ def main() -> None:
                 )
                 w_adj = list(_weights)
                 for i, p in enumerate(agent_profiles):
-                    if p["agent.product"] in _calendar:
+                    if p["agent.product"] in _calendar and w_adj[i] > 0:
                         w_adj[i] = max(1, round(float(w_adj[i]) * co))
                 weights_run = tuple(w_adj)
             profile = random.choices(agent_profiles, weights=weights_run, k=1)[0]

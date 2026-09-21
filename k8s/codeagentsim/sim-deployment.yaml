@@ -26,7 +26,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:model-prices-202609191622
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:gemini-disabled-202609210828
           imagePullPolicy: Always
           env:
             # OTLP -> otel-collector-codeagentsim; collector exports to Coralogix US2 + EU1 (no API key in this pod).
@@ -376,10 +376,11 @@ spec:
             - name: SIM_ROSTER_MAX_AGENTS_PER_USER
               value: "2"
             # Relative selection weight per agent (higher = more traces). Others default to 1 in code.
+            # Gemini CLI: weight 0 keeps emit code in-tree but stops new Gemini traffic.
             - name: SIM_WEIGHT_CLAUDE_CODE
               value: "5"
             - name: SIM_WEIGHT_GEMINI_CLI
-              value: "5"
+              value: "0"
             - name: SIM_WEIGHT_CODEX
               value: "5"
             - name: SIM_WEIGHT_CURSOR
