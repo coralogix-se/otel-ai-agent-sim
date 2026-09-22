@@ -203,7 +203,12 @@ def _copilot_turn_token_counts() -> tuple[int, int]:
     p_hi = max(p_lo + 1, _env_int("SIM_COPILOT_PROMPT_TOKENS_MAX", 4_000))
     o_lo = max(32, _env_int("SIM_COPILOT_OUTPUT_TOKENS_MIN", 80))
     o_hi = max(o_lo + 1, _env_int("SIM_COPILOT_OUTPUT_TOKENS_MAX", 1_500))
-    return random.randint(p_lo, p_hi), random.randint(o_lo, o_hi)
+    # With a low SIM_COPILOT_EMIT_PROB, bump per-turn tokens so org tokens/cost fall less
+    # steeply than session count (e.g. emit 0.001 + mult 10 ≈ sessions/1000, tokens/100).
+    mult = max(0.01, _env_float("SIM_COPILOT_TOKEN_MULT", 1.0))
+    prompt = max(1, int(round(random.randint(p_lo, p_hi) * mult)))
+    output = max(1, int(round(random.randint(o_lo, o_hi) * mult)))
+    return prompt, output
 
 
 def _copilot_nano_aiu(cost_usd: float) -> int:

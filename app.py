@@ -2022,9 +2022,15 @@ def _claude_session_id_for_roster_user(user: dict) -> str:
 _cli_user_session_ids: dict[str, tuple[str, float]] = {}
 
 
-def _cli_rotating_session_id(product: str, user: dict) -> str:
-    """Per-user session id that rotates on the Claude window so counts aren't 1 or unbounded."""
-    rotate = claude_user_session_rotate_duration_from_env(user)
+def _cli_rotating_session_id(
+    product: str, user: dict, *, rotate_sec: float | None = None
+) -> str:
+    """Per-user session id that rotates so counts aren't 1 or unbounded."""
+    rotate = (
+        float(rotate_sec)
+        if rotate_sec is not None
+        else float(claude_user_session_rotate_duration_from_env(user))
+    )
     key = f"{product}:{_claude_roster_user_key(user)}"
     now = time.monotonic()
     cached = _cli_user_session_ids.get(key)
@@ -2035,6 +2041,18 @@ def _cli_rotating_session_id(product: str, user: dict) -> str:
     sid = str(uuid.uuid4())
     _cli_user_session_ids[key] = (sid, claude_session_id_rotate_deadline(now, float(rotate)))
     return sid
+
+
+def _copilot_session_rotate_sec(user: dict) -> float:
+    """Copilot keeps conversations longer than Claude so session totals stay realistic."""
+    pinned = os.environ.get("SIM_COPILOT_SESSION_ROTATE_SEC", "").strip()
+    if pinned:
+        return max(0.0, float(pinned))
+    lo = max(0, _env_int("SIM_COPILOT_SESSION_ROTATE_SEC_MIN", 14_400))
+    hi = max(lo, _env_int("SIM_COPILOT_SESSION_ROTATE_SEC_MAX", 28_800))
+    if hi <= 0:
+        return float(claude_user_session_rotate_duration_from_env(user))
+    return float(random.randint(lo, hi))
 
 
 def _claude_emit_all_session_slots() -> bool:
@@ -4179,10 +4197,17 @@ def main() -> None:
             return
 
         if profile["agent.product"] == "copilot_cli":
+            # Throttle Copilot volume: sessions ~1/1000 of prior rate; tokens/cost use TOKEN_MULT
+            # so they land ~1/100 (see SIM_COPILOT_EMIT_PROB / SIM_COPILOT_TOKEN_MULT).
+            emit_prob = min(1.0, max(0.0, _env_float("SIM_COPILOT_EMIT_PROB", 1.0)))
+            if emit_prob < 1.0 and random.random() > emit_prob:
+                return
             pru = roster_core_user_for_agent(str(uuid.uuid4()), "copilot_cli")
             if not claude_user_should_emit_this_cycle(pru):
                 return
-            gid = _cli_rotating_session_id("copilot_cli", pru)
+            gid = _cli_rotating_session_id(
+                "copilot_cli", pru, rotate_sec=_copilot_session_rotate_sec(pru)
+            )
             emit_copilot_cli_session(gid, profile, roster_user=pru)
             return
 
