@@ -25,6 +25,7 @@ from sim.common.constants import claude_prompt_for_session
 from sim.common.repos import (
     sim_heavy_session_token_multiplier,
     sim_rogue_user_token_multiplier,
+    sim_top_spender_base_token_multiplier,
 )
 from sim.common.env import claude_long_session_slots_enabled
 from sim.claude.user_variance import (
@@ -35,6 +36,10 @@ from sim.claude.user_variance import (
     claude_user_session_rotate_duration_from_env,
     claude_user_should_emit_this_cycle,
     claude_user_token_multiplier,
+)
+from sim.claude.spend_pacing import (
+    note_claude_user_spend_usd,
+    sim_top_spender_pace_multiplier,
 )
 from sim.codex.agent import _codex_model_for_turn
 from sim.common.otel import _gen_ai_dashboard_llm_span_attributes
@@ -4153,18 +4158,39 @@ def main() -> None:
                     input_tokens, output_tokens = _sim_claude_usage_token_counts()
                     rogue_mult = sim_rogue_user_token_multiplier(_ru)
                     heavy_mult = sim_heavy_session_token_multiplier(_ru)
+                    top_base = sim_top_spender_base_token_multiplier(_ru)
+                    pace_mult = sim_top_spender_pace_multiplier(_ru)
                     turn_jitter = random.uniform(0.82, 1.18)
                     if mult != 1.0:
                         input_tokens = max(1, int(input_tokens * mult))
                         output_tokens = max(1, int(output_tokens * mult))
                     input_tokens = max(1, int(input_tokens * user_tok_mult * turn_jitter))
                     output_tokens = max(1, int(output_tokens * user_tok_mult * turn_jitter))
+                    if top_base != 1.0:
+                        input_tokens = max(1, int(input_tokens * top_base))
+                        output_tokens = max(1, int(output_tokens * top_base))
                     if rogue_mult != 1.0:
                         input_tokens = max(1, int(input_tokens * rogue_mult))
                         output_tokens = max(1, int(output_tokens * rogue_mult))
                     if heavy_mult != 1.0:
                         input_tokens = max(1, int(input_tokens * heavy_mult))
                         output_tokens = max(1, int(output_tokens * heavy_mult))
+                    if pace_mult != 1.0:
+                        input_tokens = max(1, int(input_tokens * pace_mult))
+                        output_tokens = max(1, int(output_tokens * pace_mult))
+                    # Track estimated spend for top-spender pacing (before dashboard emit).
+                    if _ru is not None:
+                        model_for_cost = str(
+                            profile.get("gen_ai.request.model")
+                            or os.environ.get("SIM_CLAUDE_MODEL", "")
+                            or CLAUDE_CODE_DEFAULT_MODEL
+                        )
+                        note_claude_user_spend_usd(
+                            _ru,
+                            estimate_llm_cost_usd(
+                                model_for_cost, input_tokens, output_tokens
+                            ),
+                        )
                     if _env_bool("SIM_CLAUDE_OTLP_TRACES_ENABLED", False) and user_idx == 0 and b == 0:
                         t0 = time.perf_counter()
                         emit_claude_code_user_prompt_span(

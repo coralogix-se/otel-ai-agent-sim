@@ -29,13 +29,20 @@ _UNMANAGED_REPOS: tuple[str, ...] = (
 )
 
 # Roster indices pinned as “rogue” users: heavy unmanaged-repo use + elevated spend (stable across runs).
-_DEFAULT_ROGUE_USER_INDICES: tuple[int, ...] = (17, 42, 88)
+# Default: products-roster index 17 (sam.martinez) — the #1 top spender / unmanaged-repo demo.
+_DEFAULT_ROGUE_USER_INDICES: tuple[int, ...] = (17,)
+
+# Ordered top enterprise spenders on the Claude Products roster (index 0 = highest spender).
+# Defaults stay inside ``SIM_PRODUCTS_ROSTER_SIZE`` (24): sam.martinez, avery.okafor, taylor.silva.
+_DEFAULT_TOP_SPENDER_INDICES: tuple[int, ...] = (17, 14, 3)
 
 # Users whose sessions always span managed + unmanaged repos (Claude ``multiOrgUser`` insight).
-_DEFAULT_MULTI_ORG_USER_INDICES: tuple[int, ...] = (17, 42)
+# Do not include the #1 unmanaged rogue — that would force 50/50 managed+unmanaged.
+_DEFAULT_MULTI_ORG_USER_INDICES: tuple[int, ...] = (14, 3)
 
 # Users with extra token volume so at least one session crosses heavy-session thresholds.
 _DEFAULT_HEAVY_SESSION_USER_INDICES: tuple[int, ...] = (17,)
+
 
 # One roster user per agent doing company-like work on a personal GitHub repo (policy violation).
 # Indices must have ``claude_code`` / ``copilot_cli`` in ``SIM_ROSTER_AGENT_AFFINITY`` (default on).
@@ -112,8 +119,9 @@ def sim_rogue_user_token_multiplier(roster_user: dict | None) -> float:
     """Token/cost scale for rogue users so they rank among top spenders on cost panels."""
     if not is_sim_rogue_user(roster_user):
         return 1.0
-    lo = _env_float("SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MIN", 1.5)
-    hi = max(lo, _env_float("SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MAX", 2.5))
+    # Mild base; ``sim_top_spender_pace_multiplier`` holds daily spend near the USD target.
+    lo = _env_float("SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MIN", 1.2)
+    hi = max(lo, _env_float("SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MAX", 1.8))
     email = str(roster_user.get("user.email", "")) if roster_user else ""
     rng = random.Random(hashlib.sha256(f"cc:rogue:mult:{email}".encode()).digest())
     return rng.uniform(lo, hi)
@@ -122,21 +130,61 @@ def sim_rogue_user_token_multiplier(roster_user: dict | None) -> float:
 claude_rogue_user_token_multiplier = sim_rogue_user_token_multiplier
 
 
-def sim_multi_org_user_roster_indices() -> frozenset[int]:
-    """Roster users that emit two repo owners on the same ``session_id`` (managed + unmanaged)."""
-    raw = os.environ.get("SIM_CLAUDE_MULTI_ORG_USER_INDICES", "").strip()
+def _parse_index_csv(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
+    raw = os.environ.get(name, "").strip()
     if not raw:
-        return frozenset(_DEFAULT_MULTI_ORG_USER_INDICES)
-    out: set[int] = set()
+        return default
+    out: list[int] = []
     for part in raw.split(","):
         part = part.strip()
         if part.isdigit():
-            out.add(int(part))
-    return frozenset(out) if out else frozenset(_DEFAULT_MULTI_ORG_USER_INDICES)
+            out.append(int(part))
+    return tuple(out) if out else default
+
+
+def sim_top_spender_roster_indices() -> tuple[int, ...]:
+    """Ordered products-roster indices for enterprise top spenders (first = highest)."""
+    return _parse_index_csv("SIM_CLAUDE_TOP_SPENDER_INDICES", _DEFAULT_TOP_SPENDER_INDICES)
+
+
+def sim_top_spender_rank(roster_user: dict | None) -> int | None:
+    """1-based rank among pinned top spenders, or None."""
+    idx = _roster_index_for_user(roster_user)
+    if idx is None:
+        return None
+    for rank, pinned in enumerate(sim_top_spender_roster_indices(), start=1):
+        if idx == pinned:
+            return rank
+    return None
+
+
+def is_sim_top_spender(roster_user: dict | None) -> bool:
+    return sim_top_spender_rank(roster_user) is not None
+
+
+def sim_top_spender_base_token_multiplier(roster_user: dict | None) -> float:
+    """Mild elevating scale for #2/#3 so pacing can hold them near the daily USD target."""
+    rank = sim_top_spender_rank(roster_user)
+    if rank is None:
+        return 1.0
+    if rank == 1:
+        return max(0.5, _env_float("SIM_CLAUDE_TOP_SPENDER_1_TOKEN_MULT", 1.0))
+    if rank == 2:
+        return max(0.5, _env_float("SIM_CLAUDE_TOP_SPENDER_2_TOKEN_MULT", 1.6))
+    return max(0.5, _env_float("SIM_CLAUDE_TOP_SPENDER_3_TOKEN_MULT", 1.5))
+
+
+def sim_multi_org_user_roster_indices() -> frozenset[int]:
+    """Roster users that emit two repo owners on the same ``session_id`` (managed + unmanaged)."""
+    return frozenset(_parse_index_csv("SIM_CLAUDE_MULTI_ORG_USER_INDICES", _DEFAULT_MULTI_ORG_USER_INDICES))
+
 
 
 def is_sim_multi_org_user(roster_user: dict | None) -> bool:
     if roster_user is None:
+        return False
+    # Rank-1 unmanaged rogue must not be forced into managed+unmanaged pairs.
+    if sim_top_spender_rank(roster_user) == 1:
         return False
     idx = _roster_index_for_user(roster_user)
     return idx is not None and idx in sim_multi_org_user_roster_indices()
@@ -250,9 +298,10 @@ def sim_personal_violation_repository(roster_user: dict) -> str:
 def _repo_class_weights(rogue: bool) -> tuple[tuple[str, float], ...]:
     """Managed vs unmanaged only — every session gets a linkable ``org/repo`` name for repo gauges."""
     if rogue:
+        # Highest spender / unmanaged-repo demo: almost all spend on external repos.
         return (
-            ("managed", _env_float("SIM_CLAUDE_ROGUE_MANAGED_FRAC", 0.08)),
-            ("unmanaged", _env_float("SIM_CLAUDE_ROGUE_UNMANAGED_FRAC", 0.92)),
+            ("managed", _env_float("SIM_CLAUDE_ROGUE_MANAGED_FRAC", 0.05)),
+            ("unmanaged", _env_float("SIM_CLAUDE_ROGUE_UNMANAGED_FRAC", 0.95)),
         )
     return (
         ("managed", _env_float("SIM_CLAUDE_MANAGED_REPO_FRAC", 0.90)),

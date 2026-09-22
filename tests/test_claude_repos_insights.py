@@ -8,9 +8,12 @@ try:
     from sim.common.identity import _CORALOGIX_TEAM_USERS
     from sim.common.repos import (
         is_sim_multi_org_user,
+        is_sim_rogue_user,
+        is_sim_top_spender,
         sim_heavy_session_token_multiplier,
         sim_org_repos,
         sim_session_repository_names,
+        sim_top_spender_rank,
     )
 except ImportError as exc:
     pytest.skip(f"sim runtime deps unavailable: {exc}", allow_module_level=True)
@@ -23,6 +26,10 @@ def _clear_insight_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "SIM_CLAUDE_HEAVY_SESSION_USER_INDICES",
         "SIM_CLAUDE_HEAVY_SESSION_TOKEN_MULT",
         "SIM_CLAUDE_ORG_REPOS",
+        "SIM_CLAUDE_TOP_SPENDER_INDICES",
+        "SIM_CLAUDE_ROGUE_USER_INDICES",
+        "SIM_CLAUDE_ROGUE_UNMANAGED_FRAC",
+        "SIM_CLAUDE_ROGUE_MANAGED_FRAC",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -32,7 +39,7 @@ def _user_at(index: int) -> dict:
 
 
 def test_multi_org_user_emits_managed_and_unmanaged_repos() -> None:
-    user = _user_at(17)
+    user = _user_at(14)
     assert is_sim_multi_org_user(user)
     repos = sim_session_repository_names(
         "session-multi-org-test",
@@ -43,6 +50,33 @@ def test_multi_org_user_emits_managed_and_unmanaged_repos() -> None:
     managed = sim_org_repos()
     assert any(r in managed for r in repos)
     assert any(r not in managed for r in repos)
+
+
+def test_top_spender_rank_order() -> None:
+    assert sim_top_spender_rank(_user_at(17)) == 1
+    assert sim_top_spender_rank(_user_at(14)) == 2
+    assert sim_top_spender_rank(_user_at(3)) == 3
+    assert is_sim_top_spender(_user_at(17))
+    assert not is_sim_top_spender(_user_at(0))
+
+
+def test_highest_spender_is_unmanaged_rogue_not_multi_org() -> None:
+    user = _user_at(17)
+    assert is_sim_rogue_user(user)
+    assert not is_sim_multi_org_user(user)
+    managed = sim_org_repos()
+    unmanaged_hits = 0
+    for i in range(40):
+        repos = sim_session_repository_names(
+            f"session-rogue-{i}",
+            user,
+            agent_product="claude_code",
+            n_repos=1,
+        )
+        assert len(repos) == 1
+        if repos[0] not in managed:
+            unmanaged_hits += 1
+    assert unmanaged_hits >= 30
 
 
 def test_heavy_session_multiplier_applies_to_pinned_user() -> None:
