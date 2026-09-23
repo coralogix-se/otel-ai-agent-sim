@@ -9,6 +9,7 @@ from sim.common.repos import (  # noqa: F401
     is_claude_rogue_user,
     is_claude_unmanaged_power_user,
     is_sim_personal_repo_violator,
+    is_sim_top_spender,
     sim_org_repos,
     sim_personal_repo_violator_emails,
     sim_personal_violation_repository,
@@ -16,6 +17,8 @@ from sim.common.repos import (  # noqa: F401
     sim_rogue_user_roster_indices,
     sim_rogue_user_token_multiplier,
     sim_session_repository_names,
+    sim_top_spender_rank,
+    sim_top_spender_roster_indices,
 )
 from sim.copilot.repos import (  # noqa: F401
     copilot_git_otel_attrs_from_repo_short,
