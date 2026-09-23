@@ -26,7 +26,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:copilot-billing-fix-202609231300
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:claude-prompt-cap-202609231305
           imagePullPolicy: Always
           env:
             # OTLP -> otel-collector-codeagentsim; collector exports to Coralogix US2 + EU1 (no API key in this pod).
@@ -236,6 +236,11 @@ spec:
               value: "386"
             - name: SIM_CLAUDE_SESSION_ID_ROTATE_SEC_MAX
               value: "900"
+            # Cap user_prompt emits per session.id (else always-emit + long rotate → 98% "too many prompts" insight).
+            - name: SIM_CLAUDE_SESSION_PROMPTS_MIN
+              value: "2"
+            - name: SIM_CLAUDE_SESSION_PROMPTS_MAX
+              value: "6"
             - name: SIM_CLAUDE_PREFILL_SESSION_SLOTS
               value: "true"
             # Fan-out when Claude wins selection: all Products/API roster users emit OTEL (repo + cost).

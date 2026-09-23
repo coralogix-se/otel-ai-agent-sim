@@ -1903,8 +1903,10 @@ _cc_slot_rr: int = 0
 # ``SIM_CLAUDE_PIN_METRIC_LABELS`` (default true): stable ``app.version``/``service.version``/``model`` per pin key
 # so Prometheus scrapes hit the **same** time series across iterations (``increase()`` needs ≥2 samples).
 _cc_metric_label_pins: dict[str, tuple[str, str]] = {}
-# Per roster user: ``user_key -> (session_id, monotonic deadline)`` for rotating ``session.id``.
-_cc_user_session_ids: dict[str, tuple[str, float]] = {}
+# Per roster user: ``user_key -> (session_id, monotonic deadline, prompts_emitted, prompt_limit)``.
+# Prompt limit caps ``user_prompt`` logs per session so Claude insights don't flag ~all sessions as
+# needing an "unusually high number of user prompts".
+_cc_user_session_ids: dict[str, tuple[str, float, int, int]] = {}
 
 
 def _apply_claude_dotted_email_domain(user_attrs: dict) -> None:
@@ -2002,11 +2004,19 @@ def _claude_session_id_rotate_sec() -> float:
     return max(0.0, _env_float("SIM_CLAUDE_SESSION_ID_ROTATE_SEC", 3600.0))
 
 
+def _claude_session_prompt_limit() -> int:
+    """Max ``user_prompt`` emits for one ``session.id`` before forced rotation."""
+    lo = max(1, _env_int("SIM_CLAUDE_SESSION_PROMPTS_MIN", 2))
+    hi = max(lo, _env_int("SIM_CLAUDE_SESSION_PROMPTS_MAX", 6))
+    return random.randint(lo, hi)
+
+
 def _claude_session_id_for_roster_user(user: dict) -> str:
     """
     ``session.id`` for a roster user: stable across emits/logs/metrics in one session window, then rotates.
 
-    Same ``user.email`` / account labels throughout; only ``session.id`` changes when the rotate window expires.
+    Same ``user.email`` / account labels throughout; only ``session.id`` changes when the rotate window
+    expires **or** the session hits ``SIM_CLAUDE_SESSION_PROMPTS_*`` (whichever comes first).
     """
     rotate = claude_user_session_rotate_duration_from_env(user)
     if rotate <= 0:
@@ -2016,12 +2026,29 @@ def _claude_session_id_for_roster_user(user: dict) -> str:
     now = time.monotonic()
     cached = _cc_user_session_ids.get(key)
     if cached is not None:
-        sid, deadline = cached
-        if now < deadline:
+        sid, deadline, prompts, limit = cached
+        if now < deadline and prompts < limit:
             return sid
     sid = str(uuid.uuid4())
-    _cc_user_session_ids[key] = (sid, claude_session_id_rotate_deadline(now, float(rotate)))
+    _cc_user_session_ids[key] = (
+        sid,
+        claude_session_id_rotate_deadline(now, float(rotate)),
+        0,
+        _claude_session_prompt_limit(),
+    )
     return sid
+
+
+def _claude_note_session_user_prompt(user: dict | None) -> None:
+    """Count a ``user_prompt`` toward the current session's turn budget."""
+    if user is None:
+        return
+    key = _claude_roster_user_key(user)
+    cached = _cc_user_session_ids.get(key)
+    if cached is None:
+        return
+    sid, deadline, prompts, limit = cached
+    _cc_user_session_ids[key] = (sid, deadline, prompts + 1, limit)
 
 
 _cli_user_session_ids: dict[str, tuple[str, float]] = {}
@@ -4216,6 +4243,7 @@ def main() -> None:
                         prompt=turn_prompt,
                         productivity_mult=user_prod_mult,
                     )
+                    _claude_note_session_user_prompt(_ru)
             return
 
         if profile["agent.product"] == "codex":
