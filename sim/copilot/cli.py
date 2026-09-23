@@ -705,10 +705,7 @@ def emit_copilot_cli_session(
             cache_read_tokens=total_cache_read_in,
         )
 
-        from sim.copilot.daily_cost import (
-            accrue_copilot_session_cost,
-            take_copilot_daily_cost_emit,
-        )
+        from sim.copilot.daily_cost import accrue_copilot_session_cost
 
         accrue_copilot_session_cost(
             user_email,
@@ -717,8 +714,7 @@ def emit_copilot_cli_session(
             output_tokens=total_out,
             cache_read_tokens=total_cache_read_in,
         )
-        daily_emit = take_copilot_daily_cost_emit(user_email)
-        # Span cost is this session's API dollars, not the scaled day rollup.
+        # Span cost is this session's API dollars (org billing uses COST_SCALE separately).
         emit_cost_usd: float | None = session_cost_usd if session_cost_usd > 0 else None
 
         if emit_cost_usd is not None and emit_cost_usd > 0:
@@ -768,6 +764,9 @@ def emit_copilot_cli_session(
         if st.copilot_collector is not None:
             from sim.copilot.collector_metrics import record_copilot_collector_session
 
+            # Accrue every session into the once/day billing gauge bucket. Gating billing on
+            # ``daily_emit`` left last-24h net cost at $0 after mid-day restarts (no sample).
+            org_cost = session_cost_usd * _copilot_org_cost_scale()
             record_copilot_collector_session(
                 st.copilot_collector,
                 user_attrs=user_attrs,
@@ -776,9 +775,9 @@ def emit_copilot_cli_session(
                 n_tools=n_tools_total,
                 total_in=total_in,
                 total_out=total_out,
-                cost_usd=daily_emit.cost_usd if daily_emit is not None else 0.0,
+                cost_usd=org_cost,
                 productivity_ok=session_productivity_ok,
-                record_billing=daily_emit is not None,
+                record_billing=org_cost > 0,
                 count_session=new_session,
             )
 

@@ -254,15 +254,19 @@ class GitHubCopilotCollector(Collector):
             return False
         # Prefer late-day sample (matches GitHub daily gauge). Also allow an earlier
         # sample after SIM_COPILOT_BILLING_SAMPLE_AFTER_SEC from first accrual.
+        # ``SIM_COPILOT_BILLING_SAMPLE_HOUR_UTC<=0`` disables the hour gate (age only) —
+        # do not treat 0 as "always ready" or the first scrape after accrual exports ~$0.
         min_hour = _env_int("SIM_COPILOT_BILLING_SAMPLE_HOUR_UTC", 20)
         after_sec = max(0.0, _env_float("SIM_COPILOT_BILLING_SAMPLE_AFTER_SEC", 14400.0))
-        hour_ok = min_hour <= 0 or datetime.now(timezone.utc).hour >= min_hour
         age = (
             time.monotonic() - self._billing_first_accrual_mono
             if self._billing_first_accrual_mono > 0
             else 0.0
         )
-        age_ok = after_sec > 0 and age >= after_sec
+        age_ok = after_sec <= 0 or age >= after_sec
+        if min_hour <= 0:
+            return age_ok
+        hour_ok = datetime.now(timezone.utc).hour >= min_hour
         return hour_ok or age_ok
 
     def _inc_counter(self, name: str, labels: dict[str, str], amount: float) -> None:

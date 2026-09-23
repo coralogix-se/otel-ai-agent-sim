@@ -26,7 +26,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:copilot-users-restored-202609230905
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:copilot-billing-fix-202609231300
           imagePullPolicy: Always
           env:
             # OTLP -> otel-collector-codeagentsim; collector exports to Coralogix US2 + EU1 (no API key in this pod).
@@ -129,12 +129,14 @@ spec:
             # Billing PromQL uses sum_over_time — emit github_copilot_billing_* once/UTC day only.
             - name: SIM_COPILOT_BILLING_DAILY_SAMPLE
               value: "true"
+            # Export once/day after ~30m of accrual (hour gate 0 = don't wait until 20:00 UTC).
+            # Avoids $0 last-24h windows when pods restart before the old late-day sample.
             - name: SIM_COPILOT_BILLING_SAMPLE_AFTER_SEC
-              value: "14400"
+              value: "1800"
             - name: SIM_COPILOT_BILLING_SAMPLE_HOUR_UTC
-              value: "20"
-            # Keep broad user coverage (do not throttle emits). Cut per-user tokens/cost ~100×
-            # vs the old COST_SCALE=290 + large token ranges — not fewer active users.
+              value: "0"
+            # Keep broad user coverage (do not throttle emits). Cut per-user tokens ~100×
+            # via TOKEN_MULT only — leave COST_SCALE at 290 so org billing isn't /10,000.
             - name: SIM_COPILOT_EMIT_PROB
               value: "1"
             - name: SIM_COPILOT_TOKEN_MULT
@@ -144,9 +146,14 @@ spec:
               value: "14400"
             - name: SIM_COPILOT_SESSION_ROTATE_SEC_MAX
               value: "28800"
-            # Org billing multiplier (session span cost stays at API rates). Was 290; /100 ≈ 2.9.
+            # Org billing multiplier (session span cost stays at API rates).
             - name: SIM_COPILOT_COST_SCALE
-              value: "2.9"
+              value: "290"
+            # Accrue→billing sooner so a restart still produces a same-day net-cost sample.
+            - name: SIM_COPILOT_COST_EMIT_AFTER_SESSIONS
+              value: "2"
+            - name: SIM_COPILOT_COST_EMIT_AFTER_SEC
+              value: "900"
             - name: SIM_COPILOT_PROMPT_TOKENS_MIN
               value: "800"
             - name: SIM_COPILOT_PROMPT_TOKENS_MAX
