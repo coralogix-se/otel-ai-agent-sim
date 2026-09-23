@@ -4223,8 +4223,8 @@ def main() -> None:
             return
 
         if profile["agent.product"] == "copilot_cli":
-            # Throttle Copilot volume: sessions ~1/1000 of prior rate; tokens/cost use TOKEN_MULT
-            # so they land ~1/100 (see SIM_COPILOT_EMIT_PROB / SIM_COPILOT_TOKEN_MULT).
+            # Optional sample rate (default 1.0). Prefer cutting TOKEN_MULT / COST_SCALE for spend,
+            # not EMIT_PROB — low emit rates collapse active-user counts.
             emit_prob = min(1.0, max(0.0, _env_float("SIM_COPILOT_EMIT_PROB", 1.0)))
             if emit_prob < 1.0 and random.random() > emit_prob:
                 return

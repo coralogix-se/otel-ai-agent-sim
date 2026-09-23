@@ -26,7 +26,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:claude-top-spenders-202609220940
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:copilot-users-restored-202609230905
           imagePullPolicy: Always
           env:
             # OTLP -> otel-collector-codeagentsim; collector exports to Coralogix US2 + EU1 (no API key in this pod).
@@ -133,20 +133,20 @@ spec:
               value: "14400"
             - name: SIM_COPILOT_BILLING_SAMPLE_HOUR_UTC
               value: "20"
-            # Volume dial: emit ~0.1% of selected Copilot cycles (sessions ≈ /1000 vs prior rate).
-            # TOKEN_MULT 10 → tokens/cost ≈ /100. COST_SCALE still applies to org billing only.
+            # Keep broad user coverage (do not throttle emits). Cut per-user tokens/cost ~100×
+            # vs the old COST_SCALE=290 + large token ranges — not fewer active users.
             - name: SIM_COPILOT_EMIT_PROB
-              value: "0.001"
+              value: "1"
             - name: SIM_COPILOT_TOKEN_MULT
-              value: "10"
-            # Keep conversations 4–8h so rare emits don't mint a new session every few minutes.
+              value: "0.01"
+            # Longer conversations so session counters stay realistic without starving users.
             - name: SIM_COPILOT_SESSION_ROTATE_SEC_MIN
               value: "14400"
             - name: SIM_COPILOT_SESSION_ROTATE_SEC_MAX
               value: "28800"
-            # Org billing multiplier (session span cost stays at API rates).
+            # Org billing multiplier (session span cost stays at API rates). Was 290; /100 ≈ 2.9.
             - name: SIM_COPILOT_COST_SCALE
-              value: "290"
+              value: "2.9"
             - name: SIM_COPILOT_PROMPT_TOKENS_MIN
               value: "800"
             - name: SIM_COPILOT_PROMPT_TOKENS_MAX
