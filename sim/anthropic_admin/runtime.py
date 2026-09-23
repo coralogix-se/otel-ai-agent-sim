@@ -58,6 +58,7 @@ from sim.anthropic_admin.constants import (
 )
 from sim.common.env import _env_bool, _env_csv_model_pool, _env_float, _env_int
 from sim.common.model_pricing import estimate_llm_cost_usd, model_rates
+from sim.common.repos import sim_top_spender_roster_indices
 
 log = logging.getLogger(__name__)
 
@@ -229,7 +230,8 @@ _ACTIVITY_WEIGHTS: dict[str, float] = {
 }
 
 # Deliberate skews for Claude Products insights (see docs/insights.txt).
-_INSIGHT_COST_OUTLIER_INDEX = 0
+# Tool-rejection stays on roster index 1; cost concentration uses pinned top spenders
+# (``SIM_CLAUDE_TOP_SPENDER_INDICES``, default 17/14/3 — sam.martinez #1).
 _INSIGHT_TOOL_REJECTION_INDEX = 1
 
 
@@ -247,11 +249,52 @@ def _insight_model_weights() -> dict[str, float]:
     }
 
 
-def _insight_user_volume_mult(roster_index: int, *, now: datetime) -> float:
-    """user-cost-concentration + cost-spike shaping."""
+def _top_spender_daily_usd_target() -> float:
+    """Daily USD target for pinned enterprise top spenders on Claude Products."""
+    raw = os.environ.get("SIM_ANTHROPIC_TOP_SPENDER_DAILY_USD", "").strip()
+    if raw:
+        return max(0.0, _env_float("SIM_ANTHROPIC_TOP_SPENDER_DAILY_USD", 2000.0))
+    return max(0.0, _env_float("SIM_CLAUDE_TOP_SPENDER_DAILY_USD", 2000.0))
+
+
+def _top_spender_rank_for_index(roster_index: int) -> int | None:
+    for rank, pinned in enumerate(sim_top_spender_roster_indices(), start=1):
+        if roster_index == pinned:
+            return rank
+    return None
+
+
+def _elapsed_day_fraction(now: datetime) -> float:
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return max(0.02, min(1.0, (now - midnight).total_seconds() / 86_400.0))
+
+
+def _insight_user_volume_mult(
+    roster_index: int,
+    *,
+    now: datetime,
+    accrued_usd: float = 0.0,
+) -> float:
+    """Pace pinned top spenders toward ~$2K/day; mild afternoon spike for everyone else."""
+    rank = _top_spender_rank_for_index(roster_index)
+    if rank is not None:
+        target = _top_spender_daily_usd_target()
+        if target <= 0:
+            return 1.0
+        # Keep #1 (unmanaged rogue) slightly above #2/#3.
+        rank_target = target * (1.08 if rank == 1 else 1.0)
+        expected = rank_target * _elapsed_day_fraction(now)
+        if accrued_usd < 1.0:
+            # Front-load so demos see enterprise-scale spend within minutes of deploy.
+            return 450.0 if rank == 1 else 380.0
+        deficit = expected - accrued_usd
+        if deficit <= 0:
+            # Ease off once ahead of the day-fraction curve.
+            return 0.4
+        # Base emit ≈ $0.06 at volume 0.08; scale so each emit closes a chunk of the gap.
+        chunk_usd = min(max(deficit * 0.28, 50.0), 400.0)
+        return max(80.0, min(9_000.0, chunk_usd / 0.06))
     mult = 1.0
-    if roster_index == _INSIGHT_COST_OUTLIER_INDEX:
-        mult *= _env_float("SIM_ANTHROPIC_INSIGHT_COST_OUTLIER_MULT", 12.0)
     if _env_bool("SIM_ANTHROPIC_INSIGHT_COST_SPIKE", True) and now.hour >= 14:
         mult *= _env_float("SIM_ANTHROPIC_INSIGHT_COST_SPIKE_MULT", 1.35)
     return mult
@@ -1235,6 +1278,113 @@ class AnthropicAdminSim:
                 kw["resource"] = resource
         self.logger.emit(LogRecord(**kw))
 
+    def _user_accrued_cost_usd(self, email: str) -> float:
+        """Sum of actual user cost gauges for one email (all products/models today)."""
+        total = 0.0
+        for (em, _product, _model), usd in self._user_cost_usd.items():
+            if em == email:
+                total += float(usd)
+        return total
+
+    def _pick_emit_user(self, now: datetime) -> _SimUser:
+        """Bias random picks toward top spenders who are behind the day-fraction target."""
+        if not self.users:
+            raise RuntimeError("AnthropicAdminSim has no users")
+        weights: list[float] = []
+        frac = _elapsed_day_fraction(now)
+        target = _top_spender_daily_usd_target()
+        for user in self.users:
+            rank = _top_spender_rank_for_index(user.roster_index)
+            if rank is None or target <= 0:
+                weights.append(1.0)
+                continue
+            rank_target = target * (1.08 if rank == 1 else 1.0)
+            accrued = self._user_accrued_cost_usd(user.email)
+            if accrued < rank_target * frac * 0.95:
+                weights.append(48.0 if rank == 1 else 28.0)
+            else:
+                weights.append(1.2)
+        return random.choices(list(self.users), weights=weights, k=1)[0]
+
+    def _emit_one_usage(self, *, user: _SimUser, now: datetime, volume: float) -> None:
+        accrued = self._user_accrued_cost_usd(user.email)
+        vol_mult = _insight_user_volume_mult(
+            user.roster_index, now=now, accrued_usd=accrued
+        )
+        model = _pick_weighted(self.models, _insight_model_weights())
+        # Top spenders lean on claude_code so OTEL + Products panels agree on the heavy users.
+        if _top_spender_rank_for_index(user.roster_index) is not None and random.random() < 0.72:
+            product = "claude_code"
+        else:
+            product = _pick_weighted(ANALYTICS_PRODUCTS, ANALYTICS_PRODUCT_WEIGHTS)
+        context_window = "200k-1M" if random.random() < 0.12 else "0-200k"
+        service_tier = random.choices(SERVICE_TIERS, weights=(0.82, 0.12, 0.06), k=1)[0]
+        workspace = random.choice(self.workspaces)
+        amounts: dict[str, int] = {}
+        for token_type in TOKEN_TYPES:
+            amt = _usage_delta(token_type, model, volume * vol_mult)
+            amounts[token_type] = amt
+            self.usage.labels(
+                **self._metric_base(SOURCE),
+                model=model,
+                api_key_id=user.api_key_id,
+                context_window=context_window,
+                token_type=token_type,
+            ).set(amt)
+            if amt > 0:
+                self._accrue_line_cost(
+                    workspace_id=workspace,
+                    description=cost_description(
+                        model=model, kind=token_type, service_tier=service_tier
+                    ),
+                    usd=_usd_for_tokens(model, token_type, amt),
+                )
+
+        self._record_product_analytics(
+            user=user,
+            product=product,
+            model=model,
+            context_window=context_window,
+            amounts=amounts,
+        )
+
+        log_data = {
+            "api_key_id": user.api_key_id,
+            "context_window": context_window,
+            "model": model,
+            "organization": self.organization,
+        }
+        for token_type in TOKEN_TYPES:
+            log_data[TOKEN_TYPE_LOG_FIELD[token_type]] = amounts.get(token_type, 0)
+        self._emit_log(stream="anthropic.api_keys_usage", data=log_data)
+
+        act_type = _pick_weighted(ACTIVITY_TYPES, _ACTIVITY_WEIGHTS)
+        act_key = (act_type, user.user_id, user.email, user.ip, "user_actor", user.api_key_id)
+        self._activity_counts[act_key] = self._activity_counts.get(act_key, 0) + 1
+        self.activity.labels(
+            **self._metric_base("compliance"),
+            type=act_type,
+            user_id=user.user_id,
+            user_email=user.email,
+            user_ip=user.ip,
+            user_type="user_actor",
+            api_key_id=user.api_key_id,
+        ).set(self._activity_counts[act_key])
+        self._emit_log(
+            stream="anthropic.activity",
+            data={
+                "id": _stable_id("activity_", f"{now.timestamp()}:{user.user_id}:{act_type}", 24),
+                "type": act_type,
+                "created_at": now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+                "organization": self.organization,
+                "user_id": user.user_id,
+                "user_email": user.email,
+                "user_type": "user_actor",
+                "user_ip": user.ip,
+                "user_agent": "Claude/1.0 sim",
+            },
+        )
+
     def emit_cycle(self, now: datetime | None = None) -> None:
         now = now or datetime.now(timezone.utc)
         self._maybe_roll_cost_day(now)
@@ -1245,81 +1395,21 @@ class AnthropicAdminSim:
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
 
+        # Dedicated emit for each behind top spender so sam/avery/taylor hit ~$2K/day.
+        if _env_bool("SIM_ANTHROPIC_TOP_SPENDER_DEDICATED_EMIT", True):
+            frac = _elapsed_day_fraction(now)
+            target = _top_spender_daily_usd_target()
+            for user in self.users:
+                rank = _top_spender_rank_for_index(user.roster_index)
+                if rank is None or target <= 0:
+                    continue
+                rank_target = target * (1.08 if rank == 1 else 1.0)
+                if self._user_accrued_cost_usd(user.email) < rank_target * frac * 0.98:
+                    self._emit_one_usage(user=user, now=now, volume=volume)
+
         for _ in range(self.emits_per_cycle):
-            user = random.choice(self.users)
-            vol_mult = _insight_user_volume_mult(user.roster_index, now=now)
-            model = _pick_weighted(self.models, _insight_model_weights())
-            product = _pick_weighted(ANALYTICS_PRODUCTS, ANALYTICS_PRODUCT_WEIGHTS)
-            context_window = "200k-1M" if random.random() < 0.12 else "0-200k"
-            service_tier = random.choices(SERVICE_TIERS, weights=(0.82, 0.12, 0.06), k=1)[0]
-            workspace = random.choice(self.workspaces)
-            amounts: dict[str, int] = {}
-            usd_this = 0.0
-            tokens_this = 0
-            for token_type in TOKEN_TYPES:
-                amt = _usage_delta(token_type, model, volume * vol_mult)
-                amounts[token_type] = amt
-                self.usage.labels(
-                    **self._metric_base(SOURCE),
-                    model=model,
-                    api_key_id=user.api_key_id,
-                    context_window=context_window,
-                    token_type=token_type,
-                ).set(amt)
-                usd_this += _usd_for_tokens(model, token_type, amt)
-                if token_type != "server_tool_use.web_search_requests":
-                    tokens_this += amt
-                if amt > 0:
-                    self._accrue_line_cost(
-                        workspace_id=workspace,
-                        description=cost_description(model=model, kind=token_type, service_tier=service_tier),
-                        usd=_usd_for_tokens(model, token_type, amt),
-                    )
-
-            self._record_product_analytics(
-                user=user,
-                product=product,
-                model=model,
-                context_window=context_window,
-                amounts=amounts,
-            )
-
-            log_data = {
-                "api_key_id": user.api_key_id,
-                "context_window": context_window,
-                "model": model,
-                "organization": self.organization,
-            }
-            for token_type in TOKEN_TYPES:
-                log_data[TOKEN_TYPE_LOG_FIELD[token_type]] = amounts.get(token_type, 0)
-            self._emit_log(stream="anthropic.api_keys_usage", data=log_data)
-
-            act_type = _pick_weighted(ACTIVITY_TYPES, _ACTIVITY_WEIGHTS)
-            act_key = (act_type, user.user_id, user.email, user.ip, "user_actor", user.api_key_id)
-            self._activity_counts[act_key] = self._activity_counts.get(act_key, 0) + 1
-            self.activity.labels(
-                **self._metric_base("compliance"),
-                type=act_type,
-                user_id=user.user_id,
-                user_email=user.email,
-                user_ip=user.ip,
-                user_type="user_actor",
-                api_key_id=user.api_key_id,
-            ).set(self._activity_counts[act_key])
-            self._emit_log(
-                stream="anthropic.activity",
-                data={
-                    "id": _stable_id("activity_", f"{now.timestamp()}:{user.user_id}:{act_type}", 24),
-                    "type": act_type,
-                    "created_at": now.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
-                    "organization": self.organization,
-                    "user_id": user.user_id,
-                    "user_email": user.email,
-                    "user_type": "user_actor",
-                    "user_ip": user.ip,
-                    "user_agent": "Claude/1.0 sim",
-                },
-            )
+            user = self._pick_emit_user(now)
+            self._emit_one_usage(user=user, now=now, volume=volume)
 
         for model in tuple(self.models) + RATE_LIMIT_EXTRA_MODELS:
             for limit_type in ("requests_per_minute", "input_tokens_per_minute_cache_aware"):

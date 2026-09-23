@@ -27,7 +27,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:demo-cost-reconcile-202608281756
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:claude-products-top-spend-202609230920
           imagePullPolicy: Always
           command: ["python", "-m", "sim.anthropic_admin"]
           env:
@@ -68,6 +68,14 @@ spec:
               value: "2"
             - name: SIM_ANTHROPIC_ADMIN_COST_LOG_SEC
               value: "86400"
+            # Enterprise top spenders on Claude Products (same roster indices as Claude Code):
+            # 17=sam.martinez (#1 unmanaged rogue), 14=avery.okafor, 3=taylor.silva → ~$2K/day each.
+            - name: SIM_CLAUDE_TOP_SPENDER_INDICES
+              value: "17,14,3"
+            - name: SIM_ANTHROPIC_TOP_SPENDER_DAILY_USD
+              value: "2000"
+            - name: SIM_ANTHROPIC_TOP_SPENDER_DEDICATED_EMIT
+              value: "true"
           ports:
             - name: metrics
               containerPort: 9090

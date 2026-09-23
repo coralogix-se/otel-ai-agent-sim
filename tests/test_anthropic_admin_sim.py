@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+import pytest
 from prometheus_client import CollectorRegistry, generate_latest
 
 from sim.anthropic_admin.constants import TOKEN_TYPES, default_organization_id
@@ -276,3 +277,30 @@ def test_usage_logs_use_integration_stream() -> None:
     activity = next(row for row in bodies if row.get("stream") == "anthropic.user_activity")
     assert "user_email" in activity["data"]
     assert "distinct_session_count" in activity["data"]
+
+
+def test_top_spenders_pace_near_daily_usd_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pinned roster indices (sam/avery/taylor) should dominate Claude Products spend."""
+    monkeypatch.setenv("SIM_CLAUDE_TOP_SPENDER_INDICES", "17,14,3")
+    monkeypatch.setenv("SIM_ANTHROPIC_TOP_SPENDER_DAILY_USD", "2000")
+    monkeypatch.setenv("SIM_ANTHROPIC_TOP_SPENDER_DEDICATED_EMIT", "true")
+    monkeypatch.setenv("SIM_ANTHROPIC_ADMIN_USERS", "24")
+    registry = CollectorRegistry()
+    sim = AnthropicAdminSim(registry=registry, logger=None, emits_per_cycle=4)
+    # Mid-day: day fraction ≈ 0.5 → expect ~$1K; several cycles should land well above baseline.
+    now = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
+    for minute in range(12):
+        sim.emit_cycle(now=now.replace(minute=minute))
+    by_email: dict[str, float] = {}
+    for (email, _product, _model), usd in sim._user_cost_usd.items():
+        by_email[email] = by_email.get(email, 0.0) + float(usd)
+    sam = by_email.get("sam.martinez@coralogix.com", 0.0)
+    avery = by_email.get("avery.okafor@coralogix.com", 0.0)
+    taylor = by_email.get("taylor.silva@coralogix.com", 0.0)
+    jordan = by_email.get("jordan.garcia@coralogix.com", 0.0)
+    assert sam >= 800.0, sam
+    assert avery >= 700.0, avery
+    assert taylor >= 700.0, taylor
+    # #1 unmanaged rogue stays clearly ahead of the old index-0 outlier.
+    assert sam > jordan
+    assert sam >= avery * 0.9
