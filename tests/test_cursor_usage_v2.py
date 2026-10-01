@@ -79,6 +79,10 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
         "cursor_bugbot_prs_reviewed",
         "cursor_bugbot_pr_reviews_total",
         "cursor_bugbot_issues_total",
+        "cursor_org_pool_enabled",
+        "cursor_org_pool_limit_usd",
+        "cursor_org_pool_remaining_usd",
+        "cursor_org_pooled_usage_usd",
     ):
         assert required in names, required
 
@@ -86,6 +90,27 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
     assert f'cx_application_name="{DEFAULT_CX_APPLICATION}"' in body
     assert f'team_id="{DEFAULT_TEAM_ID}"' in body
     assert 'cx_subsystem_name="Admin APIs"' in body
+    assert any(
+        'organization="coralogix"' in line and ' 1.0' in line
+        for line in _metric_lines(payload, "cursor_org_pool_enabled")
+    )
+    pool_limit_lines = _metric_lines(payload, "cursor_org_pool_limit_usd")
+    assert pool_limit_lines
+    limit_val = float(pool_limit_lines[0].rsplit(" ", 1)[-1])
+    assert abs(limit_val - 129_000 * 52) < 1.0
+    usage_lines = _metric_lines(payload, "cursor_org_pooled_usage_usd")
+    assert any(
+        'organization="coralogix"' in line
+        and 'team_id="' in line
+        and 'team_name="Coralogix Engineering"' in line
+        for line in usage_lines
+    )
+    usage_val = float(usage_lines[0].rsplit(" ", 1)[-1])
+    # Seeded at day-of-year fraction (Aug 28 ≈ day 240).
+    assert usage_val > 0
+    assert usage_val < limit_val
+    rem_val = float(_metric_lines(payload, "cursor_org_pool_remaining_usd")[0].rsplit(" ", 1)[-1])
+    assert abs((limit_val - usage_val) - rem_val) < 0.02
     assert any(
         'email="' in line
         and 'conversation_id="' in line

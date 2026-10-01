@@ -50,8 +50,13 @@ from sim.cursor.usage_v2.constants import (
     cursor_usage_events_per_user_day_max,
     cursor_usage_idle_seats,
     cursor_usage_stale_client_seats,
+    cursor_usage_cx_application,
+    cursor_usage_cx_subsystem,
+    cursor_usage_organization,
+    cursor_usage_org_pool_limit_usd,
     cursor_usage_roster_size,
     cursor_usage_team_id,
+    cursor_usage_team_name,
 )
 
 
@@ -368,6 +373,10 @@ _CYCLE_GROSS: dict[str, float] = {}
 _SPEND_CAPS: dict[str, float] = {}
 _MODEL_USERS_TODAY: dict[str, set[str]] = {}
 _ROSTER_SEEDED = False
+# Annual pooled budget snapshots (Admin /organizations/pooled-usage).
+_ORG_POOL_LIMIT_USD: float | None = None
+_ORG_POOL_USAGE_USD: float | None = None
+_ORG_POOL_SEEDED = False
 
 # Conversation reuse — keep conversation_id cardinality near cxai-dev (hundreds/day),
 # not tens of thousands. One open session is reused for 20–40 events.
@@ -539,6 +548,53 @@ def _spend_cap_for(member: _UsageMember) -> float:
     return _SPEND_CAPS[member.email]
 
 
+def _ensure_org_pool(now: datetime) -> tuple[float, float]:
+    """Seed annual limit + YTD usage so we look ~on pace for the commitment."""
+    global _ORG_POOL_LIMIT_USD, _ORG_POOL_USAGE_USD, _ORG_POOL_SEEDED
+    if not _ORG_POOL_SEEDED or _ORG_POOL_LIMIT_USD is None or _ORG_POOL_USAGE_USD is None:
+        limit = cursor_usage_org_pool_limit_usd()
+        # Live within budget: seed at day-of-year fraction of the annual limit.
+        doy = float(now.timetuple().tm_yday)
+        ytd_frac = min(1.0, max(0.0, doy / 365.0))
+        _ORG_POOL_LIMIT_USD = limit
+        _ORG_POOL_USAGE_USD = round(limit * ytd_frac, 2)
+        _ORG_POOL_SEEDED = True
+    return _ORG_POOL_LIMIT_USD, _ORG_POOL_USAGE_USD
+
+
+def _accrue_org_pool_usage(amount: float) -> None:
+    global _ORG_POOL_USAGE_USD
+    if amount <= 0 or _ORG_POOL_USAGE_USD is None:
+        return
+    _ORG_POOL_USAGE_USD = round(_ORG_POOL_USAGE_USD + float(amount), 4)
+
+
+def _refresh_org_pool_snapshots(collector: CursorUsageCollector, *, now: datetime) -> None:
+    """Restate Annual Budget gauges (last_over_time / sum widgets)."""
+    limit, usage = _ensure_org_pool(now)
+    remaining = round(limit - usage, 4)
+    org = cursor_usage_organization()
+    team_id = cursor_usage_team_id()
+    team_name = cursor_usage_team_name()
+    base_org = {
+        "cx_application_name": cursor_usage_cx_application(),
+        "cx_subsystem_name": cursor_usage_cx_subsystem(),
+        "organization": org,
+    }
+    collector.clear_snapshots_with_prefix("cursor_org_pool_enabled")
+    collector.clear_snapshots_with_prefix("cursor_org_pool_limit_usd")
+    collector.clear_snapshots_with_prefix("cursor_org_pool_remaining_usd")
+    collector.clear_snapshots_with_prefix("cursor_org_pooled_usage_usd")
+    collector.set_snapshot("cursor_org_pool_enabled", base_org, 1.0)
+    collector.set_snapshot("cursor_org_pool_limit_usd", base_org, float(limit))
+    collector.set_snapshot("cursor_org_pool_remaining_usd", base_org, float(remaining))
+    collector.set_snapshot(
+        "cursor_org_pooled_usage_usd",
+        {**base_org, "team_id": team_id, "team_name": team_name},
+        float(usage),
+    )
+
+
 def _seed_snapshots(collector: CursorUsageCollector, *, now: datetime) -> None:
     """Idempotent roster / org / cycle snapshot refresh."""
     global _ROSTER_SEEDED
@@ -614,12 +670,14 @@ def _seed_snapshots(collector: CursorUsageCollector, *, now: datetime) -> None:
         "cursor_org_team_membership_info",
         {
             **base,
-            "organization": "coralogix",
-            "team_name": "Coralogix Engineering",
+            "organization": cursor_usage_organization(),
+            "team_name": cursor_usage_team_name(),
             "team_role": "owner",
         },
         1.0,
     )
+
+    _refresh_org_pool_snapshots(collector, now=now)
 
     # Bugbot coverage snapshot (~60% of catalog repos enabled).
     enabled_n = max(1, int(len(CURSOR_REPOS) * 0.6))
@@ -702,6 +760,7 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
     active_members = [m for m in _roster() if not m.is_idle]
     target_events = _target_events_per_day(max(1, len(active_members)))
     emits = _events_to_emit_this_cycle(now, target_events)
+    cycle_pool_cost = 0.0
 
     for _ in range(emits):
         acquired = _acquire_conversation(now, active_members, day)
@@ -729,6 +788,7 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             * member.persona.spend_mult,
             4,
         )
+        cycle_pool_cost += cost
         list_price = round(cost * 1.15, 4)
         units = float(random.randint(1, 12))
         ev = _event_labels(
@@ -1225,12 +1285,17 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             float(len(emails)),
         )
 
+    # Annual Budget: accrue this cycle's event $ into pooled usage, then restate gauges.
+    _accrue_org_pool_usage(cycle_pool_cost)
+    _refresh_org_pool_snapshots(collector, now=now)
+
 
 def reset_cursor_usage_runtime_for_tests() -> None:
     """Test helper — clear module state."""
     global _ROSTER, _CYCLE_GROSS, _SPEND_CAPS, _MODEL_USERS_TODAY, _ROSTER_SEEDED
     global _OPEN_CONVERSATIONS, _USAGE_DAY, _CONVERSATIONS_STARTED_TODAY
     global _EVENTS_EMITTED_TODAY, _EVENTS_BY_USER_TODAY
+    global _ORG_POOL_LIMIT_USD, _ORG_POOL_USAGE_USD, _ORG_POOL_SEEDED
     from sim.cursor.usage_v2.collector import reset_cursor_usage_collector_for_tests
 
     _ROSTER = None
@@ -1238,6 +1303,9 @@ def reset_cursor_usage_runtime_for_tests() -> None:
     _SPEND_CAPS = {}
     _MODEL_USERS_TODAY = {}
     _ROSTER_SEEDED = False
+    _ORG_POOL_LIMIT_USD = None
+    _ORG_POOL_USAGE_USD = None
+    _ORG_POOL_SEEDED = False
     _OPEN_CONVERSATIONS = []
     _USAGE_DAY = ""
     _CONVERSATIONS_STARTED_TODAY = 0

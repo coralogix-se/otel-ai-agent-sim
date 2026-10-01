@@ -113,6 +113,10 @@ _BUGBOT_PR = _BASE + ("repo_name", "date")
 _BUGBOT_ISSUES = _BASE + ("repo_name", "severity", "state", "date")
 _BUGBOT_ISSUES_SNAP = _BASE + ("state",)
 _BUGBOT_REPOS = _BASE + ("enabled", "manual_only")
+# Annual Budget / pooled usage (Admin org API). Catalog: cadence=daily, grain=level.
+# Team contract adds organization (+ team_name on usage); FE also needs pool_enabled.
+_POOL_ORG = ("cx_application_name", "cx_subsystem_name", "organization")
+_POOL_USAGE = _POOL_ORG + ("team_id", "team_name")
 
 
 _SPECS: tuple[_SeriesSpec, ...] = (
@@ -406,6 +410,31 @@ _SPECS: tuple[_SeriesSpec, ...] = (
         "cursor_bugbot_repos",
         "Cursor Bugbot repo coverage count",
         _BUGBOT_REPOS,
+        "snapshot",
+    ),
+    # Annual Budget widgets (pooled-usage Admin API)
+    _SeriesSpec(
+        "cursor_org_pool_enabled",
+        "Cursor org pooled budget enabled (1 when Annual Budget widgets have data)",
+        _POOL_ORG,
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_org_pool_limit_usd",
+        "Cursor org annual pooled budget limit USD",
+        _POOL_ORG,
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_org_pool_remaining_usd",
+        "Cursor org annual pooled budget remaining USD",
+        _POOL_ORG,
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_org_pooled_usage_usd",
+        "Cursor org pooled usage USD (level; one series per team)",
+        _POOL_USAGE,
         "snapshot",
     ),
 )

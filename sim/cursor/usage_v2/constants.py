@@ -8,6 +8,12 @@ import os
 DEFAULT_TEAM_ID = "3405693"
 DEFAULT_CX_APPLICATION = "Cursor"
 DEFAULT_CX_SUBSYSTEM = "Admin APIs"
+DEFAULT_ORGANIZATION = "coralogix"
+DEFAULT_TEAM_NAME = "Coralogix Engineering"
+
+# Annual pooled budget: week × 52 ≈ living within commitment at current sim pace.
+# dmb-sm observed ~$129k / 7d (Sep 2026) → ~$6.71M / yr.
+DEFAULT_ORG_POOL_WEEKLY_USD = 129_000.0
 
 CURSOR_USAGE_MODELS: tuple[str, ...] = (
     "default",
@@ -250,6 +256,31 @@ CURSOR_GROUPS: tuple[tuple[str, str], ...] = (
 
 def cursor_usage_team_id() -> str:
     return os.environ.get("SIM_CURSOR_USAGE_TEAM_ID", DEFAULT_TEAM_ID).strip() or DEFAULT_TEAM_ID
+
+
+def cursor_usage_organization() -> str:
+    return (
+        os.environ.get("SIM_CURSOR_USAGE_ORGANIZATION", DEFAULT_ORGANIZATION).strip()
+        or DEFAULT_ORGANIZATION
+    )
+
+
+def cursor_usage_team_name() -> str:
+    return (
+        os.environ.get("SIM_CURSOR_USAGE_TEAM_NAME", DEFAULT_TEAM_NAME).strip()
+        or DEFAULT_TEAM_NAME
+    )
+
+
+def cursor_usage_org_pool_limit_usd() -> float:
+    """Annual pooled commitment USD (default = weekly × 52)."""
+    from sim.common.env import _env_float
+
+    explicit = os.environ.get("SIM_CURSOR_ORG_POOL_LIMIT_USD", "").strip()
+    if explicit:
+        return max(1.0, float(explicit))
+    weekly = _env_float("SIM_CURSOR_ORG_POOL_WEEKLY_USD", DEFAULT_ORG_POOL_WEEKLY_USD)
+    return max(1.0, weekly * 52.0)
 
 
 def cursor_usage_cx_application() -> str:

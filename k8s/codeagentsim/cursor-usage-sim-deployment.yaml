@@ -1,0 +1,85 @@
+# Standalone Cursor Usage (Admin APIs) simulator for kind → dmb-sm.
+# Prometheus scraped on :9090 by otel-collector-codeagentsim (no direct remote_write).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-cursor-usage-sim
+  namespace: codeagentsim
+  labels:
+    app: otel-cursor-usage-sim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-cursor-usage-sim
+  template:
+    metadata:
+      labels:
+        app: otel-cursor-usage-sim
+    spec:
+      initContainers:
+        - name: wait-for-collector
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
+      containers:
+        - name: sim
+          image: otel-ai-agent-sim:kind-cursor-local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "sim.cursor.usage_v2"]
+          env:
+            - name: PROMETHEUS_METRICS_PORT
+              value: "9090"
+            - name: PROMETHEUS_REMOTE_WRITE_ENABLED
+              value: "false"
+            - name: SIM_CURSOR_USAGE_METRICS_ENABLED
+              value: "true"
+            - name: SIM_CURSOR_USAGE_CX_APPLICATION_NAME
+              value: Cursor
+            - name: SIM_CURSOR_USAGE_CX_SUBSYSTEM_NAME
+              value: Admin APIs
+            - name: SIM_CURSOR_USAGE_TEAM_ID
+              value: "3405693"
+            - name: SIM_CURSOR_USAGE_ORGANIZATION
+              value: coralogix
+            - name: SIM_CURSOR_USAGE_TEAM_NAME
+              value: Coralogix Engineering
+            # Annual pooled budget ≈ current week × 52 (live within commitment).
+            - name: SIM_CURSOR_ORG_POOL_WEEKLY_USD
+              value: "129000"
+            - name: SIM_CURSOR_USAGE_INTERVAL_SEC
+              value: "30"
+            - name: SIM_CURSOR_USAGE_ROSTER_SIZE
+              value: "48"
+            - name: DEPLOYMENT_ENVIRONMENT
+              value: kind-local
+          ports:
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-cursor-usage-sim
+  namespace: codeagentsim
+  labels:
+    app: otel-cursor-usage-sim
+spec:
+  type: ClusterIP
+  selector:
+    app: otel-cursor-usage-sim
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP

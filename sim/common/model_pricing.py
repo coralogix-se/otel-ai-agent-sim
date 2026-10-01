@@ -79,6 +79,7 @@ _EXACT: dict[str, ModelRates] = {
     "gpt-5-mini": _r(0.25, 2.00, cache_read=0.025),
     "gpt-4o": _r(2.50, 10.0, cache_read=1.25),
     "gpt-4o-mini": _r(0.15, 0.60, cache_read=0.075),
+    "gpt-4.1-mini": _r(0.40, 1.60, cache_read=0.10),
     "gpt-4.1": _r(2.0, 8.0, cache_read=0.50),
     # --- Google Gemini ---
     # 3.6 / 3.7 / 3.8 Flash intro rate through 2026-12-31 ($1.50/$7.50 after).
@@ -170,9 +171,12 @@ _PREFIX_RULES: tuple[tuple[str, ModelRates], ...] = (
     ("gemini-2.0", _r(0.10, 0.40)),
     ("gpt-4o-mini", _r(0.15, 0.60, cache_read=0.075)),
     ("gpt-4o", _r(2.50, 10.0, cache_read=1.25)),
+    ("gpt-4.1-mini", _r(0.40, 1.60, cache_read=0.10)),
     ("gpt-4.1", _r(2.0, 8.0, cache_read=0.50)),
+    ("gpt-5-mini", _r(0.25, 2.00, cache_read=0.025)),
     ("o4-mini", _r(0.55, 2.20)),
     ("o3-mini", _r(0.55, 2.20)),
+    ("o3", _r(2.0, 8.0)),  # o3 / o3-2025-04-16 (after o3-mini so mini wins)
     ("composer", _r(2.50, 15.0)),
     ("grok-", _r(1.25, 2.50, cache_read=0.20)),
     ("qwen3.7", _r(2.50, 7.50, cache_read=0.25)),
