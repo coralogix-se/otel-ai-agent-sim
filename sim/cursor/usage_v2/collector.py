@@ -117,6 +117,8 @@ _BUGBOT_REPOS = _BASE + ("enabled", "manual_only")
 # Team contract adds organization (+ team_name on usage); FE also needs pool_enabled.
 _POOL_ORG = ("cx_application_name", "cx_subsystem_name", "organization")
 _POOL_USAGE = _POOL_ORG + ("team_id", "team_name")
+# Team DAU gauges (Adoption / analytics) — date-labeled daily levels.
+_DAU = _BASE + ("date",)
 
 
 _SPECS: tuple[_SeriesSpec, ...] = (
@@ -142,9 +144,9 @@ _SPECS: tuple[_SeriesSpec, ...] = (
     ),
     _SeriesSpec(
         "cursor_requests_total",
-        "Cursor requests by surface (bucket delta)",
+        "Cursor requests by surface (daily level; realDateLabeled)",
         _EMAIL_SURFACE,
-        "delta",
+        "snapshot",
     ),
     _SeriesSpec(
         "cursor_requests_by_class_total",
@@ -208,9 +210,9 @@ _SPECS: tuple[_SeriesSpec, ...] = (
     ),
     _SeriesSpec(
         "cursor_ai_change_lines_added_total",
-        "Cursor AI change lines added (bucket delta)",
+        "Cursor AI change lines added (daily level; realDateLabeled)",
         _EMAIL_TEAM + ("date",),
-        "delta",
+        "snapshot",
     ),
     _SeriesSpec(
         "cursor_ai_change_file_lines_added_total",
@@ -238,21 +240,45 @@ _SPECS: tuple[_SeriesSpec, ...] = (
     ),
     _SeriesSpec(
         "cursor_accepts_total",
-        "Cursor accepts (bucket delta)",
+        "Cursor accepts (daily level; realDateLabeled)",
         _EMAIL_USER_DATE,
-        "delta",
+        "snapshot",
     ),
     _SeriesSpec(
         "cursor_applies_total",
-        "Cursor applies (bucket delta)",
+        "Cursor applies (daily level; realDateLabeled)",
         _EMAIL_USER_DATE,
-        "delta",
+        "snapshot",
     ),
     _SeriesSpec(
         "cursor_member_daily_spend_usd",
-        "Cursor member daily spend USD (bucket delta)",
+        "Cursor member daily spend USD (daily level; realDateLabeled)",
         _SPEND,
-        "delta",
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_active_users_total",
+        "Cursor team DAU (daily level)",
+        _DAU,
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_active_users_cli",
+        "Cursor CLI DAU (daily level)",
+        _DAU,
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_active_users_cloud_agent",
+        "Cursor cloud-agent DAU (daily level)",
+        _DAU,
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_active_users_bugbot",
+        "Cursor Bugbot DAU (daily level)",
+        _DAU,
+        "snapshot",
     ),
     _SeriesSpec(
         "cursor_conversation_total",
@@ -480,6 +506,32 @@ class CursorUsageCollector(Collector):
         key = (name, _label_key({k: labels[k] for k in spec.labelnames}))
         with self._lock:
             self._snapshots[key] = float(value)
+
+    def accrue_snapshot(self, name: str, labels: dict[str, str], amount: float) -> None:
+        """Accumulate into a date-labeled daily level (FE realDateLabeled + last_over_time)."""
+        if amount == 0:
+            return
+        spec = _SPEC_BY_NAME.get(name)
+        if spec is None or spec.kind != "snapshot":
+            raise ValueError(f"unknown snapshot metric for accrue: {name}")
+        missing = [k for k in spec.labelnames if k not in labels]
+        if missing:
+            raise ValueError(f"{name} missing labels: {missing}")
+        key = (name, _label_key({k: labels[k] for k in spec.labelnames}))
+        with self._lock:
+            self._snapshots[key] = float(self._snapshots.get(key, 0.0)) + float(amount)
+
+    def prune_snapshots_by_date(self, *, keep_dates: set[str]) -> None:
+        """Drop in-memory snapshot series whose ``date`` label is outside keep_dates (OOM guard)."""
+        with self._lock:
+            drop: list[tuple[str, tuple[tuple[str, str], ...]]] = []
+            for key in self._snapshots:
+                label_map = dict(key[1])
+                d = label_map.get("date")
+                if d is not None and d not in keep_dates:
+                    drop.append(key)
+            for key in drop:
+                del self._snapshots[key]
 
     def clear_snapshots_with_prefix(self, name: str) -> None:
         with self._lock:

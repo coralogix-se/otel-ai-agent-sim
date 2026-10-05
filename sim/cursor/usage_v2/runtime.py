@@ -6,7 +6,7 @@ import hashlib
 import random
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sim.common.env import _env_float, _env_int
 from sim.common.identity import _CORALOGIX_TEAM_USERS, roster_indices_for_agent
@@ -397,6 +397,12 @@ _USAGE_DAY = ""
 _CONVERSATIONS_STARTED_TODAY = 0
 _EVENTS_EMITTED_TODAY = 0
 _EVENTS_BY_USER_TODAY: dict[str, int] = {}
+# email → surfaces touched today (for cursor_active_users_* DAU).
+_SURFACE_USERS_TODAY: dict[str, set[str]] = {}
+# Soft "active day" flags for members who didn't emit events (stable within the UTC day).
+_SOFT_ACTIVE_TODAY: set[str] = set()
+_SOFT_ACTIVE_DECIDED = False
+_ADOPTION_BACKFILLED = False
 
 
 def _roster() -> list[_UsageMember]:
@@ -410,6 +416,7 @@ def _roll_usage_day(day: str) -> None:
     """Reset daily conversation / event budgets at UTC midnight."""
     global _USAGE_DAY, _CONVERSATIONS_STARTED_TODAY, _EVENTS_EMITTED_TODAY
     global _EVENTS_BY_USER_TODAY, _OPEN_CONVERSATIONS, _MODEL_USERS_TODAY
+    global _SURFACE_USERS_TODAY, _SOFT_ACTIVE_TODAY, _SOFT_ACTIVE_DECIDED
     if _USAGE_DAY == day:
         return
     _USAGE_DAY = day
@@ -418,6 +425,9 @@ def _roll_usage_day(day: str) -> None:
     _EVENTS_BY_USER_TODAY = {}
     _OPEN_CONVERSATIONS = []
     _MODEL_USERS_TODAY = {}
+    _SURFACE_USERS_TODAY = {}
+    _SOFT_ACTIVE_TODAY = set()
+    _SOFT_ACTIVE_DECIDED = False
 
 
 def _day_fraction(now: datetime) -> float:
@@ -831,7 +841,7 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             if tokens:
                 collector.add_delta("cursor_event_tokens_total", tok_labels, tokens)
 
-        collector.add_delta(
+        collector.accrue_snapshot(
             "cursor_requests_total",
             {
                 **base,
@@ -842,6 +852,7 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             },
             event_n,
         )
+        _SURFACE_USERS_TODAY.setdefault(surface, set()).add(member.email)
         collector.add_delta(
             "cursor_requests_by_class_total",
             {
@@ -929,7 +940,7 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                 },
                 lines,
             )
-            collector.add_delta(
+            collector.accrue_snapshot(
                 "cursor_ai_change_lines_added_total",
                 {**base, "email": member.email, "user_id": member.user_id, "date": day},
                 lines,
@@ -997,18 +1008,18 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
         applies = random.randint(1, 5)
         # Persona accept_rate — drives adoption tier (acceptRate * 40 in FE score).
         accepts = sum(1 for _ in range(applies) if random.random() < member.persona.accept_rate)
-        collector.add_delta(
+        collector.accrue_snapshot(
             "cursor_applies_total",
             {**base, "email": member.email, "user_id": member.user_id, "date": day},
             applies,
         )
-        collector.add_delta(
+        collector.accrue_snapshot(
             "cursor_accepts_total",
             {**base, "email": member.email, "user_id": member.user_id, "date": day},
             accepts,
         )
 
-        collector.add_delta(
+        collector.accrue_snapshot(
             "cursor_member_daily_spend_usd",
             {
                 **base,
@@ -1176,7 +1187,7 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             for member in random.sample(candidates, min(touch_n, len(candidates))):
                 active_today.add(member.email)
                 req_n = max(1, int(random.randint(1, 3) * volume))
-                collector.add_delta(
+                collector.accrue_snapshot(
                     "cursor_requests_total",
                     {
                         **base,
@@ -1187,6 +1198,7 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                     },
                     req_n,
                 )
+                _SURFACE_USERS_TODAY.setdefault(surface, set()).add(member.email)
 
     # Bugbot activity (team-level — no email).
     for repo in CURSOR_REPOS:
@@ -1222,35 +1234,62 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                         n,
                     )
 
-    # Active flags — FE seat KPIs row-source is breakdown(cursor_member_active, email).
-    # Idle licensed seats must still appear as series with value 0 (omitting them → Idle Seats 0/N).
-    # daysActive (Usage Patterns) counts distinct active days — persona.active_day_p sparsifies.
+    # Active flags — FE seat KPIs: sum/max by email of last_over_time(cursor_member_active{date=~…}).
+    # Idle licensed seats must emit explicit 0; non-idle inactive days also emit 0 (omitting → wrong Idle %).
+    global _SOFT_ACTIVE_DECIDED, _SOFT_ACTIVE_TODAY
+    if not _SOFT_ACTIVE_DECIDED:
+        for m in _roster():
+            if m.is_idle:
+                continue
+            if random.random() < m.persona.active_day_p * 0.25:
+                _SOFT_ACTIVE_TODAY.add(m.email)
+        _SOFT_ACTIVE_DECIDED = True
+
     for m in _roster():
         if m.is_idle:
-            collector.set_snapshot(
-                "cursor_member_active",
-                {
-                    **base,
-                    "email": m.email,
-                    "user_id": m.user_id,
-                    "date": day,
-                    "client_version": m.client_version,
-                },
-                0.0,
-            )
-            continue
-        if m.email in active_today or random.random() < m.persona.active_day_p * 0.25:
-            collector.set_snapshot(
-                "cursor_member_active",
-                {
-                    **base,
-                    "email": m.email,
-                    "user_id": m.user_id,
-                    "date": day,
-                    "client_version": m.client_version,
-                },
-                1.0,
-            )
+            val = 0.0
+        elif m.email in active_today or m.email in _SOFT_ACTIVE_TODAY:
+            val = 1.0
+        else:
+            val = 0.0
+        collector.set_snapshot(
+            "cursor_member_active",
+            {
+                **base,
+                "email": m.email,
+                "user_id": m.user_id,
+                "date": day,
+                "client_version": m.client_version,
+            },
+            val,
+        )
+
+    # Team DAU gauges (Adoption Active Users KPI + surface chips) — date-labeled daily levels.
+    dau_total = float(len(active_today | _SOFT_ACTIVE_TODAY))
+    dau_cli = float(len(_SURFACE_USERS_TODAY.get("cli", set())))
+    if dau_cli <= 0 and dau_total:
+        dau_cli = float(max(1, int(dau_total * 0.10)))
+    # Cloud agent: ~18% of active seats (no dedicated chart surface).
+    dau_cloud = float(max(1, int(dau_total * 0.18))) if dau_total else 0.0
+    dau_bugbot = float(len(_SURFACE_USERS_TODAY.get("bugbot", set())))
+    if dau_bugbot <= 0 and dau_total:
+        dau_bugbot = float(max(1, int(dau_total * 0.12)))
+    for metric_name, value in (
+        ("cursor_active_users_total", dau_total),
+        ("cursor_active_users_cli", dau_cli),
+        ("cursor_active_users_cloud_agent", dau_cloud),
+        ("cursor_active_users_bugbot", dau_bugbot),
+    ):
+        collector.set_snapshot(metric_name, {**base, "date": day}, value)
+
+    # Keep ~16 days of date-labeled snapshots in memory (FE windows ≤14d); drop older to limit OOM.
+    keep_dates = {(now.date() - timedelta(days=i)).isoformat() for i in range(0, 16)}
+    collector.prune_snapshots_by_date(keep_dates=keep_dates)
+
+    global _ADOPTION_BACKFILLED
+    if not _ADOPTION_BACKFILLED:
+        _backfill_adoption_days(collector, base=base, today=now)
+        _ADOPTION_BACKFILLED = True
 
     # Restate bugbot snapshots every cycle for last_over_time widgets.
     enabled_n = max(1, int(len(CURSOR_REPOS) * 0.6))
@@ -1290,12 +1329,89 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
     _refresh_org_pool_snapshots(collector, now=now)
 
 
+def _backfill_adoption_days(
+    collector: CursorUsageCollector,
+    *,
+    base: dict[str, str],
+    today: datetime,
+) -> None:
+    """Seed prior UTC days so FE date=~ windows for Adoption are non-empty after deploy/OOM."""
+    roster = _roster()
+    active_members = [m for m in roster if not m.is_idle]
+    for age in range(14, 0, -1):
+        day_dt = today - timedelta(days=age)
+        day = day_dt.date().isoformat()
+        # ~85% of non-idle seats active on a typical weekday; weekends quieter.
+        weekend = day_dt.weekday() >= 5
+        active_frac = 0.55 if weekend else 0.88
+        active_n = max(1, int(len(active_members) * active_frac))
+        active_set = {m.email for m in active_members[:active_n]}
+        for m in roster:
+            val = 0.0 if m.is_idle or m.email not in active_set else 1.0
+            collector.set_snapshot(
+                "cursor_member_active",
+                {
+                    **base,
+                    "email": m.email,
+                    "user_id": m.user_id,
+                    "date": day,
+                    "client_version": m.client_version,
+                },
+                val,
+            )
+        dau = float(len(active_set))
+        collector.set_snapshot("cursor_active_users_total", {**base, "date": day}, dau)
+        collector.set_snapshot(
+            "cursor_active_users_cli", {**base, "date": day}, float(max(1, int(dau * 0.12)))
+        )
+        collector.set_snapshot(
+            "cursor_active_users_cloud_agent",
+            {**base, "date": day},
+            float(max(1, int(dau * 0.18))),
+        )
+        collector.set_snapshot(
+            "cursor_active_users_bugbot",
+            {**base, "date": day},
+            float(max(1, int(dau * 0.14))),
+        )
+        # Light request/spend levels so surface + cost drawers aren't empty on prior days.
+        for m in active_members[:active_n]:
+            for surface in m.surfaces:
+                collector.set_snapshot(
+                    "cursor_requests_total",
+                    {
+                        **base,
+                        "email": m.email,
+                        "user_id": m.user_id,
+                        "surface": surface,
+                        "date": day,
+                    },
+                    float(random.randint(8, 40)),
+                )
+            collector.set_snapshot(
+                "cursor_ai_change_lines_added_total",
+                {**base, "email": m.email, "user_id": m.user_id, "date": day},
+                float(random.randint(40, 400)),
+            )
+            collector.set_snapshot(
+                "cursor_accepts_total",
+                {**base, "email": m.email, "user_id": m.user_id, "date": day},
+                float(random.randint(5, 30)),
+            )
+            collector.set_snapshot(
+                "cursor_applies_total",
+                {**base, "email": m.email, "user_id": m.user_id, "date": day},
+                float(random.randint(8, 40)),
+            )
+
+
 def reset_cursor_usage_runtime_for_tests() -> None:
     """Test helper — clear module state."""
     global _ROSTER, _CYCLE_GROSS, _SPEND_CAPS, _MODEL_USERS_TODAY, _ROSTER_SEEDED
     global _OPEN_CONVERSATIONS, _USAGE_DAY, _CONVERSATIONS_STARTED_TODAY
     global _EVENTS_EMITTED_TODAY, _EVENTS_BY_USER_TODAY
     global _ORG_POOL_LIMIT_USD, _ORG_POOL_USAGE_USD, _ORG_POOL_SEEDED
+    global _SURFACE_USERS_TODAY, _SOFT_ACTIVE_TODAY, _SOFT_ACTIVE_DECIDED, _ADOPTION_BACKFILLED
     from sim.cursor.usage_v2.collector import reset_cursor_usage_collector_for_tests
 
     _ROSTER = None
@@ -1311,4 +1427,8 @@ def reset_cursor_usage_runtime_for_tests() -> None:
     _CONVERSATIONS_STARTED_TODAY = 0
     _EVENTS_EMITTED_TODAY = 0
     _EVENTS_BY_USER_TODAY = {}
+    _SURFACE_USERS_TODAY = {}
+    _SOFT_ACTIVE_TODAY = set()
+    _SOFT_ACTIVE_DECIDED = False
+    _ADOPTION_BACKFILLED = False
     reset_cursor_usage_collector_for_tests()

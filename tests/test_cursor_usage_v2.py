@@ -83,6 +83,10 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
         "cursor_org_pool_limit_usd",
         "cursor_org_pool_remaining_usd",
         "cursor_org_pooled_usage_usd",
+        "cursor_active_users_total",
+        "cursor_active_users_cli",
+        "cursor_active_users_cloud_agent",
+        "cursor_active_users_bugbot",
     ):
         assert required in names, required
 
@@ -342,18 +346,31 @@ def test_idle_seats_and_surface_user_diversity(monkeypatch) -> None:
     idle_emails = {m.email for m in idle}
 
     active_lines = _metric_lines(payload, "cursor_member_active")
+    today = "2026-08-28"
     # Idle seats must be present as value=0 so Adoption Idle Seats KPI can count them.
     idle_active_lines = [
-        line for line in active_lines if any(f'email="{e}"' in line for e in idle_emails)
+        line
+        for line in active_lines
+        if f'date="{today}"' in line and any(f'email="{e}"' in line for e in idle_emails)
     ]
     assert len(idle_active_lines) == len(idle_emails)
-    assert all("} 0.0" in line or line.endswith(" 0.0") for line in idle_active_lines)
+    assert all(line.rsplit(" ", 1)[-1] == "0.0" for line in idle_active_lines)
     active_positive = {
         line.split('email="', 1)[1].split('"', 1)[0]
         for line in active_lines
-        if not (line.endswith(" 0.0") or "} 0.0" in line)
+        if f'date="{today}"' in line and line.rsplit(" ", 1)[-1] not in ("0.0", "0")
     }
     assert idle_emails.isdisjoint(active_positive)
+    # Every roster seat has an explicit 0/1 flag for today (FE date=~ window).
+    today_emails = {
+        line.split('email="', 1)[1].split('"', 1)[0]
+        for line in active_lines
+        if f'date="{today}"' in line
+    }
+    assert today_emails == {m.email for m in roster}
+
+    dau_lines = _metric_lines(payload, "cursor_active_users_total")
+    assert any(f'date="{today}"' in line and float(line.rsplit(" ", 1)[-1]) > 0 for line in dau_lines)
 
     request_emails = {
         line.split('email="', 1)[1].split('"', 1)[0]

@@ -26,7 +26,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:cursor-pool-20260930103557
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:cursor-adoption-20261005153558
           imagePullPolicy: Always
           env:
             # OTLP -> otel-collector-codeagentsim; collector exports to Coralogix US2 + EU1 (no API key in this pod).
@@ -121,11 +121,6 @@ spec:
             # Stamp ``github.copilot.cost`` / billing ~once per user per UTC day (accrued from sessions).
             - name: SIM_COPILOT_COST_ONCE_PER_DAY
               value: "true"
-            # Emit late enough that accrued USD ≈ most of that user's day (API-equivalent).
-            - name: SIM_COPILOT_COST_EMIT_AFTER_SESSIONS
-              value: "8"
-            - name: SIM_COPILOT_COST_EMIT_AFTER_SEC
-              value: "14400"
             # Billing PromQL uses sum_over_time — emit github_copilot_billing_* once/UTC day only.
             - name: SIM_COPILOT_BILLING_DAILY_SAMPLE
               value: "true"
@@ -468,11 +463,11 @@ spec:
           resources:
             requests:
               cpu: 50m
-              memory: 512Mi
+              memory: 1Gi
             limits:
               cpu: 500m
-              # Was 1Gi; OOMKilled after ~29h of growth (~318Mi ~8.5h after restart).
-              memory: 2Gi
+              # Cursor usage date-labeled snapshots + Claude OTEL; 2Gi OOM'd under load.
+              memory: 3Gi
 ---
 apiVersion: v1
 kind: Service
