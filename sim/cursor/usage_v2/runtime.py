@@ -579,6 +579,50 @@ def _accrue_org_pool_usage(amount: float) -> None:
     _ORG_POOL_USAGE_USD = round(_ORG_POOL_USAGE_USD + float(amount), 4)
 
 
+def _accrue_seat_activity(
+    collector: CursorUsageCollector,
+    *,
+    base: dict[str, str],
+    email: str,
+    day: str,
+    agent_suggested_lines: float,
+    agent_accepted_lines: float,
+    tab_suggestions: float,
+    tab_accepts: float = 0.0,
+) -> None:
+    """Emit FE seat-activity series (Adoption Active Users / Adoption Rate / Idle Seats)."""
+    for outcome, amount in (
+        ("suggested", agent_suggested_lines),
+        ("accepted", agent_accepted_lines),
+    ):
+        if amount <= 0:
+            continue
+        collector.accrue_snapshot(
+            "cursor_user_lines_total",
+            {
+                **base,
+                "email": email,
+                "source": "agent",
+                "colour": "green",
+                "outcome": outcome,
+                "date": day,
+            },
+            amount,
+        )
+    if tab_suggestions > 0:
+        collector.accrue_snapshot(
+            "cursor_user_tab_suggestions_total",
+            {**base, "email": email, "date": day},
+            tab_suggestions,
+        )
+    if tab_accepts > 0:
+        collector.accrue_snapshot(
+            "cursor_user_tab_accepts_total",
+            {**base, "email": email, "date": day},
+            tab_accepts,
+        )
+
+
 def _refresh_org_pool_snapshots(collector: CursorUsageCollector, *, now: datetime) -> None:
     """Restate Annual Budget gauges (last_over_time / sum widgets)."""
     limit, usage = _ensure_org_pool(now)
@@ -900,6 +944,17 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             "cursor_tab_accepts_total",
             {**base, "email": member.email, "user_id": member.user_id, "date": day},
             tab_acc,
+        )
+        # Seat KPIs (Active Users / Adoption Rate) join roster to these two metrics.
+        _accrue_seat_activity(
+            collector,
+            base=base,
+            email=member.email,
+            day=day,
+            agent_suggested_lines=float(random.randint(8, 80)),
+            agent_accepted_lines=float(random.randint(2, 40)),
+            tab_suggestions=float(tab_sugg),
+            tab_accepts=float(tab_acc),
         )
 
         repo = _pick(CURSOR_REPOS)
@@ -1234,8 +1289,8 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                         n,
                     )
 
-    # Active flags — FE seat KPIs: sum/max by email of last_over_time(cursor_member_active{date=~…}).
-    # Idle licensed seats must emit explicit 0; non-idle inactive days also emit 0 (omitting → wrong Idle %).
+    # member_active flags (Idle Seats drawer / insights). KPI Active Users / Adoption Rate use
+    # cursor_user_lines_total{source=agent,outcome=suggested} + cursor_user_tab_suggestions_total.
     global _SOFT_ACTIVE_DECIDED, _SOFT_ACTIVE_TODAY
     if not _SOFT_ACTIVE_DECIDED:
         for m in _roster():
@@ -1243,6 +1298,18 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                 continue
             if random.random() < m.persona.active_day_p * 0.25:
                 _SOFT_ACTIVE_TODAY.add(m.email)
+        # Soft-active seats must also get lines/tab so Adoption KPIs count them (not member_active).
+        for email in _SOFT_ACTIVE_TODAY:
+            _accrue_seat_activity(
+                collector,
+                base=base,
+                email=email,
+                day=day,
+                agent_suggested_lines=float(random.randint(12, 60)),
+                agent_accepted_lines=float(random.randint(4, 30)),
+                tab_suggestions=float(random.randint(5, 25)),
+                tab_accepts=float(random.randint(1, 12)),
+            )
         _SOFT_ACTIVE_DECIDED = True
 
     for m in _roster():
@@ -1374,7 +1441,7 @@ def _backfill_adoption_days(
             {**base, "date": day},
             float(max(1, int(dau * 0.14))),
         )
-        # Light request/spend levels so surface + cost drawers aren't empty on prior days.
+        # Light request/spend/seat-activity levels so drawers + Adoption KPIs aren't empty.
         for m in active_members[:active_n]:
             for surface in m.surfaces:
                 collector.set_snapshot(
@@ -1402,6 +1469,16 @@ def _backfill_adoption_days(
                 "cursor_applies_total",
                 {**base, "email": m.email, "user_id": m.user_id, "date": day},
                 float(random.randint(8, 40)),
+            )
+            _accrue_seat_activity(
+                collector,
+                base=base,
+                email=m.email,
+                day=day,
+                agent_suggested_lines=float(random.randint(20, 120)),
+                agent_accepted_lines=float(random.randint(8, 60)),
+                tab_suggestions=float(random.randint(10, 40)),
+                tab_accepts=float(random.randint(2, 20)),
             )
 
 

@@ -71,6 +71,8 @@ _TOKEN_EVENT = _BASE + (
 _EMAIL_TEAM = _BASE + ("email", "user_id")
 _EMAIL_DATE = _BASE + ("email", "date")
 _EMAIL_USER_DATE = _BASE + ("email", "user_id", "date")
+# Adoption seat KPIs (getActiveUsersByEmail): agent lines + tab suggestions.
+_USER_LINES = _BASE + ("email", "source", "colour", "outcome", "date")
 _EMAIL_MODEL = _BASE + ("email", "model", "date")
 _EMAIL_SURFACE = _BASE + ("email", "user_id", "surface", "date")
 _AI_CODE = _BASE + (
@@ -177,6 +179,25 @@ _SPECS: tuple[_SeriesSpec, ...] = (
         "Cursor agent diffs suggested (bucket delta)",
         _EMAIL_DATE,
         "delta",
+    ),
+    # FE Adoption Active Users / Adoption Rate / Idle Seats (not member_active).
+    _SeriesSpec(
+        "cursor_user_lines_total",
+        "Cursor user agent/tab lines by source/outcome (daily level; realDateLabeled)",
+        _USER_LINES,
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_user_tab_suggestions_total",
+        "Cursor user tab suggestions (daily level; realDateLabeled)",
+        _EMAIL_DATE,
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_user_tab_accepts_total",
+        "Cursor user tab accepts (daily level; realDateLabeled)",
+        _EMAIL_DATE,
+        "snapshot",
     ),
     _SeriesSpec(
         "cursor_tab_accepts_total",

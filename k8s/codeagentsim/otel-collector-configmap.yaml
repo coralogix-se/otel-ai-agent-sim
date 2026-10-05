@@ -1,6 +1,9 @@
 # Fan-out: OTLP traces/logs -> ingress.us2 + ingress.eu1 + ingress.us2 (onlineboutique-dev tenant, separate key).
 # Prometheus: scrape sim Service :9090 -> remote_write to all three exporters (no duplicate OTLP metrics).
 # Receiver ports 24317/24318 avoid overlapping another collector using 4317/4318 in-cluster.
+#
+# Payload note (2026-10): openai-admin alone is ~50MB / ~140k series; anthropic ~17MB; main sim ~12MB.
+# Default 15s scrapes + 5s remote_write timeouts caused permanent "context deadline exceeded" drops.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -25,18 +28,22 @@ data:
         trim_metric_suffixes: false
         config:
           scrape_configs:
+            # Heavier targets: longer interval/timeout so one scrape finishes before the next.
             - job_name: otel-ai-agent-sim
-              scrape_interval: 15s
+              scrape_interval: 30s
+              scrape_timeout: 25s
               static_configs:
                 - targets:
                     - otel-ai-agent-sim:9090
             - job_name: otel-anthropic-admin-sim
-              scrape_interval: 15s
+              scrape_interval: 30s
+              scrape_timeout: 25s
               static_configs:
                 - targets:
                     - otel-anthropic-admin-sim:9090
             - job_name: otel-openai-admin-sim
-              scrape_interval: 15s
+              scrape_interval: 60s
+              scrape_timeout: 55s
               static_configs:
                 - targets:
                     - otel-openai-admin-sim:9090
@@ -47,15 +54,18 @@ data:
         check_interval: 5s
         limit_mib: 2400
         spike_limit_mib: 384
+      # Metrics scrapes are large (~10–50MB); tiny batches create thousands of HTTP POSTs and timeout.
       batch:
-        timeout: 5s
-        send_batch_size: 256
+        timeout: 2s
+        send_batch_size: 8192
+        send_batch_max_size: 16384
 
     exporters:
       otlp/us2:
         endpoint: ingress.us2.coralogix.com:443
         tls:
           insecure: false
+        timeout: 30s
         headers:
           Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_US2}
 
@@ -63,6 +73,7 @@ data:
         endpoint: ingress.eu1.coralogix.com:443
         tls:
           insecure: false
+        timeout: 30s
         headers:
           Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_EU1}
 
@@ -72,6 +83,7 @@ data:
         endpoint: ingress.us2.coralogix.com:443
         tls:
           insecure: false
+        timeout: 30s
         headers:
           Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_ONLINEBOUTIQUE_DEV}
 
@@ -85,6 +97,18 @@ data:
         # Default UnderscoreEscapingWithSuffixes rewrites that to claude_code_active_time_s_total.
         # NoTranslation requires Prometheus Remote Write 2.0; this cluster uses PRW 1.0.
         translation_strategy: UnderscoreEscapingWithoutSuffixes
+        # Default timeout (~5s) cannot finish a ~3MB snappy batch under fan-out load.
+        timeout: 90s
+        max_batch_size_bytes: 3000000
+        remote_write_queue:
+          enabled: true
+          queue_size: 50000
+          num_consumers: 1
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
 
       prometheusremotewrite/eu1:
         endpoint: https://ingress.eu1.coralogix.com/prometheus/v1
@@ -93,6 +117,17 @@ data:
         headers:
           Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_EU1}
         translation_strategy: UnderscoreEscapingWithoutSuffixes
+        timeout: 90s
+        max_batch_size_bytes: 3000000
+        remote_write_queue:
+          enabled: true
+          queue_size: 50000
+          num_consumers: 1
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
 
       prometheusremotewrite/us2-onlineboutique:
         endpoint: https://ingress.us2.coralogix.com/prometheus/v1
@@ -101,6 +136,17 @@ data:
         headers:
           Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_ONLINEBOUTIQUE_DEV}
         translation_strategy: UnderscoreEscapingWithoutSuffixes
+        timeout: 90s
+        max_batch_size_bytes: 3000000
+        remote_write_queue:
+          enabled: true
+          queue_size: 50000
+          num_consumers: 1
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
 
     service:
       extensions: [health_check]

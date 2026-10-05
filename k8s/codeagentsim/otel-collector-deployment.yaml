@@ -15,6 +15,27 @@ spec:
       labels:
         app: otel-collector-codeagentsim
     spec:
+      # EKS nodes are IPv4-only; Coralogix ingress publishes AAAA and Go dials IPv6 first
+      # ("network is unreachable"), burning budget into remote_write deadlines. Pin A records.
+      initContainers:
+        - name: coralogix-ipv4-hosts
+          image: busybox:1.36
+          command:
+            - sh
+            - -ec
+            - |
+              cp /etc/hosts /work/hosts
+              for host in ingress.us2.coralogix.com ingress.eu1.coralogix.com; do
+                IP=$(nslookup "$host" 2>/dev/null | awk '/^Address: / { print $2 }' | grep -E '^[0-9]+\.' | tail -1)
+                if [ -z "$IP" ]; then echo "failed to resolve $host A record"; exit 1; fi
+                grep -v "[[:space:]]${host}$" /work/hosts > /work/hosts.tmp
+                mv /work/hosts.tmp /work/hosts
+                echo "$IP $host" >> /work/hosts
+                echo "pinned $host -> $IP"
+              done
+          volumeMounts:
+            - name: etc-hosts
+              mountPath: /work
       containers:
         - name: otelcol
           # Live cluster was 0.115.1 until this rollout; 0.158.0 supports translation_strategy: NoTranslation.
@@ -49,6 +70,10 @@ spec:
                   name: coralogix-multi-export
                   key: private_key_onlineboutique_dev
           volumeMounts:
+            - name: etc-hosts
+              mountPath: /etc/hosts
+              subPath: hosts
+              readOnly: true
             - name: config
               mountPath: /etc/otelcol
               readOnly: true
@@ -66,12 +91,15 @@ spec:
             periodSeconds: 20
           resources:
             requests:
-              cpu: 100m
+              cpu: 250m
               memory: 1536Mi
             limits:
-              cpu: "1"
+              # Triple remote_write of ~200k series needs headroom above 1 CPU.
+              cpu: "2"
               memory: 3Gi
       volumes:
+        - name: etc-hosts
+          emptyDir: {}
         - name: config
           configMap:
             name: otel-collector-codeagentsim-config

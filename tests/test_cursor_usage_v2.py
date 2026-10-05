@@ -372,6 +372,24 @@ def test_idle_seats_and_surface_user_diversity(monkeypatch) -> None:
     dau_lines = _metric_lines(payload, "cursor_active_users_total")
     assert any(f'date="{today}"' in line and float(line.rsplit(" ", 1)[-1]) > 0 for line in dau_lines)
 
+    # Adoption Active Users / Adoption Rate KPIs join roster to these (not member_active).
+    seat_line_emails = {
+        line.split('email="', 1)[1].split('"', 1)[0]
+        for line in _metric_lines(payload, "cursor_user_lines_total")
+        if f'date="{today}"' in line
+        and 'source="agent"' in line
+        and 'outcome="suggested"' in line
+        and float(line.rsplit(" ", 1)[-1]) > 0
+    }
+    tab_emails = {
+        line.split('email="', 1)[1].split('"', 1)[0]
+        for line in _metric_lines(payload, "cursor_user_tab_suggestions_total")
+        if f'date="{today}"' in line and float(line.rsplit(" ", 1)[-1]) > 0
+    }
+    seat_active = seat_line_emails | tab_emails
+    assert seat_active
+    assert idle_emails.isdisjoint(seat_active)
+
     request_emails = {
         line.split('email="', 1)[1].split('"', 1)[0]
         for line in _metric_lines(payload, "cursor_requests_total")
