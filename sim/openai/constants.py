@@ -64,6 +64,16 @@ USAGE_FAMILY_FIELDS: tuple[str, ...] = (
     "file_search_requests",
 )
 
+# Models shown on Platform Features widgets (separate from chat completions).
+PLATFORM_FEATURE_MODELS: dict[str, tuple[str, ...]] = {
+    "embeddings": ("text-embedding-3-large", "text-embedding-3-small"),
+    "audio_speeches": ("gpt-4o-mini-tts", "tts-1-hd"),
+    "audio_transcriptions": ("gpt-4o-transcribe", "whisper-1"),
+    "moderations": ("omni-moderation-latest",),
+    "web_search": ("gpt-5.5", "gpt-5.4"),
+    "file_search": ("gpt-5.5", "gpt-5.4-mini"),
+}
+
 SERVICE_TIERS: tuple[str, ...] = ("default", "flex", "priority")
 
 COST_LINE_KINDS: tuple[str, ...] = (
@@ -86,6 +96,7 @@ HOSTED_TOOLS: tuple[str, ...] = (
 )
 
 # Weekday targets (weekend ≈ 0.6×). Cost derived from tokens × list price, then scaled.
+# Keep org daily well under Claude Products (~$7–8K/day); weekly stays ~$5–8K not $1M.
 WEEKDAY_INPUT_TOKENS = 270_000_000
 WEEKDAY_OUTPUT_TOKENS = 30_000_000
 WEEKDAY_REQUESTS = 150_000

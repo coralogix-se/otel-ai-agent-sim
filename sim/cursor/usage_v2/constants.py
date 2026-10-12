@@ -300,9 +300,8 @@ def cursor_usage_cx_subsystem() -> str:
 def cursor_usage_roster_size() -> int:
     from sim.common.env import _env_int
 
-    # Prefer 40–60 licensed seats so the dashboard feels busy without
-    # inflating per-user conversation_id cardinality.
-    return max(4, min(64, _env_int("SIM_CURSOR_USAGE_ROSTER_SIZE", 48)))
+    # Brief §8: raise member_* series toward c4c (~172–249). Cap 225 (full team roster).
+    return max(4, min(225, _env_int("SIM_CURSOR_USAGE_ROSTER_SIZE", 48)))
 
 
 def cursor_usage_conversations_per_day() -> int:

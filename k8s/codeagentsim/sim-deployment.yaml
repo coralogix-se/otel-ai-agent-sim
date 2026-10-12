@@ -26,7 +26,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:cursor-seats-20261005160418
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:demo-shape-20261012c
           imagePullPolicy: Always
           env:
             # OTLP -> otel-collector-codeagentsim; collector exports to Coralogix US2 + EU1 (no API key in this pod).
@@ -64,8 +64,9 @@ spec:
             # Omit TRACE_ITERATIONS to run forever; set e.g. "20" for a finite batch
             # - name: TRACE_ITERATIONS
             #   value: "20"
+            # Brief §6: 60s export cadence (was 3s — drove ~111 samples/series/day).
             - name: TRACE_INTERVAL_SEC
-              value: "3"
+              value: "60"
             - name: OTEL_SERVICE_NAME
               value: ai-agent-engine
             - name: CX_APPLICATION_NAME
@@ -77,11 +78,15 @@ spec:
               value: claude-code
             - name: CLAUDE_CODE_CX_SUBSYSTEM_NAME
               value: claude-code
-            # Claude log/metric shape: ``flat``, ``dotted``, or ``both`` (dual OTLP logs + duplicate Prom counters per subsystem).
+            # Brief §6: single log profile + team subsystems (team1–team5, enterprise) instead of
+            # dual ``claude-code`` / ``claude-code-sessions`` (was ~2× session series).
             - name: SIM_CLAUDE_TELEMETRY_PROFILE
-              value: both
-            # Dotted OTLP logs (``event.name``, ``session.id``, full ``prompt`` text) — filter in dmbsm:
-            # ``$l.subsystemname == 'claude-code-sessions'`` vs flat ``claude-code``.
+              value: flat
+            - name: SIM_CLAUDE_TEAM_SUBSYSTEMS
+              value: "true"
+            - name: SIM_CLAUDE_CX_SUBSYSTEM_TEAMS
+              value: "team1,team2,team3,team4,team5,enterprise"
+            # Dotted OTLP logs (unused when profile=flat):
             - name: SIM_CLAUDE_DOTTED_CX_SUBSYSTEM_NAME
               value: claude-code-sessions
             # Optional for ``dotted`` / ``both``: SIM_CLAUDE_DOTTED_SERVICE_VERSION,
@@ -118,6 +123,25 @@ spec:
               value: "true"
             - name: SIM_COPILOT_COLLECTOR_ORG
               value: coralogix
+            # Brief §7: cxai-like 1 sample/series/day + ~26/46/51 AU; rename to *_activity_count.
+            - name: SIM_COPILOT_SPARSE_SAMPLES
+              value: "true"
+            - name: SIM_COPILOT_SAMPLE_HOUR_UTC
+              value: "20"
+            - name: SIM_COPILOT_SAMPLE_WINDOW_SEC
+              value: "90"
+            - name: SIM_COPILOT_TARGET_DAU
+              value: "26"
+            - name: SIM_COPILOT_TARGET_WAU
+              value: "46"
+            - name: SIM_COPILOT_TARGET_MAU
+              value: "51"
+            - name: SIM_COPILOT_USER_CLI_SESSIONS_MIN
+              value: "2"
+            - name: SIM_COPILOT_USER_CLI_SESSIONS_MAX
+              value: "8"
+            - name: SIM_COPILOT_COLLECTOR_TEAM
+              value: engineering
             # Stamp ``github.copilot.cost`` / billing ~once per user per UTC day (accrued from sessions).
             - name: SIM_COPILOT_COST_ONCE_PER_DAY
               value: "true"
@@ -221,32 +245,70 @@ spec:
             # Parallel **long** Claude users (same duration N): ``SIM_CLAUDE_CONCURRENT_LONG_SESSIONS`` independent
             # slots (like Gemini); each slot pins one roster row for N seconds — up to that many distinct users at once
             # without shortening N. Slot pick: ``SIM_CLAUDE_SESSION_SLOT_STRATEGY`` = ``random`` (default) or ``round_robin``.
-            # Target: ~18 parallel Claude users (aligned with Gemini/Cursor), one emit per cycle.
-            # User pin uniform in [2100,4200]s; session.id rotate in [386,900]s; slot deadlines staggered in code.
+            # Brief §6: ~6 min session lifetime, ~30 sessions/user/day, ~3k sessions/day from ~100 users.
+            # User pin ≈ session.id rotate ≈ 300–420s; activity pacing picks ~35% of roster at peak hours.
             - name: SIM_CLAUDE_LONG_SESSION_SEC_MIN
-              value: "2100"
+              value: "300"
             - name: SIM_CLAUDE_LONG_SESSION_SEC_MAX
-              value: "4200"
+              value: "420"
             - name: SIM_CLAUDE_SESSION_ID_ROTATE_SEC_MIN
-              value: "386"
+              value: "300"
             - name: SIM_CLAUDE_SESSION_ID_ROTATE_SEC_MAX
-              value: "900"
-            # Cap user_prompt emits per session.id (else always-emit + long rotate → 98% "too many prompts" insight).
+              value: "420"
+            # ~6 emits/session at 60s TRACE_INTERVAL (do not cut session early via prompt budget).
             - name: SIM_CLAUDE_SESSION_PROMPTS_MIN
-              value: "2"
+              value: "5"
             - name: SIM_CLAUDE_SESSION_PROMPTS_MAX
+              value: "8"
+            - name: SIM_CLAUDE_SESSION_TURNS_EXPECTED
               value: "6"
             - name: SIM_CLAUDE_PREFILL_SESSION_SLOTS
               value: "true"
-            # Fan-out when Claude wins selection: all Products/API roster users emit OTEL (repo + cost).
+            # Activity pacing (daily × hourly × peak frac) replaces always-emit fan-out (was ~31.9k sessions/day).
+            - name: SIM_CLAUDE_ACTIVITY_PACING
+              value: "true"
+            - name: SIM_CLAUDE_DAY_VARIATION
+              value: "true"
+            - name: SIM_CLAUDE_HOURLY_SHAPE
+              value: "true"
+            # ~0.25 × 100 users × avg hourly ~0.5 × 1440 cycles / 6 turns ≈ ~3k sessions/day.
+            - name: SIM_CLAUDE_PEAK_ACTIVE_USER_FRAC
+              value: "0.25"
+            - name: SIM_CLAUDE_INDEPENDENT_EMIT
+              value: "true"
             - name: SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS
-              value: "true"
+              value: "false"
             - name: SIM_CLAUDE_PRODUCTS_ROSTER_ALWAYS_EMIT
-              value: "true"
+              value: "false"
             - name: SIM_CLAUDE_PREFILL_PRODUCTS_ROSTER_OTEL
-              value: "true"
+              value: "false"
             - name: SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT
               value: "1"
+            # Per-session metric budgets (brief §6).
+            - name: SIM_CLAUDE_SESSION_TOKEN_BUDGET
+              value: "true"
+            - name: SIM_CLAUDE_SESSION_TOKENS_TOTAL
+              value: "3700000"
+            - name: SIM_CLAUDE_SESSION_COST_USD
+              value: "2.2"
+            - name: SIM_CLAUDE_SESSION_ACTIVE_TIME_BUDGET
+              value: "true"
+            - name: SIM_CLAUDE_SESSION_ACTIVE_TIME_S
+              value: "380"
+            - name: SIM_CLAUDE_EMIT_EDIT_SESSION_FRAC
+              value: "0.18"
+            - name: SIM_CLAUDE_EMIT_LOC_SESSION_FRAC
+              value: "0.18"
+            - name: SIM_CLAUDE_EMIT_REPO_SESSION_FRAC
+              value: "0.45"
+            - name: SIM_CLAUDE_EMIT_COMMIT_SESSION_FRAC
+              value: "0.10"
+            - name: SIM_CLAUDE_EMIT_PR_SESSION_FRAC
+              value: "0.05"
+            - name: SIM_CLAUDE_EDIT_FULL_CARDINALITY
+              value: "true"
+            - name: SIM_CLAUDE_EMIT_DUPLICATE_TOKEN_METRIC
+              value: "false"
             # Keep at 1 when PRODUCTS_ROSTER_ALWAYS_EMIT fans out all 32 users each cycle.
             # mult=300 × always-emit produced multi-million $/day and hundreds of billions of tokens.
             - name: SIM_CLAUDE_PER_EMIT_TOKEN_MULT
@@ -268,9 +330,22 @@ spec:
             # Annual pooled budget ≈ current week × 52 (Annual Budget widgets).
             - name: SIM_CURSOR_ORG_POOL_WEEKLY_USD
               value: "129000"
-            # ~48 seats (40–60); grow users instead of conversation_id cardinality.
+            # Brief §8: ~172 member series (c4c); sparse samples ~2/day; scale values toward c4c.
+            # Brief §8: member_info ~201; brief scales cut high-cardinality series.
             - name: SIM_CURSOR_USAGE_ROSTER_SIZE
-              value: "48"
+              value: "201"
+            - name: SIM_CURSOR_USAGE_BRIEF_SCALES
+              value: "true"
+            - name: SIM_CURSOR_USAGE_SPARSE_SAMPLES
+              value: "true"
+            - name: SIM_CURSOR_USAGE_SAMPLE_HOURS_UTC
+              value: "11,23"
+            - name: SIM_CURSOR_USAGE_SAMPLE_WINDOW_SEC
+              value: "90"
+            - name: SIM_CURSOR_USAGE_VOLUME
+              value: "0.05"
+            - name: SIM_DAY_VARIATION
+              value: "true"
             # Per-loop event burst cap. Daily pacing targets ~400 conversations × 20–40 events.
             - name: SIM_CURSOR_USAGE_EMITS_PER_CYCLE
               value: "2"
@@ -282,16 +357,16 @@ spec:
               value: "40"
             - name: SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY
               value: "350"
-            # Align Claude Code session/repo metrics with Anthropic Admin Claude Products users (first 24 roster rows).
+            # Align first 24 with Anthropic Admin Claude Products; grow Claude Code DAU via OTEL-only (~100 total).
             - name: SIM_CLAUDE_ALIGN_PRODUCTS_ROSTER
               value: "true"
             - name: SIM_PRODUCTS_ROSTER_SIZE
               value: "24"
-            # OTEL-only Claude Code users (roster indices 24..31): tokens/sessions/repos but no Admin API row.
+            # OTEL-only Claude Code users (indices 24..99): tokens/sessions/repos but no Admin API row.
             - name: SIM_CLAUDE_OTEL_ONLY_ROSTER_SIZE
-              value: "8"
+              value: "76"
             - name: SIM_CLAUDE_CONCURRENT_LONG_SESSIONS
-              value: "32"
+              value: "100"
             # - name: SIM_CLAUDE_SESSION_SLOT_STRATEGY
             #   value: "round_robin"
             - name: SIM_CLAUDE_STABLE_SESSION_PER_USER

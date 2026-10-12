@@ -29,9 +29,10 @@ data:
         config:
           scrape_configs:
             # Heavier targets: longer interval/timeout so one scrape finishes before the next.
+            # Brief §6: 60s export (was 30s) so samples/series/day stay ≤ ~31 with ~6 min sessions.
             - job_name: otel-ai-agent-sim
-              scrape_interval: 30s
-              scrape_timeout: 25s
+              scrape_interval: 60s
+              scrape_timeout: 55s
               static_configs:
                 - targets:
                     - otel-ai-agent-sim:9090

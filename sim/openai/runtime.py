@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -42,6 +43,7 @@ from sim.openai.constants import (
     HOSTED_TOOLS,
     OPENAI_ADMIN_MODEL_SPEND_WEIGHTS,
     OPENAI_ADMIN_MODELS,
+    PLATFORM_FEATURE_MODELS,
     ORG_INVITE_LABELS,
     ORG_USER_LABELS,
     PROJECT_KEY_LABELS,
@@ -105,7 +107,10 @@ class OpenAIAdminSim:
 
     _closed_days: set[str] = field(default_factory=set)
     _backfilled: bool = False
+    _history_prune_after_ts: float = 0.0
+    _history_pruned: bool = False
     _inventory_hour: int = -1
+    _active_cost_day: str = ""
 
     _usage_gauges: dict[str, Gauge] = field(default_factory=dict)
     _family_gauges: dict[str, Gauge] = field(default_factory=dict)
@@ -494,10 +499,16 @@ class OpenAIAdminSim:
             scale *= 0.85
         return scale
 
-    def _target_day_usd(self, day: datetime, *, today: datetime) -> float:
+    def _day_rng(self, day: str) -> random.Random:
+        """Stable RNG per UTC date so rematerializing today updates the same series."""
+        return random.Random(f"openai-admin:{self.organization}:{day}")
+
+    def _target_day_usd(
+        self, day: datetime, *, today: datetime, rng: random.Random
+    ) -> float:
         lo = _env_float("SIM_OPENAI_ADMIN_WEEKDAY_COST_LO", WEEKDAY_COST_USD_LO)
         hi = _env_float("SIM_OPENAI_ADMIN_WEEKDAY_COST_HI", WEEKDAY_COST_USD_HI)
-        base = random.uniform(lo, hi)
+        base = rng.uniform(lo, hi)
         return max(50.0, base * self._day_scale(day, today=today))
 
     def _set_usage(
@@ -553,12 +564,72 @@ class OpenAIAdminSim:
         self.cost_usd.labels(**labels).set(usd)
         self.cost_qty.labels(**labels, unit=unit).set(qty)
 
+    def _materialize_platform_features(
+        self,
+        *,
+        day: str,
+        tok_scale: float,
+        rng: random.Random,
+        keys: list[dict[str, str]],
+        users: list,
+        project_by_id: dict[str, dict[str, str]],
+    ) -> None:
+        """Always populate Platform Features usage families for ``day``."""
+        n_slices = min(6, max(2, len(keys) // 4))
+        slice_keys = rng.sample(keys, k=min(n_slices, len(keys)))
+        # Per-family daily totals (scaled by weekday/weekend), then split across keys.
+        family_totals: dict[str, float] = {
+            "embeddings_tokens": rng.uniform(8_000_000, 22_000_000) * tok_scale,
+            "embeddings_model_requests": rng.uniform(4_000, 18_000) * tok_scale,
+            "audio_speeches_characters": rng.uniform(400_000, 1_800_000) * tok_scale,
+            "audio_speeches_model_requests": rng.uniform(800, 4_000) * tok_scale,
+            "audio_transcriptions_seconds": rng.uniform(20_000, 90_000) * tok_scale,
+            "audio_transcriptions_model_requests": rng.uniform(600, 3_000) * tok_scale,
+            "moderations_tokens": rng.uniform(2_000_000, 9_000_000) * tok_scale,
+            "moderations_model_requests": rng.uniform(3_000, 12_000) * tok_scale,
+            "web_search_requests": rng.uniform(2_000, 9_000) * tok_scale,
+            "web_search_model_requests": rng.uniform(1_500, 7_000) * tok_scale,
+            "file_search_requests": rng.uniform(1_000, 5_000) * tok_scale,
+        }
+        family_to_models = {
+            "embeddings_tokens": PLATFORM_FEATURE_MODELS["embeddings"],
+            "embeddings_model_requests": PLATFORM_FEATURE_MODELS["embeddings"],
+            "audio_speeches_characters": PLATFORM_FEATURE_MODELS["audio_speeches"],
+            "audio_speeches_model_requests": PLATFORM_FEATURE_MODELS["audio_speeches"],
+            "audio_transcriptions_seconds": PLATFORM_FEATURE_MODELS["audio_transcriptions"],
+            "audio_transcriptions_model_requests": PLATFORM_FEATURE_MODELS["audio_transcriptions"],
+            "moderations_tokens": PLATFORM_FEATURE_MODELS["moderations"],
+            "moderations_model_requests": PLATFORM_FEATURE_MODELS["moderations"],
+            "web_search_requests": PLATFORM_FEATURE_MODELS["web_search"],
+            "web_search_model_requests": PLATFORM_FEATURE_MODELS["web_search"],
+            "file_search_requests": PLATFORM_FEATURE_MODELS["file_search"],
+        }
+        share = 1.0 / len(slice_keys)
+        for sk in slice_keys:
+            user = rng.choice(users)
+            project = project_by_id.get(sk["project_id"], self.projects[0])
+            tier = rng.choices(SERVICE_TIERS, weights=(0.85, 0.1, 0.05), k=1)[0]
+            for field_name, total in family_totals.items():
+                models = family_to_models[field_name]
+                model = rng.choice(models)
+                labels = {
+                    **self._metric_base(),
+                    "model": model,
+                    "api_key_id": sk["api_key_id"],
+                    "date": day,
+                    "project_id": project["project_id"],
+                    "user_id": user.user_id,
+                    "service_tier": tier,
+                }
+                self._family_gauges[field_name].labels(**labels).set(total * share)
+
     def _materialize_day(self, day_dt: datetime, *, today: datetime, force: bool = False) -> None:
         day = day_dt.date().isoformat()
         if day in self._closed_days and not force:
             return
 
-        target_usd = self._target_day_usd(day_dt, today=today)
+        rng = self._day_rng(day)
+        target_usd = self._target_day_usd(day_dt, today=today, rng=rng)
         tok_scale = self._day_scale(day_dt, today=today)
         day_input = WEEKDAY_INPUT_TOKENS * tok_scale
         day_output = WEEKDAY_OUTPUT_TOKENS * tok_scale
@@ -595,12 +666,12 @@ class OpenAIAdminSim:
 
         for model, uncached, cached, out_tok, req, usd in parts:
             n_slices = min(8, max(3, len(keys) // 3))
-            slice_keys = random.sample(keys, k=min(n_slices, len(keys)))
+            slice_keys = rng.sample(keys, k=min(n_slices, len(keys)))
             for sk in slice_keys:
                 share = 1.0 / len(slice_keys)
-                user = random.choice(users)
+                user = rng.choice(users)
                 project = project_by_id.get(sk["project_id"], self.projects[0])
-                tier = random.choices(SERVICE_TIERS, weights=(0.8, 0.12, 0.08), k=1)[0]
+                tier = rng.choices(SERVICE_TIERS, weights=(0.8, 0.12, 0.08), k=1)[0]
                 u_unc = uncached * share
                 u_c = cached * share
                 u_in = u_unc + u_c
@@ -758,39 +829,27 @@ class OpenAIAdminSim:
                     **cost_kw,
                 )
 
-                if random.random() < 0.4:
-                    fam_labels = {
-                        **self._metric_base(),
-                        "model": model,
-                        "api_key_id": sk["api_key_id"],
-                        "date": day,
-                        "project_id": project["project_id"],
-                        "user_id": user.user_id,
-                        "service_tier": tier,
-                    }
-                    self._family_gauges["embeddings_tokens"].labels(**fam_labels).set(
-                        random.uniform(50_000, 400_000) * tok_scale * share
-                    )
-                    self._family_gauges["embeddings_model_requests"].labels(**fam_labels).set(
-                        random.uniform(20, 200) * tok_scale * share
-                    )
-                    self._family_gauges["web_search_requests"].labels(**fam_labels).set(
-                        random.uniform(10, 80) * tok_scale * share
-                    )
-                    self._family_gauges["file_search_requests"].labels(**fam_labels).set(
-                        random.uniform(5, 40) * tok_scale * share
-                    )
+        # Platform Features panel: always emit every family (was optional + incomplete →
+        # dashboards showed Embeddings only / zeros for audio, moderations, search).
+        self._materialize_platform_features(
+            day=day,
+            tok_scale=tok_scale,
+            rng=rng,
+            keys=keys,
+            users=users,
+            project_by_id=project_by_id,
+        )
 
         for tool in COST_TOOL_LINE_ITEMS:
-            proj = random.choice([p for p in self.projects if p["status"] == "active"] or list(self.projects))
-            u = random.choice(users)
-            k = random.choice(keys)
+            proj = rng.choice([p for p in self.projects if p["status"] == "active"] or list(self.projects))
+            u = rng.choice(users)
+            k = rng.choice(keys)
             self._set_cost(
                 line_item=tool,
                 project=proj,
                 day=day,
-                usd=random.uniform(2.0, 12.0) * tok_scale,
-                qty=random.uniform(20, 120) * tok_scale,
+                usd=rng.uniform(2.0, 12.0) * tok_scale,
+                qty=rng.uniform(20, 120) * tok_scale,
                 unit="calls",
                 api_key_id=k["api_key_id"],
                 user_id=u.user_id,
@@ -798,6 +857,46 @@ class OpenAIAdminSim:
             )
 
         self._closed_days.add(day)
+
+    def _date_scoped_gauges(self) -> tuple[Gauge, ...]:
+        return (
+            self.cost_usd,
+            self.cost_qty,
+            *self._usage_gauges.values(),
+            *self._family_gauges.values(),
+        )
+
+    def _remove_gauge_dates_except(self, keep_day: str) -> int:
+        """Drop date-labeled children so we stop restating history every scrape.
+
+        The API Platform UI uses ``last_over_time([1d|Nd])`` and sums every series
+        still receiving samples. Keeping 28d of gauges live made "last 24h" look
+        like a full month of spend.
+        """
+        removed = 0
+        for gauge in self._date_scoped_gauges():
+            if "date" not in gauge._labelnames:
+                continue
+            di = list(gauge._labelnames).index("date")
+            for key in list(gauge._metrics.keys()):
+                if key[di] != keep_day:
+                    gauge.remove(*key)
+                    removed += 1
+        return removed
+
+    def _maybe_prune_history(self, today_key: str) -> None:
+        if self._history_pruned or not self._backfilled:
+            return
+        if time.time() < self._history_prune_after_ts:
+            return
+        removed = self._remove_gauge_dates_except(today_key)
+        self._history_pruned = True
+        # Closed-day set still tracks what we backfilled; gauges only keep today.
+        log.info(
+            "OpenAI Admin pruned %d non-today date gauge series (keep date=%s)",
+            removed,
+            today_key,
+        )
 
     def _ensure_backfill(self, now: datetime) -> None:
         if self._backfilled:
@@ -807,13 +906,20 @@ class OpenAIAdminSim:
             day_dt = now - timedelta(days=age)
             self._materialize_day(day_dt, today=now, force=True)
         self._backfilled = True
+        # Let the collector scrape historical buckets once, then stop restating them.
+        grace = _env_int("SIM_OPENAI_ADMIN_HISTORY_SCRAPE_GRACE_SEC", 90)
+        if grace < 0:
+            grace = 0
+        self._history_prune_after_ts = time.time() + grace
+        self._history_pruned = False
         log.info(
-            "OpenAI Admin backfilled %d daily buckets (models=%s; weekday~$%.0f–%.0f; org=%s)",
+            "OpenAI Admin backfilled %d daily buckets (models=%s; weekday~$%.0f–%.0f; org=%s; prune_in=%ss)",
             days,
             ",".join(self.models),
             WEEKDAY_COST_USD_LO,
             WEEKDAY_COST_USD_HI,
             self.organization,
+            grace,
         )
 
     def emit_cycle(self, now: datetime | None = None) -> None:
@@ -822,9 +928,17 @@ class OpenAIAdminSim:
 
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_key = today.date().isoformat()
+        if self._active_cost_day and self._active_cost_day != today_key:
+            # UTC day rolled — drop yesterday's live gauges (TSDB keeps prior scrapes).
+            self._remove_gauge_dates_except(today_key)
+            self._history_pruned = True
+        self._active_cost_day = today_key
+        # Day-seeded rematerialize .set()s the same label sets — do not invent new
+        # series each minute (that stacked to ~$100K+/day and ~$1M/week in CX).
         if today_key in self._closed_days:
             self._closed_days.discard(today_key)
         self._materialize_day(today, today=now, force=True)
+        self._maybe_prune_history(today_key)
 
         if _env_bool("SIM_OPENAI_ADMIN_REFRESH_DIRECTORY", True):
             self._seed_directory()

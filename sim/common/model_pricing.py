@@ -39,8 +39,12 @@ _EXACT: dict[str, ModelRates] = {
     # --- Anthropic Claude (Opus/Sonnet/Haiku/Fable) ---
     # Sonnet 5: $2/$10 is the standard price (intro rate made permanent; no Sep 2026 increase).
     "claude-fable-5": _r(10.0, 50.0),
+    "claude-fable-5-1": _r(10.0, 50.0),
     "claude-sonnet-5": _r(2.0, 10.0),
+    "claude-sonnet-5-5": _r(2.0, 10.0),
     "claude-opus-5": _r(5.0, 25.0),
+    "claude-opus-5-5": _r(5.0, 25.0),
+    "claude-opus-5-5[1m]": _r(5.0, 25.0),
     "claude-opus-4-8": _r(5.0, 25.0),
     "claude-opus-4-7": _r(5.0, 25.0),
     "claude-opus-4-6": _r(5.0, 25.0),

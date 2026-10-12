@@ -298,9 +298,30 @@ def test_top_spenders_pace_near_daily_usd_target(monkeypatch: pytest.MonkeyPatch
     avery = by_email.get("avery.okafor@coralogix.com", 0.0)
     taylor = by_email.get("taylor.silva@coralogix.com", 0.0)
     jordan = by_email.get("jordan.garcia@coralogix.com", 0.0)
-    assert sam >= 800.0, sam
-    assert avery >= 700.0, avery
-    assert taylor >= 700.0, taylor
+    # Mid-day (~0.5 day fraction) → hundreds toward ~$1K; hard cap ≤ ~$2.1K.
+    assert sam >= 200.0, sam
+    assert avery >= 150.0, avery
+    assert taylor >= 150.0, taylor
+    assert sam <= 2100.0, sam
+    assert avery <= 2000.0, avery
+    assert taylor <= 2000.0, taylor
     # #1 unmanaged rogue stays clearly ahead of the old index-0 outlier.
     assert sam > jordan
     assert sam >= avery * 0.9
+
+
+def test_utc_midnight_drops_prior_date_user_cost_series() -> None:
+    """Day roll must not keep yesterday's date-labeled gauges (dashboard sums all dates)."""
+    registry = CollectorRegistry()
+    sim = AnthropicAdminSim(registry=registry, logger=None, emits_per_cycle=8)
+    sim.emit_cycle(now=datetime(2026, 10, 5, 23, 50, tzinfo=timezone.utc))
+    before = generate_latest(registry).decode()
+    assert 'date="2026-10-05"' in before
+    sim.emit_cycle(now=datetime(2026, 10, 6, 0, 5, tzinfo=timezone.utc))
+    after = generate_latest(registry).decode()
+    assert 'date="2026-10-06"' in after
+    assert 'anthropic_analytics_user_cost{' in after
+    for line in after.splitlines():
+        if line.startswith("anthropic_analytics_user_cost{"):
+            assert 'date="2026-10-05"' not in line
+            assert 'date="2026-10-06"' in line

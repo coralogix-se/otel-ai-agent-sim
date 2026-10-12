@@ -63,11 +63,13 @@ def sim_top_spender_pace_multiplier(roster_user: dict | None) -> float:
         return 1.0
     rank = sim_top_spender_rank(roster_user) or 2
     # Keep #1 a bit above #2/#3 so the unmanaged rogue is the clear top spender.
-    rank_target = target * (1.08 if rank == 1 else 1.0)
-    expected = rank_target * _elapsed_day_fraction()
+    rank_target = target * (1.05 if rank == 1 else 1.0)
     accrued = claude_user_accrued_spend_usd(roster_user)
+    if accrued >= rank_target:
+        return 0.08  # hard daily cap — drip only
+    expected = rank_target * _elapsed_day_fraction()
     if accrued < 1.0:
-        # Front-load a bit so demos see spend early in the day.
-        return 2.2 if rank == 1 else 1.8
+        # Mild front-load so demos see spend early without blowing past ~$2K/day.
+        return 1.35 if rank == 1 else 1.2
     ratio = expected / max(accrued, 0.01)
-    return max(0.12, min(3.5, ratio))
+    return max(0.1, min(1.8, ratio))

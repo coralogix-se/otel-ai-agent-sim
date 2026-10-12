@@ -52,7 +52,11 @@ spec:
             - name: SIM_CURSOR_USAGE_INTERVAL_SEC
               value: "30"
             - name: SIM_CURSOR_USAGE_ROSTER_SIZE
-              value: "48"
+              value: "201"
+            - name: SIM_CURSOR_USAGE_BRIEF_SCALES
+              value: "true"
+            - name: SIM_CURSOR_USAGE_SPARSE_SAMPLES
+              value: "true"
             - name: DEPLOYMENT_ENVIRONMENT
               value: kind-local
           ports:

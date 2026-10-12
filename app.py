@@ -415,7 +415,8 @@ _CC_BASE_LABEL_NAMES = (
 
 # ``claude_code_lines_of_code_count_*`` — same user dimensions as commit/PR counters so
 # ``sum by (user_email)`` / ``sum by (user_name)`` panels do not drop LOC while showing commits.
-_CC_LOC_LABEL_NAMES = _CC_BASE_LABEL_NAMES + ("type",)
+# ``model`` matches c4c ``claude_code_lines_of_code_count`` (onlineboutique brief §6).
+_CC_LOC_LABEL_NAMES = _CC_BASE_LABEL_NAMES + ("type", "model")
 
 
 def _map_cc_base_labels(base: dict, cx_app: str, cx_sub: str) -> dict[str, str]:
@@ -2114,11 +2115,18 @@ def _claude_emit_session_slot_count(n_slots: int) -> int:
     """
     How many parallel slot users emit when Claude Code wins agent selection.
 
-    ``SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS=true`` → all slots. Else ``SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT``
-    (default 1) caps fan-out so overview session share stays balanced vs span-based agents.
+    With ``SIM_CLAUDE_ACTIVITY_PACING=true`` (default): daily × hourly multiplier × peak frac
+    (onlineboutique brief §6/§9) — typically ~35 peak concurrent of a 100-user roster.
+
+    Else ``SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS=true`` → all slots; otherwise
+    ``SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT`` (default 1) caps fan-out.
     """
     if n_slots <= 0:
         return 0
+    if _env_bool("SIM_CLAUDE_ACTIVITY_PACING", True):
+        from sim.claude.day_variation import claude_target_emit_count
+
+        return claude_target_emit_count(n_slots)
     if _claude_emit_all_session_slots():
         return n_slots
     cap = _env_int("SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT", 1)
@@ -3859,19 +3867,22 @@ def main() -> None:
         labelnames=_CC_BASE_LABEL_NAMES,
         registry=_prom_registry,
     )
-    # HAR name + Coralogix volume name (both incremented together; see ``_cc_token_inc`` in ``main``).
+    # HAR / c4c name. Do not emit ``claude_code_token_usage__token_`` — brief §6 Delete
+    # (duplicate with broken name; ~84k extra series on onlineboutique).
     cc_token = Counter(
         "claude_code_token_usage_tokens",
         "Claude Code token usage (HAR metric name)",
         labelnames=_cc_tok_l,
         registry=_prom_registry,
     )
-    cc_token_coralogix = Counter(
-        "claude_code_token_usage__token_",
-        "Claude Code token usage (Coralogix token volume series)",
-        labelnames=_cc_tok_l,
-        registry=_prom_registry,
-    )
+    cc_token_coralogix = None
+    if _env_bool("SIM_CLAUDE_EMIT_DUPLICATE_TOKEN_METRIC", False):
+        cc_token_coralogix = Counter(
+            "claude_code_token_usage__token_",
+            "Claude Code token usage (legacy Coralogix twin — disabled by default)",
+            labelnames=_cc_tok_l,
+            registry=_prom_registry,
+        )
     cc_cost = Counter(
         "claude_code_cost_usage_USD",
         "Claude Code cost USD",
@@ -4142,45 +4153,43 @@ def main() -> None:
 
         otlp_metrics.record_trace_iteration(otlp_iter_counter, profile)
 
-        # Raw Gemini CLI shape: single INTERNAL span `user_prompt` on tracer `gemini-cli`
-        # with a version from ``AGENT_TOOL_VERSIONS`` (see sample: gen_ai.* / cx.* / otel.library.*).
-        if profile["agent.product"] == "gemini_cli":
-            gid = session_id
-            gru: dict | None = None
-            if _env_bool("SIM_GEMINI_STABLE_SESSION_PER_USER", True):
-                gru = _gemini_roster_user_for_emit()
-                gid = _gemini_stable_session_id_from_user_attrs(gru)
-            emit_gemini_cli_user_prompt_span(gid, roster_user=gru)
-            return
-
-        if profile["agent.product"] == "claude_code":
+        def _run_claude_code_emit(cc_profile: dict) -> None:
+            """Emit paced Claude Code metrics/logs for the active slot subset."""
             cc_ver = os.environ.get("SIM_CC_APP_VERSION") or tool_version_for("claude_code")
             mult = max(0.01, _env_float("SIM_CLAUDE_PER_EMIT_TOKEN_MULT", 1.0))
             batch = max(1, _env_int("SIM_CLAUDE_TOKEN_EMIT_BATCH", 1))
+            pacing = _env_bool("SIM_CLAUDE_ACTIVITY_PACING", True)
             stable_user = _env_bool("SIM_CLAUDE_STABLE_SESSION_PER_USER", True)
             if stable_user:
                 roster_users = _claude_roster_users_for_claude_code_emit()
             else:
                 roster_users = [None]
             for user_idx, _ru in enumerate(roster_users):
-                if _ru is not None and not claude_user_should_emit_this_cycle(_ru):
+                # Activity pacing already chose the active subset — do not randomly skip again.
+                if (
+                    not pacing
+                    and _ru is not None
+                    and not claude_user_should_emit_this_cycle(_ru)
+                ):
                     continue
-                turns = (
-                    claude_user_emit_turns_this_cycle(_ru, default_batch=batch)
-                    if _ru is not None
-                    else batch
-                )
+                if pacing:
+                    turns = 1
+                else:
+                    turns = (
+                        claude_user_emit_turns_this_cycle(_ru, default_batch=batch)
+                        if _ru is not None
+                        else batch
+                    )
                 if turns <= 0:
                     continue
                 if stable_user and _ru is not None:
-                    session_id = _claude_session_id_for_roster_user(_ru)
+                    emit_session_id = _claude_session_id_for_roster_user(_ru)
                 else:
-                    session_id = _claude_long_session_trace_id()
+                    emit_session_id = _claude_long_session_trace_id()
                 user_tok_mult = claude_user_token_multiplier(_ru)
                 user_prod_mult = claude_user_productivity_multiplier(_ru)
                 for b in range(turns):
-                    # Same ``session_id`` per user for every sub-emit in this batch window.
-                    emit_sid = session_id
+                    emit_sid = emit_session_id
                     turn_prompt = claude_prompt_for_session(emit_sid)
                     input_tokens, output_tokens = _sim_claude_usage_token_counts()
                     rogue_mult = sim_rogue_user_token_multiplier(_ru)
@@ -4205,10 +4214,9 @@ def main() -> None:
                     if pace_mult != 1.0:
                         input_tokens = max(1, int(input_tokens * pace_mult))
                         output_tokens = max(1, int(output_tokens * pace_mult))
-                    # Track estimated spend for top-spender pacing (before dashboard emit).
                     if _ru is not None:
                         model_for_cost = str(
-                            profile.get("gen_ai.request.model")
+                            cc_profile.get("gen_ai.request.model")
                             or os.environ.get("SIM_CLAUDE_MODEL", "")
                             or CLAUDE_CODE_DEFAULT_MODEL
                         )
@@ -4221,8 +4229,8 @@ def main() -> None:
                     if _env_bool("SIM_CLAUDE_OTLP_TRACES_ENABLED", False) and user_idx == 0 and b == 0:
                         t0 = time.perf_counter()
                         emit_claude_code_user_prompt_span(
-                            session_id,
-                            profile,
+                            emit_session_id,
+                            cc_profile,
                             tool_version=cc_ver,
                             input_tokens=input_tokens,
                             output_tokens=output_tokens,
@@ -4233,7 +4241,7 @@ def main() -> None:
                     else:
                         active_cli_s = random.uniform(2.2, 6.0) * max(0.35, user_prod_mult)
                     emit_claude_code_dashboard(
-                        profile,
+                        cc_profile,
                         emit_sid,
                         input_tokens,
                         output_tokens,
@@ -4244,6 +4252,37 @@ def main() -> None:
                         productivity_mult=user_prod_mult,
                     )
                     _claude_note_session_user_prompt(_ru)
+
+        # Brief §6 volume: emit Claude every TRACE_INTERVAL under activity pacing so session
+        # rate is not diluted by multi-agent selection (~1/5 of cycles otherwise).
+        _cc_prof = by_product.get("claude_code")
+        _cc_independent = _env_bool("SIM_CLAUDE_INDEPENDENT_EMIT", True) and _env_bool(
+            "SIM_CLAUDE_ACTIVITY_PACING", True
+        )
+        if _cc_independent and _cc_prof is not None:
+            _cc_run = {
+                **_cc_prof,
+                "gen_ai.request.model": (
+                    os.environ.get("SIM_CLAUDE_MODEL", "").strip()
+                    or random.choice(_CLAUDE_CODE_MODELS)
+                ),
+            }
+            _run_claude_code_emit(_cc_run)
+            if profile["agent.product"] == "claude_code":
+                return
+        elif profile["agent.product"] == "claude_code":
+            _run_claude_code_emit(profile)
+            return
+
+        # Raw Gemini CLI shape: single INTERNAL span `user_prompt` on tracer `gemini-cli`
+        # with a version from ``AGENT_TOOL_VERSIONS`` (see sample: gen_ai.* / cx.* / otel.library.*).
+        if profile["agent.product"] == "gemini_cli":
+            gid = session_id
+            gru: dict | None = None
+            if _env_bool("SIM_GEMINI_STABLE_SESSION_PER_USER", True):
+                gru = _gemini_roster_user_for_emit()
+                gid = _gemini_stable_session_id_from_user_attrs(gru)
+            emit_gemini_cli_user_prompt_span(gid, roster_user=gru)
             return
 
         if profile["agent.product"] == "codex":

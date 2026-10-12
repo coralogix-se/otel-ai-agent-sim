@@ -98,7 +98,8 @@ _CC_BASE_LABEL_NAMES = (
 
 # ``claude_code_lines_of_code_count_*`` — same user dimensions as commit/PR counters so
 # ``sum by (user_email)`` / ``sum by (user_name)`` panels do not drop LOC while showing commits.
-_CC_LOC_LABEL_NAMES = _CC_BASE_LABEL_NAMES + ("type",)
+# ``model`` matches c4c ``claude_code_lines_of_code_count`` (onlineboutique brief §6).
+_CC_LOC_LABEL_NAMES = _CC_BASE_LABEL_NAMES + ("type", "model")
 
 def _map_cc_base_labels(base: dict, cx_app: str, cx_sub: str) -> dict[str, str]:
     acc = str(base.get("user.account_uuid", ""))

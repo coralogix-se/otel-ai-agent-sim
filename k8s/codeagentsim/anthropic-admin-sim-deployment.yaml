@@ -27,7 +27,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:claude-products-top-spend-202609230920
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:claude-products-2k-20261006144000
           imagePullPolicy: Always
           command: ["python", "-m", "sim.anthropic_admin"]
           env:

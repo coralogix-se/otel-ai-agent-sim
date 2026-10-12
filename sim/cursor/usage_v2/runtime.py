@@ -682,8 +682,71 @@ def _seed_snapshots(collector: CursorUsageCollector, *, now: datetime) -> None:
         base,
         float(int(end.timestamp())),
     )
+    # Brief §8 Add: org contract + members + model access.
+    org_labels = {
+        "cx_application_name": base["cx_application_name"],
+        "cx_subsystem_name": base["cx_subsystem_name"],
+        "organization": cursor_usage_organization(),
+    }
+    collector.set_snapshot(
+        "cursor_org_contract_start_seconds",
+        org_labels,
+        float(int(start.timestamp())),
+    )
+    collector.set_snapshot(
+        "cursor_org_contract_end_seconds",
+        org_labels,
+        float(int(end.timestamp()) + 86400 * 365),
+    )
+    roster_n = len(_roster())
+    collector.set_snapshot(
+        "cursor_org_members",
+        {**org_labels, "role": "member"},
+        float(max(1, roster_n - 2)),
+    )
+    collector.set_snapshot(
+        "cursor_org_members",
+        {**org_labels, "role": "admin"},
+        2.0,
+    )
+    for i, model in enumerate(CURSOR_USAGE_MODELS[:12]):
+        collector.set_snapshot(
+            "cursor_model_access_enabled",
+            {**base, "model": model},
+            1.0,
+        )
+        if i < 2:
+            collector.set_snapshot(
+                "cursor_model_access_new_default",
+                {**base, "model": model},
+                1.0 if i == 0 else 0.0,
+            )
+    # Low-rate org events (login/logout/mcp/member_added) — accrue once per seed refresh.
+    if random.random() < 0.35:
+        collector.add_delta(
+            "cursor_login_attempts_total",
+            {**base, "date": day, "result": "success"},
+            1,
+        )
+    if random.random() < 0.15:
+        collector.add_delta(
+            "cursor_logout_total",
+            {**base, "date": day},
+            1,
+        )
+    if random.random() < 0.2:
+        collector.add_delta(
+            "cursor_mcp_config_events_total",
+            {**base, "date": day, "event": random.choice(("add", "update", "remove"))},
+            1,
+        )
+    if random.random() < 0.05:
+        collector.add_delta(
+            "cursor_member_added_total",
+            {**base, "date": day},
+            1,
+        )
 
-    seen_groups: set[str] = set()
     for m in _roster():
         collector.set_snapshot(
             "cursor_member_info",
@@ -707,29 +770,42 @@ def _seed_snapshots(collector: CursorUsageCollector, *, now: datetime) -> None:
             {**base, "email": m.email, "user_id": m.user_id, "name": m.name, "role": m.role},
             m.monthly_limit_usd,
         )
-        if m.group_id not in seen_groups:
-            seen_groups.add(m.group_id)
-            collector.set_snapshot(
-                "cursor_group_members",
-                {
-                    **base,
-                    "group_id": m.group_id,
-                    "group_name": m.group_name,
-                    "is_unassigned": "true" if m.is_unassigned else "false",
-                },
-                1.0,
-            )
+        collector.set_snapshot(
+            "cursor_member_hard_limit_usd",
+            {**base, "email": m.email, "user_id": m.user_id, "name": m.name, "role": m.role},
+            m.monthly_limit_usd * 1.5,
+        )
+        collector.set_snapshot(
+            "cursor_org_member_contract_spend_usd",
+            {**base, "email": m.email, "user_id": m.user_id, "name": m.name},
+            round(m.monthly_limit_usd * random.uniform(0.05, 0.45), 2),
+        )
+    # Brief §8: cut group_members series 5 → ~1; value scale ×34 applied in scales.py.
+    if _roster():
+        m0 = _roster()[0]
+        collector.set_snapshot(
+            "cursor_group_members",
+            {
+                **base,
+                "group_id": m0.group_id,
+                "group_name": m0.group_name,
+                "is_unassigned": "true" if m0.is_unassigned else "false",
+            },
+            float(len(_roster())),
+        )
 
-    collector.set_snapshot(
-        "cursor_org_team_membership_info",
-        {
-            **base,
-            "organization": cursor_usage_organization(),
-            "team_name": cursor_usage_team_name(),
-            "team_role": "owner",
-        },
-        1.0,
-    )
+    # Brief §8: raise series 1 → ~3 (owner / member / admin).
+    for role in ("owner", "member", "admin"):
+        collector.set_snapshot(
+            "cursor_org_team_membership_info",
+            {
+                **base,
+                "organization": cursor_usage_organization(),
+                "team_name": cursor_usage_team_name(),
+                "team_role": role,
+            },
+            1.0,
+        )
 
     _refresh_org_pool_snapshots(collector, now=now)
 
@@ -812,7 +888,15 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
 
     active_today: set[str] = set()
     active_members = [m for m in _roster() if not m.is_idle]
+    # Brief §9: date-seeded weekday/weekend multiplier on active members + event volume.
+    from sim.common.day_variation import daily_activity_multiplier
+
+    day_mult = daily_activity_multiplier(now.date())
+    if day_mult < 0.999 and active_members:
+        keep_n = max(1, int(round(len(active_members) * day_mult)))
+        active_members = active_members[:keep_n]
     target_events = _target_events_per_day(max(1, len(active_members)))
+    target_events = max(1, int(round(target_events * day_mult)))
     emits = _events_to_emit_this_cycle(now, target_events)
     cycle_pool_cost = 0.0
 
@@ -859,6 +943,8 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
         collector.add_delta("cursor_event_cost_usd", ev, cost)
         collector.add_delta("cursor_event_list_price_usd", ev, list_price)
         collector.add_delta("cursor_event_request_units_total", ev, units)
+        # Brief §8 Add: token fee accompanies cost (c4c ~358 series).
+        collector.add_delta("cursor_event_token_fee_usd", ev, round(cost * 0.08, 4))
 
         # Persona-skewed token mix — cache_read/request drives longSessions/shortSessions.
         base_shares = [0.45, 0.30, 0.18, 0.07]  # input, output, cache_read, cache_write
@@ -932,9 +1018,22 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             {**base, "email": member.email, "date": day},
             rejected,
         )
+        # Org-level agent diffs (brief §8 Add — c4c ~1 series/day).
+        collector.add_delta(
+            "cursor_agent_diffs_accepted_total",
+            {**base, "date": day},
+            accepted,
+        )
+        if rejected and random.random() < 0.08:
+            collector.add_delta(
+                "cursor_agent_diffs_rejected_total",
+                {**base, "date": day},
+                rejected,
+            )
 
         tab_sugg = random.randint(2, 20)
         tab_acc = random.randint(0, tab_sugg)
+        tab_rej = max(0, tab_sugg - tab_acc)
         collector.add_delta(
             "cursor_tab_suggestions_total",
             {**base, "email": member.email, "user_id": member.user_id, "date": day},
@@ -945,6 +1044,89 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             {**base, "email": member.email, "user_id": member.user_id, "date": day},
             tab_acc,
         )
+        collector.accrue_snapshot(
+            "cursor_user_tab_rejects_total",
+            {**base, "email": member.email, "date": day},
+            float(tab_rej),
+        )
+        # Brief §8 Add: lines / rejects / extension / AI deleted lines.
+        added_lines = int(random.randint(4, 40) * volume)
+        deleted_lines = int(random.randint(0, 12) * volume)
+        collector.add_delta(
+            "cursor_lines_added_total",
+            {**base, "email": member.email, "user_id": member.user_id, "date": day},
+            added_lines,
+        )
+        if deleted_lines:
+            collector.add_delta(
+                "cursor_lines_deleted_total",
+                {**base, "email": member.email, "user_id": member.user_id, "date": day},
+                deleted_lines,
+            )
+        if random.random() < 0.12:
+            collector.add_delta(
+                "cursor_rejects_total",
+                {**base, "email": member.email, "user_id": member.user_id, "date": day},
+                1,
+            )
+        if random.random() < 0.15:
+            ext = _pick(CURSOR_FILE_EXTENSIONS)
+            collector.add_delta(
+                "cursor_ai_change_file_lines_deleted_total",
+                {**base, "email": member.email, "date": day, "file_extension": ext},
+                max(1, deleted_lines),
+            )
+            collector.add_delta(
+                "cursor_ai_change_lines_deleted_total",
+                {**base, "email": member.email, "date": day},
+                max(1, deleted_lines),
+            )
+        if random.random() < 0.10:
+            ext_name = random.choice(("python", "typescript", "go", "rust", "java"))
+            collector.add_delta(
+                "cursor_user_extension_files_total",
+                {**base, "email": member.email, "date": day, "extension": ext_name},
+                random.randint(1, 3),
+            )
+            collector.add_delta(
+                "cursor_user_extension_lines_suggested_total",
+                {**base, "email": member.email, "date": day, "extension": ext_name},
+                random.randint(5, 40),
+            )
+            collector.add_delta(
+                "cursor_user_extension_lines_accepted_total",
+                {**base, "email": member.email, "date": day, "extension": ext_name},
+                random.randint(1, 20),
+            )
+            if random.random() < 0.05:
+                collector.add_delta(
+                    "cursor_user_extension_rejects_total",
+                    {**base, "email": member.email, "date": day, "extension": ext_name},
+                    1,
+                )
+                collector.add_delta(
+                    "cursor_user_extension_lines_rejected_total",
+                    {**base, "email": member.email, "date": day, "extension": ext_name},
+                    random.randint(1, 4),
+                )
+            else:
+                collector.add_delta(
+                    "cursor_user_extension_accepts_total",
+                    {**base, "email": member.email, "date": day, "extension": ext_name},
+                    1,
+                )
+        if random.random() < 0.04:
+            collector.add_delta(
+                "cursor_member_fast_premium_requests_total",
+                {**base, "email": member.email, "user_id": member.user_id, "date": day},
+                random.randint(1, 5),
+            )
+        if service_account == "true" and random.random() < 0.2:
+            collector.add_delta(
+                "cursor_user_api_key_events_total",
+                {**base, "email": member.email, "date": day, "event": "use"},
+                1,
+            )
         # Seat KPIs (Active Users / Adoption Rate) join roster to these two metrics.
         _accrue_seat_activity(
             collector,
@@ -1391,9 +1573,161 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             float(len(emails)),
         )
 
+    # Brief §8 remaining Add metrics (c4c label shapes).
+    _emit_cursor_brief_extra_metrics(
+        collector,
+        base=base,
+        day=day,
+        active_today=active_today | _SOFT_ACTIVE_TODAY,
+        volume=volume,
+    )
+
     # Annual Budget: accrue this cycle's event $ into pooled usage, then restate gauges.
     _accrue_org_pool_usage(cycle_pool_cost)
     _refresh_org_pool_snapshots(collector, now=now)
+
+
+def _emit_cursor_brief_extra_metrics(
+    collector: CursorUsageCollector,
+    *,
+    base: dict[str, str],
+    day: str,
+    active_today: set[str],
+    volume: float,
+) -> None:
+    """Emit remaining c4c-parity metrics from brief §8 Add rows."""
+    org = cursor_usage_organization()
+    team_name = cursor_usage_team_name()
+    org_base = {**base, "organization": org, "team_name": team_name, "date": day}
+
+    # Org agent line totals (green=added / red=deleted).
+    green_acc = int(random.randint(800, 4000) * volume * 40)
+    red_acc = int(random.randint(100, 900) * volume * 40)
+    collector.add_delta("cursor_agent_green_lines_accepted_total", org_base, green_acc)
+    collector.add_delta("cursor_agent_red_lines_accepted_total", org_base, red_acc)
+    if random.random() < 0.08:
+        collector.add_delta(
+            "cursor_agent_green_lines_rejected_total",
+            org_base,
+            max(1, int(green_acc * 0.001)),
+        )
+    if random.random() < 0.05:
+        collector.add_delta(
+            "cursor_agent_red_lines_rejected_total",
+            org_base,
+            max(1, int(red_acc * 0.001)),
+        )
+
+    for source in ("COMPOSER", "TAB"):
+        collector.add_delta(
+            "cursor_ai_changes_total",
+            {**org_base, "source": source},
+            int(random.randint(20, 120) * volume * 10),
+        )
+
+    # Commit-range lines: keep series near ~60/day (sample a few active users × repos).
+    members = [m for m in _roster() if m.email in active_today][:8]
+    for m in members:
+        if random.random() > 0.35:
+            continue
+        collector.add_delta(
+            "cursor_ai_code_commit_range_lines_total",
+            {
+                **org_base,
+                "email": m.email,
+                "user_id": m.user_id,
+                "repo_name": _pick(CURSOR_REPOS),
+                "branch_name": random.choice(("main", "develop", "feature/sim")),
+                "commit_source": _pick(CURSOR_COMMIT_SOURCES),
+                "model": _pick(CURSOR_USAGE_MODELS, CURSOR_USAGE_MODEL_WEIGHTS),
+                "operation_type": random.choice(("addition", "deletion")),
+            },
+            int(random.randint(5, 80) * volume * 5),
+        )
+
+    if random.random() < 0.25:
+        collector.add_delta(
+            "cursor_audit_events_total",
+            {
+                **org_base,
+                "event_type": random.choice(
+                    ("login", "logout", "team_role_updated", "api_key_created", "grok_bot_created")
+                ),
+                "user_email": random.choice(list(active_today) or ["sim@coralogix.com"]),
+                "ip_address": f"10.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}",
+            },
+            1,
+        )
+
+    if random.random() < 0.2:
+        repo = _pick(CURSOR_REPOS)
+        bb = {
+            **org_base,
+            "repo_name": repo if repo.startswith("github.com/") else f"github.com/{repo}",
+            "dry_run": "false",
+            "publication_status": random.choice(("posted", "pending")),
+        }
+        collector.add_delta("cursor_bugbot_reviews_total", bb, random.randint(1, 3))
+        collector.add_delta("cursor_bugbot_review_bugs_found_total", bb, random.randint(0, 4))
+        collector.add_delta(
+            "cursor_bugbot_review_cost_usd",
+            bb,
+            round(random.uniform(0.5, 4.0) * volume * 20, 4),
+        )
+
+    # Client versions — restated daily snapshot (~22 series on c4c).
+    versions = (
+        CURSOR_CLIENT_VERSION_LATEST,
+        CURSOR_CLIENT_VERSION_ONE_BEHIND,
+        CURSOR_CLIENT_VERSION_STALE,
+        "0.68.1",
+        "0.67.0",
+        "1.0.0",
+    )
+    version_counts: dict[str, int] = {v: 0 for v in versions}
+    for m in _roster():
+        if m.email not in active_today:
+            continue
+        version_counts[m.client_version] = version_counts.get(m.client_version, 0) + 1
+    for ver, n in version_counts.items():
+        if n <= 0:
+            continue
+        collector.set_snapshot(
+            "cursor_client_version_users",
+            {**org_base, "client_version": ver},
+            float(n),
+        )
+
+    # Org conversation snapshots (no email) — mirror user conversation dimensions.
+    for dim, values in CURSOR_CONVERSATION_DIMENSIONS.items():
+        for value in values[:4]:
+            collector.set_snapshot(
+                "cursor_conversation_snapshot",
+                {**org_base, "dimension": dim, "value": value},
+                float(random.randint(5, 80)),
+            )
+    for intent in ("Ask", "Agent", "Edit", "Debug"):
+        collector.set_snapshot(
+            "cursor_conversation_intent_top_snapshot",
+            {**org_base, "intent": intent},
+            float(random.randint(20, 200)),
+        )
+        for m in members[:6]:
+            if random.random() > 0.4:
+                continue
+            collector.set_snapshot(
+                "cursor_user_conversation_intent_top_snapshot",
+                {**org_base, "email": m.email, "intent": intent},
+                float(random.randint(1, 40)),
+            )
+
+    if random.random() < 0.1:
+        gid, gname = CURSOR_GROUPS[random.randrange(len(CURSOR_GROUPS))]
+        collector.add_delta(
+            "cursor_directory_group_member_added_total",
+            {**org_base, "group_id": gid, "group_name": gname},
+            1,
+        )
 
 
 def _backfill_adoption_days(

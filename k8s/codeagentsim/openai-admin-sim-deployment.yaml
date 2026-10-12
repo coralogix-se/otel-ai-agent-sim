@@ -27,7 +27,7 @@ spec:
             - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
       containers:
         - name: sim
-          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:openai-admin-20261001081508
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:openai-admin-20261007152000
           imagePullPolicy: Always
           command: ["python", "-m", "sim.openai"]
           env:
@@ -57,8 +57,11 @@ spec:
               value: "5"
             - name: SIM_OPENAI_ADMIN_ADMIN_KEYS
               value: "2"
+            # Shorter backfill + prune-after-scrape so last_over_time[1d] does not sum a month of restated days.
             - name: SIM_OPENAI_ADMIN_BACKFILL_DAYS
-              value: "28"
+              value: "14"
+            - name: SIM_OPENAI_ADMIN_HISTORY_SCRAPE_GRACE_SEC
+              value: "90"
           ports:
             - name: metrics
               containerPort: 9090

@@ -20,13 +20,59 @@ _DEFAULT_ORG_REPOS: tuple[str, ...] = (
 )
 
 # Fictional external / personal repos (unmanaged — not in org scan). Override with ``SIM_CLAUDE_UNMANAGED_REPOS``.
-_UNMANAGED_REPOS: tuple[str, ...] = (
-    "jchen/dotfiles",
-    "devkits/super-cli",
-    "metrics/collector-core",
-    "observability/trace-profiler",
-    "labs/multi-agent-runner",
+# Brief §6 targets ~200 repository_name values on session_repo_info (c4c cardinality).
+_UNMANAGED_REPO_ORGS: tuple[str, ...] = (
+    "jchen",
+    "devkits",
+    "metrics",
+    "observability",
+    "labs",
+    "acme",
+    "northwind",
+    "fabrikam",
+    "contoso",
+    "globex",
+    "initech",
+    "umbrella",
+    "stark",
+    "wayne",
+    "oscorp",
+    "cyberdyne",
+    "tyrell",
+    "weyland",
+    "aperture",
+    "blackmesa",
 )
+_UNMANAGED_REPO_NAMES: tuple[str, ...] = (
+    "dotfiles",
+    "super-cli",
+    "collector-core",
+    "trace-profiler",
+    "multi-agent-runner",
+    "api-gateway",
+    "billing-service",
+    "auth-service",
+    "frontend-web",
+    "mobile-ios",
+    "mobile-android",
+    "data-pipeline",
+    "feature-flags",
+    "ml-ranking",
+    "search-index",
+    "notifications",
+    "payments",
+    "inventory",
+    "catalog",
+    "edge-proxy",
+)
+_UNMANAGED_REPOS: tuple[str, ...] = tuple(
+    f"{org}/{name}-{i:02d}"
+    for i, (org, name) in enumerate(
+        (o, n)
+        for o in _UNMANAGED_REPO_ORGS
+        for n in _UNMANAGED_REPO_NAMES
+    )
+)[:200]
 
 # Roster indices pinned as “rogue” users: heavy unmanaged-repo use + elevated spend (stable across runs).
 # Default: products-roster index 17 (sam.martinez) — the #1 top spender / unmanaged-repo demo.

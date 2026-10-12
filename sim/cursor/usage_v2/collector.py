@@ -484,6 +484,302 @@ _SPECS: tuple[_SeriesSpec, ...] = (
         _POOL_USAGE,
         "snapshot",
     ),
+    # --- Brief §8 Add metrics (c4c parity; labels aligned with existing families) ---
+    _SeriesSpec(
+        "cursor_lines_added_total",
+        "Cursor lines added (bucket delta)",
+        _EMAIL_TEAM + ("date",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_lines_deleted_total",
+        "Cursor lines deleted (bucket delta)",
+        _EMAIL_TEAM + ("date",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_rejects_total",
+        "Cursor rejects (bucket delta)",
+        _EMAIL_TEAM + ("date",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_login_attempts_total",
+        "Cursor login attempts (bucket delta)",
+        _BASE + ("date", "result"),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_logout_total",
+        "Cursor logouts (bucket delta)",
+        _BASE + ("date",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_mcp_config_events_total",
+        "Cursor MCP config events (bucket delta)",
+        _BASE + ("date", "event"),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_member_added_total",
+        "Cursor members added (bucket delta)",
+        _BASE + ("date",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_member_hard_limit_usd",
+        "Cursor member hard spend limit USD (level)",
+        _EMAIL_TEAM + ("name", "role"),
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_member_fast_premium_requests_total",
+        "Cursor member fast premium requests (bucket delta)",
+        _EMAIL_TEAM + ("date",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_model_access_enabled",
+        "Cursor model access enabled (level)",
+        _BASE + ("model",),
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_model_access_new_default",
+        "Cursor model access new-default flag (level)",
+        _BASE + ("model",),
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_org_contract_start_seconds",
+        "Cursor org contract start unix seconds",
+        _POOL_ORG,
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_org_contract_end_seconds",
+        "Cursor org contract end unix seconds",
+        _POOL_ORG,
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_org_members",
+        "Cursor org member count (level)",
+        _POOL_ORG + ("role",),
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_org_member_contract_spend_usd",
+        "Cursor org member contract spend USD (level)",
+        _EMAIL_TEAM + ("name",),
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_user_tab_rejects_total",
+        "Cursor user tab rejects (daily level; realDateLabeled)",
+        _EMAIL_DATE,
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_user_api_key_events_total",
+        "Cursor user API key events (bucket delta)",
+        _EMAIL_DATE + ("event",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_agent_diffs_accepted_total",
+        "Cursor agent diffs accepted (org total; bucket delta)",
+        _BASE + ("date",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_agent_diffs_rejected_total",
+        "Cursor agent diffs rejected (org total; bucket delta)",
+        _BASE + ("date",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_ai_change_file_lines_deleted_total",
+        "Cursor AI change file lines deleted (bucket delta)",
+        _EMAIL_DATE + ("file_extension",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_ai_change_lines_deleted_total",
+        "Cursor AI change lines deleted (bucket delta)",
+        _EMAIL_DATE,
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_event_token_fee_usd",
+        "Cursor event token fee USD (bucket delta)",
+        _EVENT,
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_user_extension_accepts_total",
+        "Cursor user extension accepts (bucket delta)",
+        _EMAIL_DATE + ("extension",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_user_extension_rejects_total",
+        "Cursor user extension rejects (bucket delta)",
+        _EMAIL_DATE + ("extension",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_user_extension_files_total",
+        "Cursor user extension files (bucket delta)",
+        _EMAIL_DATE + ("extension",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_user_extension_lines_accepted_total",
+        "Cursor user extension lines accepted (bucket delta)",
+        _EMAIL_DATE + ("extension",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_user_extension_lines_rejected_total",
+        "Cursor user extension lines rejected (bucket delta)",
+        _EMAIL_DATE + ("extension",),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_user_extension_lines_suggested_total",
+        "Cursor user extension lines suggested (bucket delta)",
+        _EMAIL_DATE + ("extension",),
+        "delta",
+    ),
+    # Remaining brief §8 Add metrics (c4c label shapes, Oct 2026).
+    _SeriesSpec(
+        "cursor_agent_green_lines_accepted_total",
+        "Cursor agent green lines accepted (org daily total)",
+        _BASE + ("date", "organization", "team_name"),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_agent_green_lines_rejected_total",
+        "Cursor agent green lines rejected (org daily total)",
+        _BASE + ("date", "organization", "team_name"),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_agent_red_lines_accepted_total",
+        "Cursor agent red lines accepted (org daily total)",
+        _BASE + ("date", "organization", "team_name"),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_agent_red_lines_rejected_total",
+        "Cursor agent red lines rejected (org daily total)",
+        _BASE + ("date", "organization", "team_name"),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_ai_changes_total",
+        "Cursor AI changes by source (bucket delta)",
+        _BASE + ("date", "organization", "team_name", "source"),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_ai_code_commit_range_lines_total",
+        "Cursor AI code commit-range lines (bucket delta)",
+        _BASE
+        + (
+            "date",
+            "organization",
+            "team_name",
+            "email",
+            "user_id",
+            "repo_name",
+            "branch_name",
+            "commit_source",
+            "model",
+            "operation_type",
+        ),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_audit_events_total",
+        "Cursor audit events (bucket delta)",
+        _BASE + ("date", "organization", "team_name", "event_type", "user_email", "ip_address"),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_bugbot_reviews_total",
+        "Cursor Bugbot reviews (bucket delta)",
+        _BASE
+        + (
+            "date",
+            "organization",
+            "team_name",
+            "repo_name",
+            "dry_run",
+            "publication_status",
+        ),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_bugbot_review_bugs_found_total",
+        "Cursor Bugbot review bugs found (bucket delta)",
+        _BASE
+        + (
+            "date",
+            "organization",
+            "team_name",
+            "repo_name",
+            "dry_run",
+            "publication_status",
+        ),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_bugbot_review_cost_usd",
+        "Cursor Bugbot review cost USD (bucket delta)",
+        _BASE
+        + (
+            "date",
+            "organization",
+            "team_name",
+            "repo_name",
+            "dry_run",
+            "publication_status",
+        ),
+        "delta",
+    ),
+    _SeriesSpec(
+        "cursor_client_version_users",
+        "Cursor users by client version (daily level)",
+        _BASE + ("date", "organization", "team_name", "client_version"),
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_conversation_snapshot",
+        "Cursor conversation snapshot by dimension (org; daily level)",
+        _BASE + ("date", "organization", "team_name", "dimension", "value"),
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_conversation_intent_top_snapshot",
+        "Cursor top conversation intents (org; daily level)",
+        _BASE + ("date", "organization", "team_name", "intent"),
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_user_conversation_intent_top_snapshot",
+        "Cursor top conversation intents by user (daily level)",
+        _BASE + ("date", "organization", "team_name", "email", "intent"),
+        "snapshot",
+    ),
+    _SeriesSpec(
+        "cursor_directory_group_member_added_total",
+        "Cursor directory group member added (bucket delta)",
+        _BASE + ("date", "organization", "team_name", "group_id", "group_name"),
+        "delta",
+    ),
 )
 
 _SPEC_BY_NAME = {s.name: s for s in _SPECS}
@@ -507,6 +803,13 @@ class CursorUsageCollector(Collector):
     def add_delta(self, name: str, labels: dict[str, str], amount: float) -> None:
         if amount == 0:
             return
+        from sim.cursor.usage_v2.scales import cursor_scale_amount, cursor_should_emit_series
+
+        if not cursor_should_emit_series(name):
+            return
+        amount = cursor_scale_amount(name, amount)
+        if amount == 0:
+            return
         spec = _SPEC_BY_NAME.get(name)
         if spec is None or spec.kind != "delta":
             raise ValueError(f"unknown delta metric: {name}")
@@ -518,6 +821,11 @@ class CursorUsageCollector(Collector):
             self._deltas[key] += float(amount)
 
     def set_snapshot(self, name: str, labels: dict[str, str], value: float) -> None:
+        from sim.cursor.usage_v2.scales import cursor_scale_amount, cursor_should_emit_series
+
+        if not cursor_should_emit_series(name):
+            return
+        value = cursor_scale_amount(name, value)
         spec = _SPEC_BY_NAME.get(name)
         if spec is None or spec.kind != "snapshot":
             raise ValueError(f"unknown snapshot metric: {name}")
@@ -530,6 +838,13 @@ class CursorUsageCollector(Collector):
 
     def accrue_snapshot(self, name: str, labels: dict[str, str], amount: float) -> None:
         """Accumulate into a date-labeled daily level (FE realDateLabeled + last_over_time)."""
+        if amount == 0:
+            return
+        from sim.cursor.usage_v2.scales import cursor_scale_amount, cursor_should_emit_series
+
+        if not cursor_should_emit_series(name):
+            return
+        amount = cursor_scale_amount(name, amount)
         if amount == 0:
             return
         spec = _SPEC_BY_NAME.get(name)
@@ -561,6 +876,16 @@ class CursorUsageCollector(Collector):
                 del self._snapshots[k]
 
     def collect(self) -> Iterable[GaugeMetricFamily]:
+        from sim.cursor.usage_v2.sample_window import cursor_in_sample_window
+
+        # Brief §8: ~2 samples/series/day (c4c). Outside sample windows, expose nothing
+        # so 60s scrapes do not restate long-lived gauges ~1440×/day.
+        if not cursor_in_sample_window():
+            with self._lock:
+                # Keep accruing deltas in memory; do not clear until a sample window.
+                pass
+            return []
+
         with self._lock:
             deltas = dict(self._deltas)
             self._deltas.clear()

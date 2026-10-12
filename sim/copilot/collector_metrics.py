@@ -18,14 +18,15 @@ Label shapes follow the dashboard filter helper and ``docs/copilot-sim-data.json
 daily samples — continuous scrape of a cumulative series inflates into millions.
 
 This sim:
-- Accumulates non-billing counters in-process and exposes them every scrape (session/token/etc.).
-- Accrues **today's** billing amounts in memory, then exposes ``github_copilot_billing_*`` on
-  **at most one scrape per UTC day** (then omits them) so Coralogix stores ~1 point/day.
-- DAU gauges reflect distinct users touched today (by email or login when email is blank).
+- Accumulates counters in-process all day; with ``SIM_COPILOT_SPARSE_SAMPLES`` (default on)
+  exposes **all** ``github_copilot_*`` series only inside a short once/day window (cxai ≈ 1 sample/day).
+- Accrues **today's** billing amounts and exports them at most once/UTC day for ``sum_over_time``.
+- DAU gauges target ~26/46/51 (brief §7) with date-seeded day variation.
 """
 
 from __future__ import annotations
 
+import os
 import random
 import threading
 import time
@@ -45,6 +46,9 @@ _BILLING_METRIC_NAMES = frozenset(
         "github_copilot_billing_gross_amount",
         "github_copilot_billing_discount_amount",
         "github_copilot_billing_net_quantity",
+        "github_copilot_billing_discount_quantity",
+        "github_copilot_billing_gross_quantity",
+        "github_copilot_billing_price_per_unit",
     }
 )
 
@@ -160,8 +164,61 @@ class _ActiveUserTracker:
             mau = len(set().union(*[s for _, s in self.recent_28d], self.all_users))
             return dau, wau, mau, cli_dau
 
+    def counts(self) -> tuple[int, int, int, int]:
+        """Current DAU/WAU/MAU/CLI-DAU without touching the tracker."""
+        with self.lock:
+            dau = len(self.all_users)
+            cli_dau = len(self.cli_users)
+            wau = len(set().union(*[s for _, s in self.recent_7d], self.all_users)) if self.all_users or self.recent_7d else 0
+            mau = len(set().union(*[s for _, s in self.recent_28d], self.all_users)) if self.all_users or self.recent_28d else 0
+            return dau, wau, mau, cli_dau
+
 
 _tracker = _ActiveUserTracker()
+_USER_CLI_SESSIONS_TODAY: dict[str, int] = {}
+_USER_CLI_SESSION_TARGET: dict[str, int] = {}
+_CLI_SESSIONS_DAY = ""
+_DAU_ADMITTED_TODAY: set[str] = set()
+_DAU_ADMIT_DAY = ""
+
+
+def _copilot_user_counts_toward_dau(dau_key: str) -> bool:
+    """First-N users today toward the ~26-DAU budget (brief §7 + day variation)."""
+    global _DAU_ADMIT_DAY
+    from sim.common.day_variation import daily_activity_multiplier
+
+    today = date.today().isoformat()
+    if _DAU_ADMIT_DAY != today:
+        _DAU_ADMIT_DAY = today
+        _DAU_ADMITTED_TODAY.clear()
+    target = max(1, int(round(_env_int("SIM_COPILOT_TARGET_DAU", 26) * daily_activity_multiplier())))
+    if dau_key in _DAU_ADMITTED_TODAY:
+        return True
+    if len(_DAU_ADMITTED_TODAY) >= target:
+        return False
+    _DAU_ADMITTED_TODAY.add(dau_key)
+    return True
+
+
+def _user_cli_session_delta(dau_key: str) -> int:
+    """Increment user CLI sessions toward a 2–8/day target (brief §7)."""
+    global _CLI_SESSIONS_DAY
+    today = date.today().isoformat()
+    if _CLI_SESSIONS_DAY != today:
+        _CLI_SESSIONS_DAY = today
+        _USER_CLI_SESSIONS_TODAY.clear()
+        _USER_CLI_SESSION_TARGET.clear()
+    if dau_key not in _USER_CLI_SESSION_TARGET:
+        lo = max(1, _env_int("SIM_COPILOT_USER_CLI_SESSIONS_MIN", 2))
+        hi = max(lo, _env_int("SIM_COPILOT_USER_CLI_SESSIONS_MAX", 8))
+        _USER_CLI_SESSION_TARGET[dau_key] = random.randint(lo, hi)
+    cur = _USER_CLI_SESSIONS_TODAY.get(dau_key, 0)
+    target = _USER_CLI_SESSION_TARGET[dau_key]
+    if cur >= target:
+        return 0
+    # Spread sessions across the day: +1 per counted session until target.
+    _USER_CLI_SESSIONS_TODAY[dau_key] = cur + 1
+    return 1
 
 
 class _MetricHandle:
@@ -309,14 +366,45 @@ class GitHubCopilotCollector(Collector):
             "GitHub Copilot collector daily billing quantity",
             labels=["organization", "sku"],
         )
+        from sim.copilot.extra_metrics import enrich_billing_families
+
+        extras: list[GaugeMetricFamily] = []
+        extra_rows: dict[str, list[tuple[list[str], float]]] = defaultdict(list)
         for (org, sku), net in self._billing_net.items():
             net_f.add_metric([org, sku], net)
-            gross_f.add_metric([org, sku], self._billing_gross.get((org, sku), 0.0))
-            disc_f.add_metric([org, sku], self._billing_discount.get((org, sku), 0.0))
-            qty_f.add_metric([org, sku], self._billing_quantity.get((org, sku), 0.0))
-        return [net_f, gross_f, disc_f, qty_f]
+            gross = self._billing_gross.get((org, sku), 0.0)
+            disc = self._billing_discount.get((org, sku), 0.0)
+            qty = self._billing_quantity.get((org, sku), 0.0)
+            gross_f.add_metric([org, sku], gross)
+            disc_f.add_metric([org, sku], disc)
+            qty_f.add_metric([org, sku], qty)
+            for name, labels, val in enrich_billing_families(
+                organization=org,
+                sku=sku,
+                net_usd=net,
+                gross_usd=gross,
+                discount_usd=disc,
+                quantity=qty,
+            ):
+                extra_rows[name].append(([labels[k] for k in ("organization", "sku", "unit_type")], val))
+        for name, rows in extra_rows.items():
+            fam = GaugeMetricFamily(
+                name,
+                f"GitHub Copilot collector {name}",
+                labels=["organization", "sku", "unit_type"],
+            )
+            for label_vals, val in rows:
+                fam.add_metric(label_vals, val)
+            extras.append(fam)
+        return [net_f, gross_f, disc_f, qty_f, *extras]
 
     def collect(self):
+        from sim.copilot.sample_window import copilot_in_sample_window
+
+        # Brief §7 / cxai: 1 sample/series/day. Accrue all day; expose only in the sample window.
+        if not copilot_in_sample_window():
+            return
+
         with self._lock:
             self._rollover_billing_day_locked()
             counters = dict(self._counters)
@@ -399,6 +487,7 @@ class CopilotCollectorMetrics:
     user_code_generation: _MetricHandle
     user_code_acceptance: _MetricHandle
     user_code_acceptance_activity: _MetricHandle
+    user_team_membership: _MetricHandle
     user_loc_added: _MetricHandle
     user_interaction_model: _MetricHandle
     collector: GitHubCopilotCollector
@@ -417,8 +506,9 @@ def register_copilot_collector_metrics(registry) -> CopilotCollectorMetrics:
         org_cli_request=h("github_copilot_org_cli_request_count"),
         org_cli_prompt_tokens=h("github_copilot_org_cli_prompt_tokens_sum"),
         org_cli_output_tokens=h("github_copilot_org_cli_output_tokens_sum"),
-        org_code_generation=h("github_copilot_org_code_generation_count"),
-        org_code_acceptance=h("github_copilot_org_user_initiated_code_acceptance_count"),
+        # Brief §7: dashboard / cxai use ``*_activity_count`` names (rename from legacy counts).
+        org_code_generation=h("github_copilot_org_code_generation_activity_count"),
+        org_code_acceptance=h("github_copilot_org_code_acceptance_activity_count"),
         org_interaction=h("github_copilot_org_user_initiated_interaction_count"),
         org_loc_suggested=h("github_copilot_org_loc_suggested_to_add_sum"),
         org_loc_added_lang=h("github_copilot_org_loc_added_sum_by_language_feature", _LANG_FEATURE_L),
@@ -455,9 +545,15 @@ def register_copilot_collector_metrics(registry) -> CopilotCollectorMetrics:
         user_cli_prompt_tokens=h("github_copilot_user_cli_prompt_tokens_sum", _USER_L),
         user_cli_output_tokens=h("github_copilot_user_cli_output_tokens_sum", _USER_L),
         user_interaction=h("github_copilot_user_user_initiated_interaction_count", _USER_L),
-        user_code_generation=h("github_copilot_user_code_generation_count", _USER_L),
-        user_code_acceptance=h("github_copilot_user_code_acceptance_count", _USER_L),
+        user_code_generation=h("github_copilot_user_code_generation_activity_count", _USER_L),
+        # Dropped: ``github_copilot_user_code_acceptance_count`` (duplicate of activity_count).
+        user_code_acceptance=h("github_copilot_user_code_acceptance_activity_count", _USER_L),
         user_code_acceptance_activity=h("github_copilot_user_code_acceptance_activity_count", _USER_L),
+        # cxai: organization, team_id, team_slug, user_id, user_login
+        user_team_membership=h(
+            "github_copilot_user_team_membership",
+            ("organization", "team_id", "team_slug", "user_id", "user_login"),
+        ),
         user_loc_added=h("github_copilot_user_loc_added_sum", _USER_L),
         user_interaction_model=h(
             "github_copilot_user_user_initiated_interaction_count_by_model_feature",
@@ -528,8 +624,12 @@ def record_copilot_collector_session(
     gross = cost_usd * random.uniform(1.05, 1.18)
     discount = max(0.0, gross - cost_usd)
 
+    dau_key = copilot_collector_dau_identity(user_l)
     if count_session:
-        metrics.org_cli_session.labels(organization=org_name).inc()
+        sess_delta = _user_cli_session_delta(dau_key)
+        if sess_delta:
+            metrics.org_cli_session.labels(organization=org_name).inc(sess_delta)
+            metrics.user_cli_session.labels(**user_l).inc(sess_delta)
     metrics.org_cli_request.labels(organization=org_name).inc(requests)
     metrics.org_cli_prompt_tokens.labels(organization=org_name).inc(total_in)
     metrics.org_cli_output_tokens.labels(organization=org_name).inc(total_out)
@@ -562,8 +662,6 @@ def record_copilot_collector_session(
             quantity=float(max(1, requests // 2)),
         )
 
-    if count_session:
-        metrics.user_cli_session.labels(**user_l).inc()
     metrics.user_cli_prompt_tokens.labels(**user_l).inc(total_in)
     metrics.user_cli_output_tokens.labels(**user_l).inc(total_out)
     metrics.user_interaction.labels(**user_l).inc(interactions)
@@ -573,15 +671,50 @@ def record_copilot_collector_session(
         interactions
     )
     if acceptances:
-        metrics.user_code_acceptance.labels(**user_l).inc(acceptances)
         metrics.user_code_acceptance_activity.labels(**user_l).inc(acceptances)
 
-    dau_key = copilot_collector_dau_identity(user_l)
-    dau, wau, mau, cli_dau = _tracker.touch(dau_key, cli=True)
-    metrics.org_daily_active.labels(organization=org_name).set(dau)
-    metrics.org_weekly_active.labels(organization=org_name).set(wau)
-    metrics.org_monthly_active.labels(organization=org_name).set(mau)
-    metrics.org_daily_active_cli.labels(organization=org_name).set(cli_dau)
+    from sim.copilot.extra_metrics import emit_copilot_extra_gauges, emit_copilot_extra_session
+
+    emit_copilot_extra_session(
+        metrics.collector,
+        org=org_name,
+        user_l=user_l,
+        model=model,
+        generations=generations,
+        acceptances=acceptances,
+        interactions=interactions,
+        loc_added=loc_added,
+        loc_deleted=loc_deleted,
+        loc_suggested=loc_suggested,
+    )
+
+    if _copilot_user_counts_toward_dau(dau_key):
+        dau, wau, mau, cli_dau = _tracker.touch(dau_key, cli=True)
+    else:
+        dau, wau, mau, cli_dau = _tracker.counts()
+    # Cap reported AU toward brief targets (~26/46/51) with day variation.
+    from sim.common.day_variation import daily_activity_multiplier
+
+    day_mult = daily_activity_multiplier()
+    target_dau = max(1, int(round(_env_int("SIM_COPILOT_TARGET_DAU", 26) * day_mult)))
+    target_wau = max(target_dau, int(round(_env_int("SIM_COPILOT_TARGET_WAU", 46) * day_mult)))
+    target_mau = max(target_wau, int(round(_env_int("SIM_COPILOT_TARGET_MAU", 51) * day_mult)))
+    dau = min(dau, target_dau)
+    wau = min(max(wau, dau), target_wau)
+    mau = min(max(mau, wau), target_mau)
+    cli_dau = min(cli_dau, dau)
+    metrics.org_daily_active.labels(organization=org_name).set(float(dau))
+    metrics.org_weekly_active.labels(organization=org_name).set(float(wau))
+    metrics.org_monthly_active.labels(organization=org_name).set(float(mau))
+    metrics.org_daily_active_cli.labels(organization=org_name).set(float(cli_dau))
+    emit_copilot_extra_gauges(
+        metrics.collector,
+        org=org_name,
+        user_l=user_l,
+        dau=dau,
+        wau=wau,
+        mau=mau,
+    )
     if random.random() < _env_float("SIM_COPILOT_COLLECTOR_CLOUD_AGENT_RATE", 0.08):
         metrics.org_daily_active_cloud.labels(organization=org_name).set(
             max(1, cli_dau // random.randint(3, 8))

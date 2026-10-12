@@ -269,31 +269,42 @@ def _elapsed_day_fraction(now: datetime) -> float:
     return max(0.02, min(1.0, (now - midnight).total_seconds() / 86_400.0))
 
 
+def _top_spender_rank_target_usd(rank: int) -> float:
+    """Daily USD cap for a pinned top spender (#1 slightly above peers)."""
+    target = _top_spender_daily_usd_target()
+    if target <= 0:
+        return 0.0
+    return target * (1.05 if rank == 1 else 1.0)
+
+
 def _insight_user_volume_mult(
     roster_index: int,
     *,
     now: datetime,
     accrued_usd: float = 0.0,
 ) -> float:
-    """Pace pinned top spenders toward ~$2K/day; mild afternoon spike for everyone else."""
+    """Pace pinned top spenders toward ~$2K/day; mild afternoon spike for everyone else.
+
+    Returns ``0`` when the daily cap is already hit so callers can skip the emit.
+    Catch-up is intentionally mild — prior 380–9000× multipliers overshot to ~$12K/user/day.
+    """
     rank = _top_spender_rank_for_index(roster_index)
     if rank is not None:
-        target = _top_spender_daily_usd_target()
-        if target <= 0:
+        rank_target = _top_spender_rank_target_usd(rank)
+        if rank_target <= 0:
             return 1.0
-        # Keep #1 (unmanaged rogue) slightly above #2/#3.
-        rank_target = target * (1.08 if rank == 1 else 1.0)
+        if accrued_usd >= rank_target:
+            return 0.0
         expected = rank_target * _elapsed_day_fraction(now)
         if accrued_usd < 1.0:
-            # Front-load so demos see enterprise-scale spend within minutes of deploy.
-            return 450.0 if rank == 1 else 380.0
+            # Gentle front-load so demos show spend quickly without blowing the day cap.
+            return 18.0 if rank == 1 else 14.0
         deficit = expected - accrued_usd
         if deficit <= 0:
-            # Ease off once ahead of the day-fraction curve.
-            return 0.4
-        # Base emit ≈ $0.06 at volume 0.08; scale so each emit closes a chunk of the gap.
-        chunk_usd = min(max(deficit * 0.28, 50.0), 400.0)
-        return max(80.0, min(9_000.0, chunk_usd / 0.06))
+            return 0.12
+        # Base emit ≈ $0.06 at volume 0.08; close a small slice of the gap per emit.
+        chunk_usd = min(max(deficit * 0.08, 3.0), 40.0)
+        return max(8.0, min(700.0, chunk_usd / 0.06))
     mult = 1.0
     if _env_bool("SIM_ANTHROPIC_INSIGHT_COST_SPIKE", True) and now.hour >= 14:
         mult *= _env_float("SIM_ANTHROPIC_INSIGHT_COST_SPIKE_MULT", 1.35)
@@ -739,7 +750,44 @@ class AnthropicAdminSim:
         day = self._cost_day or datetime.now(timezone.utc).date().isoformat()
         return {**self._metric_base(ANALYTICS_SOURCE), "date": day}
 
+    def _analytics_gauges(self) -> tuple:
+        """Gauges labeled with UTC ``date`` — drop children on day roll so scrapes don't stack days."""
+        return (
+            self.user_cost,
+            self.user_tokens,
+            self.user_requests,
+            self.analytics_tokens,
+            self.analytics_cost,
+            self.user_tool_decisions,
+            self.user_skills_used,
+            self.user_distinct_skills,
+            self.user_connectors_used,
+            self.user_distinct_connectors,
+            self.user_office_connectors,
+            self.user_sessions,
+            self.user_chat_activity,
+            self.user_commits,
+            self.user_lines_added,
+            self.user_lines_removed,
+            self.user_pull_requests,
+            self.skill_sessions,
+            self.skill_cost,
+            self.skill_users,
+            self.skill_invocations,
+            self.connector_sessions,
+            self.connector_users,
+            self.connector_calls,
+            self.seats_assigned,
+            self.active_users,
+            self.adoption_rate,
+            self.pending_invites,
+            self.org_requests,
+            self.org_cache_creation,
+        )
+
     def _clear_analytics_day(self) -> None:
+        for gauge in self._analytics_gauges():
+            gauge.clear()
         self._analytics_tokens.clear()
         self._analytics_cost_usd.clear()
         self._org_requests.clear()
@@ -796,8 +844,8 @@ class AnthropicAdminSim:
                 self.rate_limit.labels(**self._metric_base(SOURCE), model=model, limit_type=limit_type).set(val)
 
     def _maybe_roll_cost_day(self, now: datetime) -> None:
-        # User analytics stay cumulative so max_over_time spend/request widgets keep climbing.
-        # Workspace cost lines reset at UTC midnight to mimic Admin daily cost reports.
+        # In-memory totals and date-labeled gauge children reset at UTC midnight so a scrape
+        # only exports today. Historical TSDB samples still cover the dashboard's 24h window.
         day = now.date().isoformat()
         if self._cost_day != day:
             self._cost_day = day
@@ -918,6 +966,16 @@ class AnthropicAdminSim:
             amt = int(amounts.get(token_type, 0))
             analytics_usd += _usd_for_tokens(model, token_type, amt)
             analytics_tokens += amt
+
+        # Hard daily cap for pinned top spenders (dashboard was ~$12K/user from overshoot).
+        rank = _top_spender_rank_for_index(user.roster_index)
+        if rank is not None and analytics_usd > 0:
+            rank_target = _top_spender_rank_target_usd(rank)
+            room = max(0.0, rank_target - self._user_accrued_cost_usd(user.email))
+            if room <= 0:
+                analytics_usd = 0.0
+            elif analytics_usd > room:
+                analytics_usd = room
 
         uk = (user.email, product, model)
         self._inc(self._user_cost_usd, uk, analytics_usd)
@@ -1292,18 +1350,22 @@ class AnthropicAdminSim:
             raise RuntimeError("AnthropicAdminSim has no users")
         weights: list[float] = []
         frac = _elapsed_day_fraction(now)
-        target = _top_spender_daily_usd_target()
         for user in self.users:
             rank = _top_spender_rank_for_index(user.roster_index)
-            if rank is None or target <= 0:
+            if rank is None:
                 weights.append(1.0)
                 continue
-            rank_target = target * (1.08 if rank == 1 else 1.0)
+            rank_target = _top_spender_rank_target_usd(rank)
+            if rank_target <= 0:
+                weights.append(1.0)
+                continue
             accrued = self._user_accrued_cost_usd(user.email)
-            if accrued < rank_target * frac * 0.95:
-                weights.append(48.0 if rank == 1 else 28.0)
+            if accrued >= rank_target:
+                weights.append(0.02)  # hard daily cap — almost never pick
+            elif accrued < rank_target * frac * 0.95:
+                weights.append(18.0 if rank == 1 else 12.0)
             else:
-                weights.append(1.2)
+                weights.append(0.35)
         return random.choices(list(self.users), weights=weights, k=1)[0]
 
     def _emit_one_usage(self, *, user: _SimUser, now: datetime, volume: float) -> None:
@@ -1311,6 +1373,8 @@ class AnthropicAdminSim:
         vol_mult = _insight_user_volume_mult(
             user.roster_index, now=now, accrued_usd=accrued
         )
+        if vol_mult <= 0:
+            return
         model = _pick_weighted(self.models, _insight_model_weights())
         # Top spenders lean on claude_code so OTEL + Products panels agree on the heavy users.
         if _top_spender_rank_for_index(user.roster_index) is not None and random.random() < 0.72:
@@ -1398,13 +1462,17 @@ class AnthropicAdminSim:
         # Dedicated emit for each behind top spender so sam/avery/taylor hit ~$2K/day.
         if _env_bool("SIM_ANTHROPIC_TOP_SPENDER_DEDICATED_EMIT", True):
             frac = _elapsed_day_fraction(now)
-            target = _top_spender_daily_usd_target()
             for user in self.users:
                 rank = _top_spender_rank_for_index(user.roster_index)
-                if rank is None or target <= 0:
+                if rank is None:
                     continue
-                rank_target = target * (1.08 if rank == 1 else 1.0)
-                if self._user_accrued_cost_usd(user.email) < rank_target * frac * 0.98:
+                rank_target = _top_spender_rank_target_usd(rank)
+                if rank_target <= 0:
+                    continue
+                accrued = self._user_accrued_cost_usd(user.email)
+                if accrued >= rank_target:
+                    continue
+                if accrued < rank_target * frac * 0.98:
                     self._emit_one_usage(user=user, now=now, volume=volume)
 
         for _ in range(self.emits_per_cycle):
