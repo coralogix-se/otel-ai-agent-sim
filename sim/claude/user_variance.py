@@ -42,7 +42,7 @@ def claude_user_variance(roster_user: dict | None) -> _ClaudeUserVariance:
     token_mult = 0.22 + (int.from_bytes(b[2:6], "big") / 2**32) * 2.78
     productivity_mult = 0.15 + (int.from_bytes(b[6:10], "big") / 2**32) * 2.85
     session_rotate_mult = 0.45 + (b[10] / 255.0) * 1.85
-    session_phase_s = (int.from_bytes(b[11:15], "big") / 2**32) * 420.0
+    session_phase_s = (int.from_bytes(b[11:15], "big") / 2**32) * 1800.0
     got = _ClaudeUserVariance(
         activity=activity,
         batch_max=batch_max,
@@ -59,6 +59,10 @@ def claude_user_should_emit_this_cycle(roster_user: dict | None) -> bool:
     """Some users skip a Claude cycle (light / intermittent usage)."""
     if roster_user is None:
         return True
+    from sim.common.identity import is_products_roster_user, products_roster_always_emit_otel
+
+    if products_roster_always_emit_otel() and is_products_roster_user(roster_user):
+        return True
     return random.random() < claude_user_variance(roster_user)["activity"]
 
 
@@ -69,6 +73,15 @@ def claude_user_emit_turns_this_cycle(roster_user: dict | None, *, default_batch
     v = claude_user_variance(roster_user)
     hi = max(default_batch, v["batch_max"])
     return random.randint(1, hi)
+
+
+def scale_tokens_for_user(count: int, roster_user: dict | None) -> int:
+    """Apply stable per-user token multiplier (same knobs as Claude) plus small jitter."""
+    n = max(0, int(count))
+    if n == 0 or roster_user is None:
+        return n
+    scaled = n * claude_user_token_multiplier(roster_user) * random.uniform(0.85, 1.15)
+    return max(1, int(scaled))
 
 
 def claude_user_token_multiplier(roster_user: dict | None) -> float:
@@ -115,3 +128,66 @@ def claude_user_session_rotate_duration_from_env(roster_user: dict | None) -> fl
     else:
         base = max(0.0, _env_float("SIM_CLAUDE_SESSION_ID_ROTATE_SEC", 3600.0))
     return claude_user_session_rotate_duration(base, roster_user)
+
+
+def claude_long_session_slots_enabled() -> bool:
+    """Re-export for Claude session-slot helpers."""
+    from sim.common.env import claude_long_session_slots_enabled as _enabled
+
+    return _enabled()
+
+
+def claude_user_long_session_pin_base_sec() -> float:
+    """Base roster-user pin window from ``SIM_CLAUDE_LONG_SESSION_SEC`` or optional min/max range."""
+    from sim.common.env import _env_float
+    import os
+
+    lo_raw = os.environ.get("SIM_CLAUDE_LONG_SESSION_SEC_MIN", "").strip()
+    hi_raw = os.environ.get("SIM_CLAUDE_LONG_SESSION_SEC_MAX", "").strip()
+    if lo_raw and hi_raw:
+        lo = max(60.0, _env_float("SIM_CLAUDE_LONG_SESSION_SEC_MIN", lo_raw))
+        hi = max(lo, _env_float("SIM_CLAUDE_LONG_SESSION_SEC_MAX", hi_raw))
+        return random.uniform(lo, hi)
+    return max(0.0, _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0))
+
+
+def claude_user_long_session_pin_sec(roster_user: dict | None) -> float:
+    """Per-user slot pin duration (scaled + optional env min/max draw)."""
+    base = claude_user_long_session_pin_base_sec()
+    if base <= 0:
+        return 0.0
+    return claude_user_session_rotate_duration(base, roster_user)
+
+
+def claude_slot_pin_deadline(
+    now: float,
+    *,
+    slot_index: int,
+    n_slots: int,
+    roster_user: dict | None,
+    initial: bool,
+) -> float:
+    """
+    Monotonic deadline for a Claude slot user pin.
+
+    ``initial=True`` spreads first expiries across the pin window so pod start does not
+    align all slots. Later rotations add per-user jitter so the fleet stays desynced.
+    """
+    pin = claude_user_long_session_pin_sec(roster_user)
+    if pin <= 0:
+        return now
+    phase = claude_user_session_phase_offset(roster_user) if roster_user is not None else 0.0
+    if initial:
+        frac = (slot_index + random.uniform(0.15, 0.95)) / max(n_slots, 1)
+        spread = max(90.0, pin * max(0.1, frac) + phase * 0.35)
+        return now + spread
+    jitter = random.uniform(-0.2 * pin, 0.2 * pin) + phase * 0.08
+    return now + max(90.0, pin + jitter)
+
+
+def claude_session_id_rotate_deadline(now: float, rotate_sec: float) -> float:
+    """Monotonic deadline for the next ``session.id`` rotation (jittered, not fleet-aligned)."""
+    if rotate_sec <= 0:
+        return now
+    jitter = random.uniform(-0.15 * rotate_sec, 0.25 * rotate_sec)
+    return now + max(60.0, rotate_sec + jitter)

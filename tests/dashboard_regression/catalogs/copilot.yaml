@@ -1,0 +1,109 @@
+sim: copilot
+description: >
+  GitHub Copilot CLI AI Center dashboard regressions (cx498 Copilot page + overview widgets).
+  Live sim spans use applicationName=copilot-cli (serviceName=ai-agent-engine). Tag predicates
+  are often not filterable in DataPrime on this tenant; presence is asserted client-side via
+  require_tags on raw span JSON.
+
+checks:
+  - id: copilot.spans.has_data
+    title: Copilot invoke_agent spans present (dashboard hasData)
+    kind: dataprime
+    expect: has_rows
+    tier: frequent
+    window: 24h
+    limit: 5
+    query: |
+      source spans
+      | filter $l.applicationName == 'copilot-cli'
+      | filter $l.operationName == 'invoke_agent'
+      | limit 5
+
+  - id: copilot.spans.sessions_by_user
+    title: Copilot sessions carry user + conversation ids
+    kind: dataprime
+    expect: has_rows
+    tier: frequent
+    window: 24h
+    limit: 10
+    require_tags:
+      - enduser.pseudo.id
+      - gen_ai.conversation.id
+    query: |
+      source spans
+      | filter $l.applicationName == 'copilot-cli'
+      | filter $l.operationName == 'invoke_agent'
+      | limit 10
+
+  - id: copilot.spans.usage_by_model
+    title: Copilot invoke spans carry request model
+    kind: dataprime
+    expect: has_rows
+    tier: frequent
+    window: 24h
+    limit: 10
+    require_tags:
+      - gen_ai.request.model
+      - gen_ai.conversation.id
+    query: |
+      source spans
+      | filter $l.applicationName == 'copilot-cli'
+      | filter $l.operationName == 'invoke_agent'
+      | limit 10
+
+  - id: copilot.spans.session_messages
+    title: Copilot session messages (input/output on invoke_agent)
+    kind: dataprime
+    expect: has_rows
+    tier: frequent
+    window: 24h
+    limit: 10
+    notes: Session Analyze reads gen_ai.input/output.messages on invoke_agent.
+    require_tags:
+      - gen_ai.conversation.id
+      - gen_ai.input.messages
+      - gen_ai.output.messages
+    query: |
+      source spans
+      | filter $l.applicationName == 'copilot-cli'
+      | filter $l.operationName == 'invoke_agent'
+      | limit 10
+
+  - id: copilot.spans.session_repo
+    title: Copilot session↔repo panel fields present
+    kind: dataprime
+    expect: has_rows
+    tier: frequent
+    window: 24h
+    limit: 10
+    require_tags:
+      - gen_ai.conversation.id
+      - github.copilot.git.repository
+    query: |
+      source spans
+      | filter $l.applicationName == 'copilot-cli'
+      | filter $l.operationName == 'invoke_agent'
+      | limit 10
+
+  - id: copilot.dashboard.legacy_service_filter
+    title: HAR/dashboard serviceName=github-copilot filter still matches
+    kind: dataprime
+    expect: has_rows
+    tier: frequent
+    window: 7d
+    limit: 5
+    notes: >
+      Older cx498 HARs filter serviceName github-copilot / otel.scope github.copilot.
+      Sim currently emits applicationName=copilot-cli with serviceName=ai-agent-engine.
+    xfail: Sim serviceName is ai-agent-engine; dashboard HAR still filters github-copilot
+    query: |
+      source spans
+      | filter $l.serviceName == 'github-copilot' || tags['otel.scope.name'] == 'github.copilot'
+      | limit 5
+
+  - id: copilot.metrics.org_sessions
+    title: Copilot collector org CLI session count
+    kind: promql
+    expect: has_nonzero
+    query: |
+      sum(increase(github_copilot_org_cli_session_count{organization="coralogix",job="otel-ai-agent-sim"}[86400s]))

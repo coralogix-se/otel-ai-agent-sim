@@ -1,0 +1,47 @@
+sim: cursor
+description: Cursor agent AI Center / overview dashboard regressions.
+
+checks:
+  - id: cursor.spans.has_conversations
+    title: Cursor conversation spans present
+    kind: dataprime
+    expect: has_rows
+    tier: frequent
+    window: 24h
+    limit: 10
+    require_tags:
+      - cursor.conversation_id
+    query: |
+      source spans
+      | filter $l.serviceName == 'cursor-agent'
+      | limit 10
+
+  - id: cursor.spans.active_users
+    title: Cursor spans carry user email + conversation id
+    kind: dataprime
+    expect: has_rows
+    tier: frequent
+    window: 24h
+    limit: 10
+    require_tags:
+      - cursor.user_email
+      - cursor.conversation_id
+    query: |
+      source spans
+      | filter $l.serviceName == 'cursor-agent'
+      | limit 10
+
+  - id: cursor.spans.usage_by_model
+    title: Cursor spans carry request model
+    kind: dataprime
+    expect: has_rows
+    tier: frequent
+    window: 24h
+    limit: 10
+    require_tags:
+      - gen_ai.request.model
+      - cursor.conversation_id
+    query: |
+      source spans
+      | filter $l.serviceName == 'cursor-agent'
+      | limit 10

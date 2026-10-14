@@ -144,7 +144,9 @@ def push_remote_write(
         return
     _log_write_request_payload(wr, url)
     raw = wr.SerializeToString()
-    body = bytes(cramjam.snappy.compress(raw))
+    # Prometheus remote_write requires Snappy *block* (raw) encoding, not framed.
+    # cramjam.snappy.compress() emits framed (magic sNaP); Coralogix may 201 and drop.
+    body = bytes(cramjam.snappy.compress_raw(raw))
     headers = {
         "Content-Type": "application/x-protobuf",
         "Content-Encoding": "snappy",

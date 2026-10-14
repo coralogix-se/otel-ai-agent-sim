@@ -1,0 +1,348 @@
+"""Catalog for Cursor Usage dashboard ``cursor_*`` metrics (Admin APIs shape)."""
+
+from __future__ import annotations
+
+import os
+
+# Match live cxai-dev series labels (team 3405693 / eu2).
+DEFAULT_TEAM_ID = "3405693"
+DEFAULT_CX_APPLICATION = "Cursor"
+DEFAULT_CX_SUBSYSTEM = "Admin APIs"
+DEFAULT_ORGANIZATION = "coralogix"
+DEFAULT_TEAM_NAME = "Coralogix Engineering"
+
+# Annual pooled budget: week × 52 ≈ living within commitment at current sim pace.
+# dmb-sm observed ~$129k / 7d (Sep 2026) → ~$6.71M / yr.
+DEFAULT_ORG_POOL_WEEKLY_USD = 129_000.0
+
+CURSOR_USAGE_MODELS: tuple[str, ...] = (
+    "default",
+    "gpt-5.6-terra-high",
+    "cursor-grok-4.6-high",
+    "cursor-grok-4.6-high-fast",
+    "claude-sonnet-5-thinking-high",
+    "cursor-grok-4.6-medium",
+    "composer-2.5",
+    "claude-sonnet-5-thinking-medium",
+    "claude-4.6-sonnet-medium-thinking",
+    "claude-4.5-opus-high-thinking",
+    "cursor-grok-4.5-high",
+    "composer-2.5-fast",
+    "claude-opus-5-thinking-high",
+    "claude-opus-4-8-thinking-high",
+    "gpt-5.6-sol-high",
+    "cursor-grok-4.6-medium-fast",
+    "gpt-5.6-sol-medium",
+    "claude-4.6-opus-high-thinking",
+)
+
+# Weights tuned to cxai-dev ``cursor_events_total`` mix (7d window, Sep 2026).
+CURSOR_USAGE_MODEL_WEIGHTS: tuple[float, ...] = (
+    0.11,
+    0.12,
+    0.08,
+    0.07,
+    0.07,
+    0.06,
+    0.06,
+    0.06,
+    0.05,
+    0.05,
+    0.05,
+    0.04,
+    0.04,
+    0.03,
+    0.03,
+    0.02,
+    0.02,
+    0.02,
+)
+
+# Requests surfaces seen on cxai-dev; keep tab/cli/non_ai for ai_code_lines overlap.
+CURSOR_SURFACES: tuple[str, ...] = (
+    "agent",
+    "chat",
+    "composer",
+    "cmdk",
+    "tab",
+    "bugbot",
+    "cli",
+    "non_ai",
+)
+CURSOR_SURFACE_WEIGHTS: tuple[float, ...] = (0.28, 0.16, 0.14, 0.10, 0.12, 0.06, 0.06, 0.08)
+
+# Surfaces shown on the "Active Users by Surface" chart (distinct users per day).
+CURSOR_CHART_SURFACES: tuple[str, ...] = (
+    "agent",
+    "chat",
+    "composer",
+    "cmdk",
+    "bugbot",
+)
+# Stable per-member adoption — fraction of non-idle roster that uses each surface.
+CURSOR_SURFACE_ADOPTION: dict[str, float] = {
+    "agent": 0.88,
+    "chat": 0.52,
+    "composer": 0.70,
+    "cmdk": 0.26,
+    "bugbot": 0.14,
+}
+
+CURSOR_BILLING_KINDS: tuple[str, ...] = (
+    "Included in Business",
+    "Included in Pro",
+    "On-Demand",
+    "API Key",
+)
+CURSOR_BILLING_KIND_WEIGHTS: tuple[float, ...] = (0.55, 0.25, 0.15, 0.05)
+
+CURSOR_BILLING_CLASSES: tuple[str, ...] = (
+    "subscription_included",
+    "usage_based",
+    "api_key",
+)
+CURSOR_BILLING_CLASS_WEIGHTS: tuple[float, ...] = (0.62, 0.28, 0.10)
+
+CURSOR_TOKEN_TYPES: tuple[str, ...] = (
+    "input",
+    "output",
+    "cache_read",
+    "cache_write",
+)
+
+# Live cxai-dev currently only emits commit_source="ide".
+CURSOR_COMMIT_SOURCES: tuple[str, ...] = ("ide",)
+CURSOR_DIRECTIONS: tuple[str, ...] = ("added", "deleted")
+
+CURSOR_FILE_EXTENSIONS: tuple[str, ...] = (
+    "ts",
+    "tsx",
+    "py",
+    "go",
+    "rs",
+    "java",
+    "md",
+)
+# Live change_source values are uppercase (e.g. COMPOSER).
+CURSOR_CHANGE_SOURCES: tuple[str, ...] = ("COMPOSER", "TAB", "AGENT")
+
+CURSOR_CONVERSATION_DIMENSIONS: dict[str, tuple[str, ...]] = {
+    "categories": (
+        "API Integration",
+        "Architecture",
+        "Bug Fixing & Debugging",
+        "Code Explanation",
+        "Code Refactoring",
+        "Code Review",
+        "Configuration",
+        "Data/Database",
+        "DevOps/Deployment",
+        "Documentation",
+        "Learning",
+        "New Features",
+        "Performance",
+        "Security",
+        "Testing",
+        "UI/Styling",
+    ),
+    # Conversations Over Time filters client-side to this FE catalog (see cx498 HAR / Qr.intents).
+    "intents": ("Ask", "Plan", "Task Automation", "Write Code"),
+    "complexity": ("trivial", "low", "medium", "high"),
+    "guidanceLevels": ("low", "medium", "high"),
+    # FE workTypes catalog (HAR Qr.workTypes).
+    "workTypes": ("bug", "ktlo", "new_feature"),
+}
+
+# Topic Mix — Cursor Analytics API intents.subcategories (analytics-api conversation-insights).
+# Prometheus labels: mode + subcategory (+ email). Task Automation has no subcategory bucket.
+CURSOR_CONVERSATION_INTENT_TO_MODE: dict[str, str] = {
+    "Ask": "askMode",
+    "Plan": "planMode",
+    "Write Code": "writeCode",
+}
+CURSOR_CONVERSATION_SUBCATEGORIES: dict[str, tuple[str, ...]] = {
+    "askMode": ("error_fix", "explanation"),
+    "planMode": ("implementation",),
+    "writeCode": ("feature", "refactor"),
+}
+# Slight writeCode bias (matches Analytics API sample skew toward feature work).
+CURSOR_CONVERSATION_SUBCATEGORY_WEIGHTS: dict[str, tuple[float, ...]] = {
+    "askMode": (0.55, 0.45),
+    "planMode": (1.0,),
+    "writeCode": (0.65, 0.35),
+}
+
+# API-key / automation cost attribution (human traffic uses service_account="none").
+CURSOR_SERVICE_ACCOUNTS: tuple[str, ...] = (
+    "none",
+    "ci-bot",
+    "sa-demo-analytics",
+    "sa-demo-ingest",
+    "bugbot",
+)
+
+CURSOR_BUGBOT_SEVERITIES: tuple[str, ...] = ("critical", "high", "medium", "low", "info")
+CURSOR_BUGBOT_ISSUE_STATES: tuple[str, ...] = ("found", "resolved")
+
+
+CURSOR_COMMANDS: tuple[str, ...] = (
+    "edit",
+    "fix",
+    "explain",
+    "generate-tests",
+    "refactor",
+    "commit",
+)
+CURSOR_MCP_SERVERS: tuple[str, ...] = (
+    "github",
+    "coralogix-server",
+    "cxaidev-coralogix-server",
+    "ob-coralogix-server",
+    "slack",
+    "notion",
+    "linear",
+    "playwright",
+    "Atlassian",
+)
+CURSOR_MCP_TOOLS: tuple[str, ...] = (
+    "query_dataprime",
+    "query_promql_instant",
+    "search_docs",
+    "fetch_doc",
+    "search_pull_requests",
+    "list_issues",
+    "get_file_contents",
+    "browser_navigate",
+    "search",
+    "mcp_auth",
+)
+CURSOR_SKILLS: tuple[str, ...] = (
+    "code-review",
+    "pr-summary",
+    "debug",
+    "migrate",
+    "docs",
+)
+
+CURSOR_ROLES: tuple[str, ...] = ("owner", "admin", "member", "member", "member", "member")
+
+CURSOR_CLIENT_VERSIONS: tuple[str, ...] = (
+    "0.50.5",
+    "0.49.6",
+    "0.48.2",
+    "0.47.8",
+)
+# FE stale-client insight: ≥2 semver releases behind the newest harvested version.
+CURSOR_CLIENT_VERSION_LATEST = CURSOR_CLIENT_VERSIONS[0]
+CURSOR_CLIENT_VERSION_ONE_BEHIND = CURSOR_CLIENT_VERSIONS[1]
+CURSOR_CLIENT_VERSION_STALE: tuple[str, ...] = CURSOR_CLIENT_VERSIONS[2:]
+
+CURSOR_REPOS: tuple[str, ...] = (
+    "coralogix/cxai-observability-demo-playground",
+    "coralogix/onlineboutique",
+    "coralogix/dataprime-query-engine",
+    "acme/payments-api",
+    "personal/dotfiles",
+)
+
+CURSOR_GROUPS: tuple[tuple[str, str], ...] = (
+    ("eng", "Engineering"),
+    ("product", "Product"),
+    ("cs", "Customer Success"),
+    ("sec", "Security"),
+    ("unassigned", "Unassigned"),
+)
+
+
+def cursor_usage_team_id() -> str:
+    return os.environ.get("SIM_CURSOR_USAGE_TEAM_ID", DEFAULT_TEAM_ID).strip() or DEFAULT_TEAM_ID
+
+
+def cursor_usage_organization() -> str:
+    return (
+        os.environ.get("SIM_CURSOR_USAGE_ORGANIZATION", DEFAULT_ORGANIZATION).strip()
+        or DEFAULT_ORGANIZATION
+    )
+
+
+def cursor_usage_team_name() -> str:
+    return (
+        os.environ.get("SIM_CURSOR_USAGE_TEAM_NAME", DEFAULT_TEAM_NAME).strip()
+        or DEFAULT_TEAM_NAME
+    )
+
+
+def cursor_usage_org_pool_limit_usd() -> float:
+    """Annual pooled commitment USD (default = weekly × 52)."""
+    from sim.common.env import _env_float
+
+    explicit = os.environ.get("SIM_CURSOR_ORG_POOL_LIMIT_USD", "").strip()
+    if explicit:
+        return max(1.0, float(explicit))
+    weekly = _env_float("SIM_CURSOR_ORG_POOL_WEEKLY_USD", DEFAULT_ORG_POOL_WEEKLY_USD)
+    return max(1.0, weekly * 52.0)
+
+
+def cursor_usage_cx_application() -> str:
+    return (
+        os.environ.get("SIM_CURSOR_USAGE_CX_APPLICATION_NAME", DEFAULT_CX_APPLICATION).strip()
+        or DEFAULT_CX_APPLICATION
+    )
+
+
+def cursor_usage_cx_subsystem() -> str:
+    return (
+        os.environ.get("SIM_CURSOR_USAGE_CX_SUBSYSTEM_NAME", DEFAULT_CX_SUBSYSTEM).strip()
+        or DEFAULT_CX_SUBSYSTEM
+    )
+
+
+def cursor_usage_roster_size() -> int:
+    from sim.common.env import _env_int
+
+    # Brief §8: raise member_* series toward c4c (~172–249). Cap 225 (full team roster).
+    return max(4, min(225, _env_int("SIM_CURSOR_USAGE_ROSTER_SIZE", 48)))
+
+
+def cursor_usage_conversations_per_day() -> int:
+    """New conversation_id budget per UTC day (cxai-dev ≈ 120; keep 300–500)."""
+    from sim.common.env import _env_int
+
+    return max(1, min(2000, _env_int("SIM_CURSOR_USAGE_CONVERSATIONS_PER_DAY", 400)))
+
+
+def cursor_usage_events_per_conversation() -> tuple[int, int]:
+    """Inclusive (min, max) events that reuse one conversation_id."""
+    from sim.common.env import _env_int
+
+    lo = max(1, _env_int("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", 20))
+    hi = max(lo, _env_int("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", 40))
+    return lo, hi
+
+
+def cursor_usage_events_per_user_day() -> int:
+    """Target events per active user per UTC day (~200–500)."""
+    from sim.common.env import _env_int
+
+    return max(50, min(2000, _env_int("SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY", 350)))
+
+
+def cursor_usage_events_per_user_day_max() -> int:
+    from sim.common.env import _env_int
+
+    return max(
+        cursor_usage_events_per_user_day(),
+        min(5000, _env_int("SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY_MAX", 500)),
+    )
+
+
+def cursor_usage_idle_seats() -> int:
+    from sim.common.env import _env_int
+
+    return max(0, min(4, _env_int("SIM_CURSOR_USAGE_IDLE_SEATS", 2)))
+
+
+def cursor_usage_stale_client_seats() -> int:
+    from sim.common.env import _env_int
+
+    return max(0, min(4, _env_int("SIM_CURSOR_USAGE_STALE_CLIENT_SEATS", 2)))

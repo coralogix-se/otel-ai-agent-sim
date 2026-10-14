@@ -1,0 +1,55 @@
+# OpAMP Supervisor config for Coralogix Fleet Management (remote configuration).
+# Docs: https://coralogix.com/docs/user-guides/fleet-management/architecture/
+#
+# Control plane: onlineboutique-dev on US2 (default cx profile = obdev).
+# Telemetry still fans out via the collector config; Fleet Manager OpAMP is one tenant.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-codeagentsim-fleet-supervisor
+  namespace: codeagentsim
+  labels:
+    app: otel-collector-codeagentsim-fleet
+data:
+  supervisor.yaml: |
+    server:
+      # OpAMP uses ingress.<domain>/opamp/v1 (not the bare exporter domain).
+      endpoint: "https://ingress.us2.coralogix.com/opamp/v1"
+      headers:
+        Authorization: "Bearer ${env:CORALOGIX_PRIVATE_KEY_ONLINEBOUTIQUE_DEV}"
+      tls:
+        insecure_skip_verify: false
+
+    capabilities:
+      reports_effective_config: true
+      reports_own_metrics: true
+      reports_own_logs: true
+      reports_own_traces: true
+      reports_health: true
+      accepts_remote_config: true
+      reports_remote_config: true
+
+    agent:
+      executable: /otelcol-contrib
+      config_apply_timeout: 30s
+      passthrough_logs: true
+      # Local baseline (hybrid). Set minimalCollectorConfig / drop this for remote-only.
+      config_files:
+        - /conf/config.yaml
+      args: []
+      env: {}
+      description:
+        non_identifying_attributes:
+          cx.agent.type: "cluster-collector"
+          cx.cluster.name: "codeagentsim"
+          k8s.deployment.name: "otel-collector-codeagentsim-fleet"
+          k8s.namespace.name: "codeagentsim"
+          k8s.pod.name: ${env:KUBE_POD_NAME}
+          k8s.node.name: ${env:KUBE_NODE_NAME}
+
+    storage:
+      directory: /var/lib/otelcol/supervisor-data/
+
+    telemetry:
+      logs:
+        level: info

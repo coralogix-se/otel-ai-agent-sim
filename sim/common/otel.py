@@ -98,7 +98,8 @@ _CC_BASE_LABEL_NAMES = (
 
 # ``claude_code_lines_of_code_count_*`` — same user dimensions as commit/PR counters so
 # ``sum by (user_email)`` / ``sum by (user_name)`` panels do not drop LOC while showing commits.
-_CC_LOC_LABEL_NAMES = _CC_BASE_LABEL_NAMES + ("type",)
+# ``model`` matches c4c ``claude_code_lines_of_code_count`` (onlineboutique brief §6).
+_CC_LOC_LABEL_NAMES = _CC_BASE_LABEL_NAMES + ("type", "model")
 
 def _map_cc_base_labels(base: dict, cx_app: str, cx_sub: str) -> dict[str, str]:
     acc = str(base.get("user.account_uuid", ""))
@@ -199,11 +200,11 @@ def _sim_claude_usage_token_counts() -> tuple[int, int]:
     """
     Input/output token counts for Claude Code metrics and the ``user_prompt`` span.
     Combined input+output is drawn in ``[SIM_CLAUDE_TOTAL_TOKENS_MIN, SIM_CLAUDE_TOTAL_TOKENS_MAX]``
-    (defaults ~4.5k–~225k per simulated turn so charts do not auto-scale to one giant spike and
-    hide everything else). Override env for stress tests (e.g. ``50_000_000`` max).
+    (defaults ~2.5k–~18k per simulated turn — realistic CLI turn sizes; was up to ~225k which
+    produced absurd weekly spend). Override env for stress tests (e.g. ``50_000_000`` max).
     """
-    t0 = _env_int("SIM_CLAUDE_TOTAL_TOKENS_MIN", 4_500)
-    t1 = _env_int("SIM_CLAUDE_TOTAL_TOKENS_MAX", 225_000)
+    t0 = _env_int("SIM_CLAUDE_TOTAL_TOKENS_MIN", 2_500)
+    t1 = _env_int("SIM_CLAUDE_TOTAL_TOKENS_MAX", 18_000)
     lo, hi = min(t0, t1), max(t0, t1)
     pair_total = random.randint(lo, hi)
     inp_frac = random.uniform(0.55, 0.75)
@@ -216,17 +217,19 @@ def _agent_selection_weight(agent_product: str) -> int:
     """
     Relative weights for ``random.choices`` (higher = selected more often per iteration).
     Override with env ``SIM_WEIGHT_<PRODUCT>`` e.g. ``SIM_WEIGHT_GEMINI_CLI``, ``SIM_WEIGHT_CODEX``.
+    Use ``0`` to disable a product without removing its emit path.
     """
     defaults = {
         # Slightly favor Claude so token/cost panels see samples without long waits (override with SIM_WEIGHT_*).
         "claude_code": 5,
-        "gemini_cli": 5,
+        # Gemini CLI is retired from the live mix; keep emit code, weight 0 unless overridden.
+        "gemini_cli": 0,
         "codex": 5,
         "cursor": 5,
         "copilot_cli": 5,
     }
     key = agent_product.upper().replace("-", "_")
-    return max(1, _env_int(f"SIM_WEIGHT_{key}", defaults.get(agent_product, 1)))
+    return max(0, _env_int(f"SIM_WEIGHT_{key}", defaults.get(agent_product, 1)))
 
 
 # Three release lines per simulated product (instrumentation scope + app.version / dashboards).

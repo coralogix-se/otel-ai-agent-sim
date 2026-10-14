@@ -11,6 +11,7 @@ k8s/secret-coralogix-otel.yaml
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
 
 # Large captures / runtime logs
 .logs/

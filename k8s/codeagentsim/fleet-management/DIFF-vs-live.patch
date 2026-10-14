@@ -1,0 +1,232 @@
+# Diff: live codeagentsim collector vs fleet-management standalone copy
+# Generated 2026-08-11T15:54Z
+# Live files: k8s/codeagentsim/otel-collector-{configmap,deployment}.yaml
+# Fleet copy: k8s/codeagentsim/fleet-management/
+#
+# Summary of intentional deltas:
+#   - Resource names suffixed with -fleet (safe side-by-side naming)
+#   - New ConfigMap: supervisor.yaml (OpAMP -> ingress.us2 .../opamp/v1)
+#   - Deployment runs /opampsupervisor instead of otelcol --config
+#   - Image: coralogix-otel-supervised-collector:0.12.0 (vs contrib:0.158.0)
+#   - Mounts /conf config + supervisor.yaml + emptyDir for supervisor storage
+#   - Adds KUBE_POD_NAME / KUBE_NODE_NAME for fleet agent description attrs
+#   - Collector pipeline YAML is otherwise unchanged (hybrid local baseline)
+#
+
+================================================================================
+# 1) Collector ConfigMap (pipeline config)
+================================================================================
+--- k8s/codeagentsim/otel-collector-configmap.yaml	2026-08-10 08:32:09
++++ k8s/codeagentsim/fleet-management/otel-collector-configmap.yaml	2026-08-11 08:54:34
+@@ -1,13 +1,20 @@
+-# Fan-out: OTLP traces/logs -> ingress.us2 + ingress.eu1 + ingress.us2 (onlineboutique-dev tenant, separate key).
+-# Prometheus: scrape sim Service :9090 -> remote_write to all three exporters (no duplicate OTLP metrics).
++# Standalone copy: same telemetry pipelines as ../otel-collector-configmap.yaml,
++# intended to run under the OpAMP Supervisor (see sibling manifests).
++#
++# Mode: hybrid (local config + remote Fleet Manager overlays).
++# With supervisor.enabled + local config_files, Fleet Manager remote config
++# still takes highest merge precedence when present.
++#
++# Fan-out: OTLP traces/logs -> ingress.us2 + ingress.eu1 + ingress.us2 (onlineboutique-dev).
++# Prometheus: scrape sim Service :9090 -> remote_write to all three exporters.
+ # Receiver ports 24317/24318 avoid overlapping another collector using 4317/4318 in-cluster.
+ apiVersion: v1
+ kind: ConfigMap
+ metadata:
+-  name: otel-collector-codeagentsim-config
++  name: otel-collector-codeagentsim-fleet-config
+   namespace: codeagentsim
+   labels:
+-    app: otel-collector-codeagentsim
++    app: otel-collector-codeagentsim-fleet
+ data:
+   config.yaml: |
+     extensions:
+
+================================================================================
+# 2) Deployment + Service
+================================================================================
+--- k8s/codeagentsim/otel-collector-deployment.yaml	2026-08-10 08:32:09
++++ k8s/codeagentsim/fleet-management/otel-collector-deployment.yaml	2026-08-11 08:54:45
+@@ -1,25 +1,32 @@
++# Standalone Deployment: OpAMP Supervisor wraps the Collector (fleet management).
++# Image: Coralogix supervised collector (supervisor binary + otelcol-contrib).
++# Do not apply alongside ../otel-collector-deployment.yaml without changing
++# Service ports / sim OTLP endpoint — both default to 24317/24318.
+ apiVersion: apps/v1
+ kind: Deployment
+ metadata:
+-  name: otel-collector-codeagentsim
++  name: otel-collector-codeagentsim-fleet
+   namespace: codeagentsim
+   labels:
+-    app: otel-collector-codeagentsim
++    app: otel-collector-codeagentsim-fleet
+ spec:
+   replicas: 1
+   selector:
+     matchLabels:
+-      app: otel-collector-codeagentsim
++      app: otel-collector-codeagentsim-fleet
+   template:
+     metadata:
+       labels:
+-        app: otel-collector-codeagentsim
++        app: otel-collector-codeagentsim-fleet
+     spec:
+       containers:
+         - name: otelcol
+-          image: otel/opentelemetry-collector-contrib:0.158.0
+-          args:
+-            - --config=/etc/otelcol/config.yaml
++          # Bundles OpAMP supervisor + collector (collector ~0.156.x as of supervised 0.12.0).
++          # Live codeagentsim collector still uses otel/opentelemetry-collector-contrib:0.158.0.
++          image: cgx.jfrog.io/coralogix-docker-images/coralogix-otel-supervised-collector:0.12.0
++          command:
++            - /opampsupervisor
++            - --config=/etc/otelcol-contrib/supervisor.yaml
+           ports:
+             - name: otlp-grpc
+               containerPort: 24317
+@@ -31,6 +38,16 @@
+               containerPort: 13134
+               protocol: TCP
+           env:
++            - name: KUBE_POD_NAME
++              valueFrom:
++                fieldRef:
++                  apiVersion: v1
++                  fieldPath: metadata.name
++            - name: KUBE_NODE_NAME
++              valueFrom:
++                fieldRef:
++                  apiVersion: v1
++                  fieldPath: spec.nodeName
+             - name: CORALOGIX_PRIVATE_KEY_US2
+               valueFrom:
+                 secretKeyRef:
+@@ -41,7 +58,7 @@
+                 secretKeyRef:
+                   name: coralogix-multi-export
+                   key: private_key_eu1
+-            # onlineboutique-dev Coralogix instance (US2); same ingress as US2 exporter #1, different API key.
++            # onlineboutique-dev Coralogix instance (US2); also used for Fleet Manager OpAMP auth.
+             - name: CORALOGIX_PRIVATE_KEY_ONLINEBOUTIQUE_DEV
+               valueFrom:
+                 secretKeyRef:
+@@ -49,8 +66,14 @@
+                   key: private_key_onlineboutique_dev
+           volumeMounts:
+             - name: config
+-              mountPath: /etc/otelcol
++              mountPath: /conf
+               readOnly: true
++            - name: supervisor-config
++              mountPath: /etc/otelcol-contrib/supervisor.yaml
++              subPath: supervisor.yaml
++              readOnly: true
++            - name: supervisor-data
++              mountPath: /var/lib/otelcol/supervisor-data
+           readinessProbe:
+             httpGet:
+               path: /
+@@ -73,19 +96,30 @@
+       volumes:
+         - name: config
+           configMap:
+-            name: otel-collector-codeagentsim-config
++            name: otel-collector-codeagentsim-fleet-config
++            items:
++              - key: config.yaml
++                path: config.yaml
++        - name: supervisor-config
++          configMap:
++            name: otel-collector-codeagentsim-fleet-supervisor
++            items:
++              - key: supervisor.yaml
++                path: supervisor.yaml
++        - name: supervisor-data
++          emptyDir: {}
+ ---
+ apiVersion: v1
+ kind: Service
+ metadata:
+-  name: otel-collector-codeagentsim
++  name: otel-collector-codeagentsim-fleet
+   namespace: codeagentsim
+   labels:
+-    app: otel-collector-codeagentsim
++    app: otel-collector-codeagentsim-fleet
+ spec:
+   type: ClusterIP
+   selector:
+-    app: otel-collector-codeagentsim
++    app: otel-collector-codeagentsim-fleet
+   ports:
+     - name: otlp-grpc
+       port: 24317
+
+================================================================================
+# 3) NEW FILE: supervisor ConfigMap (no live counterpart)
+================================================================================
+--- /dev/null
++++ k8s/codeagentsim/fleet-management/otel-collector-supervisor-configmap.yaml
+--- /dev/null	2026-08-11 08:54:54
++++ k8s/codeagentsim/fleet-management/otel-collector-supervisor-configmap.yaml	2026-08-11 08:54:45
+@@ -0,0 +1,55 @@
++# OpAMP Supervisor config for Coralogix Fleet Management (remote configuration).
++# Docs: https://coralogix.com/docs/user-guides/fleet-management/architecture/
++#
++# Control plane: onlineboutique-dev on US2 (default cx profile = obdev).
++# Telemetry still fans out via the collector config; Fleet Manager OpAMP is one tenant.
++apiVersion: v1
++kind: ConfigMap
++metadata:
++  name: otel-collector-codeagentsim-fleet-supervisor
++  namespace: codeagentsim
++  labels:
++    app: otel-collector-codeagentsim-fleet
++data:
++  supervisor.yaml: |
++    server:
++      # OpAMP uses ingress.<domain>/opamp/v1 (not the bare exporter domain).
++      endpoint: "https://ingress.us2.coralogix.com/opamp/v1"
++      headers:
++        Authorization: "Bearer ${env:CORALOGIX_PRIVATE_KEY_ONLINEBOUTIQUE_DEV}"
++      tls:
++        insecure_skip_verify: false
++
++    capabilities:
++      reports_effective_config: true
++      reports_own_metrics: true
++      reports_own_logs: true
++      reports_own_traces: true
++      reports_health: true
++      accepts_remote_config: true
++      reports_remote_config: true
++
++    agent:
++      executable: /otelcol-contrib
++      config_apply_timeout: 30s
++      passthrough_logs: true
++      # Local baseline (hybrid). Set minimalCollectorConfig / drop this for remote-only.
++      config_files:
++        - /conf/config.yaml
++      args: []
++      env: {}
++      description:
++        non_identifying_attributes:
++          cx.agent.type: "cluster-collector"
++          cx.cluster.name: "codeagentsim"
++          k8s.deployment.name: "otel-collector-codeagentsim-fleet"
++          k8s.namespace.name: "codeagentsim"
++          k8s.pod.name: ${env:KUBE_POD_NAME}
++          k8s.node.name: ${env:KUBE_NODE_NAME}
++
++    storage:
++      directory: /var/lib/otelcol/supervisor-data/
++
++    telemetry:
++      logs:
++        level: info

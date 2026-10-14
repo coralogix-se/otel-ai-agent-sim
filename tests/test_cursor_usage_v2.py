@@ -1,0 +1,481 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from prometheus_client import CollectorRegistry, generate_latest
+
+from sim.cursor.usage_v2.collector import register_cursor_usage_metrics
+from sim.cursor.usage_v2.constants import (
+    CURSOR_CONVERSATION_DIMENSIONS,
+    CURSOR_CONVERSATION_INTENT_TO_MODE,
+    CURSOR_CONVERSATION_SUBCATEGORIES,
+    DEFAULT_CX_APPLICATION,
+    DEFAULT_TEAM_ID,
+)
+from sim.cursor.usage_v2.runtime import (
+    emit_cursor_usage_cycle,
+    reset_cursor_usage_runtime_for_tests,
+    _roster,
+)
+
+
+def _users_by_surface(payload: bytes) -> dict[str, set[str]]:
+    by_surface: dict[str, set[str]] = {}
+    for line in _metric_lines(payload, "cursor_requests_total"):
+        if 'surface="' not in line:
+            continue
+        surface = line.split('surface="', 1)[1].split('"', 1)[0]
+        email = line.split('email="', 1)[1].split('"', 1)[0]
+        by_surface.setdefault(surface, set()).add(email)
+    return by_surface
+
+
+def _series_names(text: bytes) -> set[str]:
+    names: set[str] = set()
+    for line in text.decode().splitlines():
+        if not line or line.startswith("#"):
+            continue
+        names.add(line.split("{", 1)[0].split(" ", 1)[0])
+    return names
+
+
+def _metric_lines(text: bytes, name: str) -> list[str]:
+    prefix = f"{name}{{"
+    return [line for line in text.decode().splitlines() if line.startswith(prefix)]
+
+
+def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "8")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "12")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", "1")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", "1")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_VOLUME", "1")
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    emit_cursor_usage_cycle(now=datetime(2026, 8, 28, 18, 0, tzinfo=timezone.utc))
+    payload = generate_latest(registry)
+    names = _series_names(payload)
+
+    for required in (
+        "cursor_events_total",
+        "cursor_event_cost_usd",
+        "cursor_event_tokens_total",
+        "cursor_event_request_units_total",
+        "cursor_member_info",
+        "cursor_member_active",
+        "cursor_member_daily_spend_usd",
+        "cursor_member_spend_gross_usd",
+        "cursor_member_monthly_limit_usd",
+        "cursor_group_members",
+        "cursor_org_team_membership_info",
+        "cursor_requests_total",
+        "cursor_ai_code_lines_total",
+        "cursor_billing_cycle_start_seconds",
+        "cursor_billing_cycle_end_seconds",
+        "cursor_bugbot_repos",
+        "cursor_bugbot_issues_snapshot",
+        "cursor_bugbot_prs_reviewed",
+        "cursor_bugbot_pr_reviews_total",
+        "cursor_bugbot_issues_total",
+        "cursor_org_pool_enabled",
+        "cursor_org_pool_limit_usd",
+        "cursor_org_pool_remaining_usd",
+        "cursor_org_pooled_usage_usd",
+        "cursor_active_users_total",
+        "cursor_active_users_cli",
+        "cursor_active_users_cloud_agent",
+        "cursor_active_users_bugbot",
+    ):
+        assert required in names, required
+
+    body = payload.decode()
+    assert f'cx_application_name="{DEFAULT_CX_APPLICATION}"' in body
+    assert f'team_id="{DEFAULT_TEAM_ID}"' in body
+    assert 'cx_subsystem_name="Admin APIs"' in body
+    assert any(
+        'organization="coralogix"' in line and ' 1.0' in line
+        for line in _metric_lines(payload, "cursor_org_pool_enabled")
+    )
+    pool_limit_lines = _metric_lines(payload, "cursor_org_pool_limit_usd")
+    assert pool_limit_lines
+    limit_val = float(pool_limit_lines[0].rsplit(" ", 1)[-1])
+    assert abs(limit_val - 129_000 * 52) < 1.0
+    usage_lines = _metric_lines(payload, "cursor_org_pooled_usage_usd")
+    assert any(
+        'organization="coralogix"' in line
+        and 'team_id="' in line
+        and 'team_name="Coralogix Engineering"' in line
+        for line in usage_lines
+    )
+    usage_val = float(usage_lines[0].rsplit(" ", 1)[-1])
+    # Seeded at day-of-year fraction (Aug 28 ≈ day 240).
+    assert usage_val > 0
+    assert usage_val < limit_val
+    rem_val = float(_metric_lines(payload, "cursor_org_pool_remaining_usd")[0].rsplit(" ", 1)[-1])
+    assert abs((limit_val - usage_val) - rem_val) < 0.02
+    assert any(
+        'email="' in line
+        and 'conversation_id="' in line
+        and 'model="' in line
+        and 'date="2026-08-28"' in line
+        and 'service_account="' in line
+        for line in _metric_lines(payload, "cursor_events_total")
+    )
+    assert any(
+        'service_account="' in line and 'date="2026-08-28"' in line
+        for line in _metric_lines(payload, "cursor_event_cost_usd")
+    )
+    assert any(
+        'role="' in line for line in _metric_lines(payload, "cursor_member_monthly_limit_usd")
+    )
+    assert any(
+        'enabled="true"' in line and 'manual_only="false"' in line
+        for line in _metric_lines(payload, "cursor_bugbot_repos")
+    )
+    assert any(
+        'severity="' in line and 'state="' in line
+        for line in _metric_lines(payload, "cursor_bugbot_issues_total")
+    )
+    assert CURSOR_CONVERSATION_DIMENSIONS["intents"] == (
+        "Ask",
+        "Plan",
+        "Task Automation",
+        "Write Code",
+    )
+    assert CURSOR_CONVERSATION_DIMENSIONS["workTypes"] == ("bug", "ktlo", "new_feature")
+    assert CURSOR_CONVERSATION_INTENT_TO_MODE == {
+        "Ask": "askMode",
+        "Plan": "planMode",
+        "Write Code": "writeCode",
+    }
+    assert CURSOR_CONVERSATION_SUBCATEGORIES["askMode"] == ("error_fix", "explanation")
+    assert CURSOR_CONVERSATION_SUBCATEGORIES["planMode"] == ("implementation",)
+    assert CURSOR_CONVERSATION_SUBCATEGORIES["writeCode"] == ("feature", "refactor")
+    assert any(
+        'dimension="intents"' in line
+        and (
+            'value="Ask"' in line
+            or 'value="Plan"' in line
+            or 'value="Task Automation"' in line
+            or 'value="Write Code"' in line
+        )
+        for line in _metric_lines(payload, "cursor_conversation_total")
+    )
+    user_total = _metric_lines(payload, "cursor_user_conversation_total")
+    user_snap = _metric_lines(payload, "cursor_user_conversation_snapshot")
+    assert user_total, "cursor_user_conversation_total missing"
+    assert user_snap, "cursor_user_conversation_snapshot missing"
+    assert any('dimension="intents"' in line and 'email="' in line for line in user_total)
+    assert any('email="' in line for line in user_snap)
+    # Insights / Work type dimensions should appear on the user-scoped family.
+    assert any('dimension="workTypes"' in line for line in user_total)
+    assert any('dimension="complexity"' in line for line in user_snap)
+    assert any('dimension="guidanceLevels"' in line for line in user_snap)
+    subcat_lines = _metric_lines(payload, "cursor_conversation_subcategory_snapshot")
+    user_subcat = _metric_lines(payload, "cursor_user_conversation_subcategory_snapshot")
+    assert subcat_lines, "Topic Mix metric missing"
+    assert user_subcat, "cursor_user_conversation_subcategory_snapshot missing"
+    assert any('mode="askMode"' in line or 'mode="planMode"' in line or 'mode="writeCode"' in line for line in subcat_lines)
+    assert any(
+        any(f'subcategory="{s}"' in line for s in ("error_fix", "explanation", "implementation", "feature", "refactor"))
+        for line in subcat_lines
+    )
+    assert any('email="' in line for line in subcat_lines)
+    assert any('email="' in line for line in user_subcat)
+    # Subcategory rows should only belong to active roster emails that also speak.
+    roster_emails = {m.email for m in _roster()}
+    for line in subcat_lines + user_subcat:
+        email = line.split('email="', 1)[1].split('"', 1)[0]
+        assert email in roster_emails
+    # Every subcategory series email should also appear on conversation-scoped events.
+    event_emails = {
+        line.split('email="', 1)[1].split('"', 1)[0]
+        for line in _metric_lines(payload, "cursor_events_total")
+        if 'email="' in line
+    }
+    for line in subcat_lines + user_subcat:
+        email = line.split('email="', 1)[1].split('"', 1)[0]
+        assert email in event_emails
+
+    # Probabilistic MCP / file-line series — force a second dense cycle and check if present.
+    emit_cursor_usage_cycle(now=datetime(2026, 8, 28, 18, 0, tzinfo=timezone.utc))
+    payload2 = generate_latest(registry)
+    mcp_lines = _metric_lines(payload2, "cursor_user_mcp_usage_total")
+    if mcp_lines:
+        assert any('tool_name="' in line and 'mcp_server_name="' in line for line in mcp_lines)
+    file_lines = _metric_lines(payload2, "cursor_ai_change_file_lines_added_total")
+    if file_lines:
+        assert any('model="' in line and 'change_source="' in line for line in file_lines)
+    assert any(
+        line.startswith("cursor_member_info{") and 'role="' in line and 'is_removed="false"' in line
+        for line in body.splitlines()
+    )
+
+
+def test_limits_and_overage_share(monkeypatch) -> None:
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "20")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "40")
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    now = datetime(2026, 8, 28, 18, 0, tzinfo=timezone.utc)
+    for _ in range(30):
+        emit_cursor_usage_cycle(now=now)
+    # Keep latest snapshots without clearing via an unused scrape mid-loop.
+    payload = generate_latest(registry)
+
+    limits = []
+    for line in _metric_lines(payload, "cursor_member_monthly_limit_usd"):
+        val = float(line.rsplit(" ", 1)[-1])
+        limits.append(val)
+        assert 500.0 <= val <= 1700.0
+
+    assert limits
+    overages = []
+    for line in _metric_lines(payload, "cursor_member_spend_overage_usd"):
+        overages.append(float(line.rsplit(" ", 1)[-1]))
+    assert overages
+    over_count = sum(1 for v in overages if v > 0)
+    # ~10% of roster (2 of 20) should exceed; allow 1..4 after many emits.
+    assert 1 <= over_count <= 4, over_count
+    roster = _roster()
+    assert sum(1 for m in roster if m.may_exceed_limit) == 2
+
+
+def test_deltas_clear_on_scrape_snapshots_restated(monkeypatch) -> None:
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "6")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "8")
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    now = datetime(2026, 8, 28, 19, 0, tzinfo=timezone.utc)
+    emit_cursor_usage_cycle(now=now)
+
+    first = generate_latest(registry)
+    assert "cursor_events_total" in _series_names(first)
+    assert "cursor_member_info" in _series_names(first)
+    assert "cursor_bugbot_repos" in _series_names(first)
+
+    # No new emit: deltas should be gone; roster snapshots remain.
+    second = generate_latest(registry)
+    names2 = _series_names(second)
+    assert "cursor_events_total" not in names2
+    assert "cursor_member_info" in names2
+    assert "cursor_billing_cycle_start_seconds" in names2
+    assert "cursor_bugbot_repos" in names2
+
+
+def test_usage_metrics_gated_off_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("SIM_CURSOR_USAGE_METRICS_ENABLED", raising=False)
+    from sim.cursor.usage_v2 import usage_metrics_enabled
+
+    assert usage_metrics_enabled() is False
+    monkeypatch.setenv("SIM_CURSOR_USAGE_METRICS_ENABLED", "true")
+    assert usage_metrics_enabled() is True
+
+
+def test_usage_personas_diversify_tag_inputs(monkeypatch) -> None:
+    """FE Usage Patterns need heterogeneous intensity / max_mode / accept / context."""
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "48")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_IDLE_SEATS", "2")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "48")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", "1")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", "1")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_CONVERSATIONS_PER_DAY", "400")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY", "350")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY_MAX", "500")
+
+    roster = [m for m in _roster() if not m.is_idle]
+    persona_names = {m.persona.name for m in roster}
+    assert len(persona_names) >= 6, persona_names
+    assert any(m.persona.max_mode_p >= 0.5 for m in roster)  # deepThinker / premium
+    assert any(m.persona.accept_rate <= 0.2 for m in roster)  # manualCoder
+    assert any(m.persona.intensity >= 2.5 for m in roster)  # powerUser
+    assert any(m.persona.event_cap_frac <= 0.15 for m in roster)  # light / sporadic
+    assert any(m.persona.cache_read_mult >= 3.0 for m in roster)  # longSessions
+    assert any(m.persona.cache_read_mult <= 0.2 for m in roster)  # shortSessions
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    now = datetime(2026, 8, 28, 18, 0, tzinfo=timezone.utc)
+    for hour in range(12):
+        emit_cursor_usage_cycle(now=now.replace(hour=6 + hour // 2, minute=(hour % 2) * 30))
+    payload = generate_latest(registry)
+
+    # Request volume should vary across emails (not flat equalization).
+    req_by_email: dict[str, float] = {}
+    for line in _metric_lines(payload, "cursor_requests_total"):
+        email = line.split('email="', 1)[1].split('"', 1)[0]
+        val = float(line.rsplit(" ", 1)[-1])
+        req_by_email[email] = req_by_email.get(email, 0.0) + val
+    assert len(req_by_email) >= 8
+    vals = sorted(req_by_email.values())
+    assert vals[-1] >= vals[0] * 2.5, vals
+
+    # max_mode=true should appear (deep thinkers / premium).
+    event_lines = _metric_lines(payload, "cursor_events_total")
+    assert any('max_mode="true"' in line for line in event_lines)
+    assert any('max_mode="false"' in line for line in event_lines)
+
+
+def test_idle_seats_and_surface_user_diversity(monkeypatch) -> None:
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "24")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_IDLE_SEATS", "2")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "48")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_VOLUME", "1.5")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", "1")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", "2")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_CONVERSATIONS_PER_DAY", "400")
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    now = datetime(2026, 8, 28, 18, 0, tzinfo=timezone.utc)
+    for _ in range(16):
+        emit_cursor_usage_cycle(now=now)
+    payload = generate_latest(registry)
+
+    roster = _roster()
+    idle = [m for m in roster if m.is_idle]
+    assert len(idle) == 2
+    idle_emails = {m.email for m in idle}
+
+    active_lines = _metric_lines(payload, "cursor_member_active")
+    today = "2026-08-28"
+    # Idle seats must be present as value=0 so Adoption Idle Seats KPI can count them.
+    idle_active_lines = [
+        line
+        for line in active_lines
+        if f'date="{today}"' in line and any(f'email="{e}"' in line for e in idle_emails)
+    ]
+    assert len(idle_active_lines) == len(idle_emails)
+    assert all(line.rsplit(" ", 1)[-1] == "0.0" for line in idle_active_lines)
+    active_positive = {
+        line.split('email="', 1)[1].split('"', 1)[0]
+        for line in active_lines
+        if f'date="{today}"' in line and line.rsplit(" ", 1)[-1] not in ("0.0", "0")
+    }
+    assert idle_emails.isdisjoint(active_positive)
+    # Every roster seat has an explicit 0/1 flag for today (FE date=~ window).
+    today_emails = {
+        line.split('email="', 1)[1].split('"', 1)[0]
+        for line in active_lines
+        if f'date="{today}"' in line
+    }
+    assert today_emails == {m.email for m in roster}
+
+    dau_lines = _metric_lines(payload, "cursor_active_users_total")
+    assert any(f'date="{today}"' in line and float(line.rsplit(" ", 1)[-1]) > 0 for line in dau_lines)
+
+    # Adoption Active Users / Adoption Rate KPIs join roster to these (not member_active).
+    seat_line_emails = {
+        line.split('email="', 1)[1].split('"', 1)[0]
+        for line in _metric_lines(payload, "cursor_user_lines_total")
+        if f'date="{today}"' in line
+        and 'source="agent"' in line
+        and 'outcome="suggested"' in line
+        and float(line.rsplit(" ", 1)[-1]) > 0
+    }
+    tab_emails = {
+        line.split('email="', 1)[1].split('"', 1)[0]
+        for line in _metric_lines(payload, "cursor_user_tab_suggestions_total")
+        if f'date="{today}"' in line and float(line.rsplit(" ", 1)[-1]) > 0
+    }
+    seat_active = seat_line_emails | tab_emails
+    assert seat_active
+    assert idle_emails.isdisjoint(seat_active)
+
+    request_emails = {
+        line.split('email="', 1)[1].split('"', 1)[0]
+        for line in _metric_lines(payload, "cursor_requests_total")
+    }
+    assert idle_emails.isdisjoint(request_emails)
+
+    by_surface = _users_by_surface(payload)
+    chart_counts = {s: len(by_surface.get(s, set())) for s in ("agent", "chat", "composer", "cmdk", "bugbot")}
+    assert chart_counts["agent"] > chart_counts["composer"] > chart_counts["chat"]
+    assert chart_counts["cmdk"] < chart_counts["chat"]
+    assert chart_counts["bugbot"] < chart_counts["cmdk"]
+    assert len(set(chart_counts.values())) > 1
+
+
+def test_client_versions_mostly_latest_two_stale(monkeypatch) -> None:
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "24")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_IDLE_SEATS", "2")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_STALE_CLIENT_SEATS", "2")
+
+    roster = _roster()
+    active = [m for m in roster if not m.is_idle]
+    stale = [m for m in active if m.client_version in ("0.48.2", "0.47.8")]
+    latest = [m for m in active if m.client_version == "0.50.5"]
+
+    assert len(stale) == 2
+    assert len(latest) >= len(active) - 4  # allow ~2 on 0.49.6
+
+
+def test_conversation_ids_reused_across_events(monkeypatch) -> None:
+    """conversation_id must be reused (20–40 events), not one UUID per event."""
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "48")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_IDLE_SEATS", "2")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "5")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_CONVERSATIONS_PER_DAY", "400")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", "20")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", "40")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY", "350")
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    # Late in the UTC day so pacing allows a meaningful burst without waiting.
+    now = datetime(2026, 8, 28, 20, 0, tzinfo=timezone.utc)
+    for _ in range(80):
+        emit_cursor_usage_cycle(now=now)
+    payload = generate_latest(registry)
+
+    conv_ids: set[str] = set()
+    event_lines = _metric_lines(payload, "cursor_events_total")
+    assert event_lines, "expected cursor_events_total samples"
+    total_events = 0.0
+    for line in event_lines:
+        conv_ids.add(line.split('conversation_id="', 1)[1].split('"', 1)[0])
+        total_events += float(line.rsplit(" ", 1)[-1])
+
+    assert total_events >= 20
+    # Many events must share conversation_ids (≈20–40 events each, not ~1:1).
+    assert len(conv_ids) <= max(1, int(total_events / 15))
+    assert len(conv_ids) < total_events / 10
+
+    from sim.cursor.usage_v2 import runtime as rt
+
+    assert rt._CONVERSATIONS_STARTED_TODAY <= 400
+    assert rt._EVENTS_EMITTED_TODAY >= 20
+    avg = rt._EVENTS_EMITTED_TODAY / max(1, rt._CONVERSATIONS_STARTED_TODAY)
+    assert avg >= 15.0
+
+
+def test_daily_conversation_budget_caps_cardinality(monkeypatch) -> None:
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "40")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_CONVERSATIONS_PER_DAY", "12")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", "20")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", "25")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "8")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY", "500")
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    now = datetime(2026, 8, 28, 23, 0, tzinfo=timezone.utc)
+    for _ in range(200):
+        emit_cursor_usage_cycle(now=now)
+
+    from sim.cursor.usage_v2 import runtime as rt
+
+    assert rt._CONVERSATIONS_STARTED_TODAY <= 12
+    # After budgets fill, further cycles should keep reusing open sessions / stop.
+    assert rt._CONVERSATIONS_STARTED_TODAY >= 1

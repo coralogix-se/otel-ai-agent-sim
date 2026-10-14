@@ -1,0 +1,32 @@
+Path 1 — CLI OTel Spans (needed regardless of FF)
+
+  three span types under spans in the file. all identified by serviceName=github-copilot OR otel.scope.name=github.copilot, application copilot-cli, subsystem copilot-sessions.
+
+  invoke_agent — the root span, 1 per user turn. this is the most important one — everything critical lives here: user identity, repo, rolled-up token usage, cost. few things to watch out for:
+  - user.email is on process.tags, NOT in tags — it's a resource attribute
+  - enduser.pseudo.id is a 32-char hex hash (MD5 length)
+  - the cache token key is gen_ai.usage.cache_read_input_tokens — note the exact spelling, NOT cache_read.input_tokens (old wrong format)
+  - github.copilot.nano_aiu is the reliable billing unit (divide by 1e9 = AIU). github.copilot.cost can be 0 on some CLI versions
+  - NO gen_ai.response.model here — that only appears on chat spans
+
+  chat — child span, 1 per LLM call. this is where gen_ai.response.model lives, and where the dashboard reads model for the model-breakdown widgets. NO enduser.pseudo.id here — per-user model queries join back to invoke_agent via gen_ai.conversation.id.
+
+  execute_tool — child span, 1 per tool call. gen_ai.tool.name is what the dashboard counts for the top tools widget. span.kind is internal here (not client like the other two).
+
+  ---
+  Path 2 — Collector Prometheus Metrics (FF ON only)
+
+  these come from a separate collector that polls the GitHub Copilot API, not from the CLI. all daily gauges — emit one data point per day per label combination. three groups in the file:
+
+  org_level — all the github_copilot_org_* metrics keyed by organization. covers active users (daily/weekly/monthly), CLI sessions/tokens, code generation/acceptance, LOC added/deleted, PR stats, and interaction breakdowns by model/IDE/feature.
+
+  billing — github_copilot_billing_* metrics keyed by organization + sku. has net/gross/discount amounts and seat quantity.
+
+  user_level — github_copilot_user_* metrics, one row per user. this is the tricky one — the user identity can come two ways: either user_email is set, or user_email is empty and you get user_login + user_name instead. i put both cases in the file so
+  both PromQL fallback paths get tested. the email here needs to match user.email in the span process.tags for the FF-ON users list to show combined data — that's the join key between the two paths.
+
+  ---
+  how they connect
+
+  when FF is ON the users table merges collector metrics + span data joined on user.email. if you only send collector metrics and no spans it degrades gracefully (users show up, AIU/sessions columns just empty). same the other way — spans-only still
+  shows the full CLI dashboard, just none of the org/billing/IDE/language tiles from the collector.

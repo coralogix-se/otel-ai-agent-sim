@@ -15,8 +15,26 @@ from opentelemetry.sdk._logs import LogRecord
 from opentelemetry.trace import TraceFlags
 
 from sim.claude.logs import _cc_claude_log_record_attrs
-from sim.claude.meta import _claude_telemetry_profile
-from sim.claude.repos import claude_session_repository_names
+from sim.claude.meta import _claude_resolved_telemetry_profile
+from sim.claude.session_emit import (
+    claude_cx_subsystem_for_user,
+    claude_edit_languages,
+    claude_organization_id_for_user,
+    claude_service_version_for_user,
+    claude_session_active_time_slice,
+    claude_session_cost_usd_target,
+    claude_session_model_for_turn,
+    claude_session_note_turn,
+    claude_session_should_emit_commit,
+    claude_session_should_emit_edit,
+    claude_session_should_emit_loc,
+    claude_session_should_emit_pr,
+    claude_session_should_emit_repo,
+    claude_session_token_parts,
+    claude_should_inc_session_count,
+    claude_terminal_type_for_user,
+)
+from sim.common.repos import sim_session_repository_names
 from sim.common.otel import (
     _anthropic_style_account_id,
     _cc_base_for_prometheus_labels,
@@ -32,7 +50,6 @@ from sim.common.constants import (
     claude_assistant_reply_for_session,
     claude_prompt_for_session,
 )
-from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.env import _env_bool, _env_float, _env_int
 from sim.common.identity import (
     _apply_claude_dotted_email_domain,
@@ -53,16 +70,6 @@ _CC_TOOLS = (
     + ["Grep"] * 2
     + ["Glob"] * 1
     + ["NotebookEdit"] * 1
-)
-_LANGS = (
-    "TypeScript",
-    "Python",
-    "JavaScript",
-    "Go",
-    "Rust",
-    "Markdown",
-    "YAML",
-    "JSON",
 )
 _DECISION_SOURCES = (
     "user_permanent",
@@ -116,30 +123,34 @@ def _partition_nonneg_repair(total: int, n: int) -> list[int]:
     return parts
 
 
-def _cc_dashboard_base_attrs(session_id: str, user_attrs: dict, app_version: str, *, flavor: str) -> dict:
+def _cc_dashboard_base_attrs(
+    session_id: str,
+    user_attrs: dict,
+    app_version: str,
+    *,
+    flavor: str,
+    roster_user: dict | None = None,
+) -> dict:
     pod = os.environ.get("POD_NAME") or os.environ.get("HOSTNAME") or "sim-pod"
     svc = os.environ.get("SIM_CLAUDE_SERVICE_NAME", "claude-code")
     acc = str(user_attrs.get("user.account_uuid", ""))
+    org_override = os.environ.get("SIM_ORGANIZATION_ID", "").strip()
     if flavor == "dotted":
-        org_id = (
-            os.environ.get("SIM_CLAUDE_DOTTED_ORGANIZATION_ID", "").strip()
-            or os.environ.get("SIM_ORGANIZATION_ID", "").strip()
-            or "org_coralogix_lab_002"
+        org_override = (
+            os.environ.get("SIM_CLAUDE_DOTTED_ORGANIZATION_ID", "").strip() or org_override
         )
-        term_default = "alacritty"
+    if org_override:
+        org_id = org_override
     else:
-        org_id = os.environ.get(
-            "SIM_ORGANIZATION_ID",
-            str(uuid.uuid5(uuid.NAMESPACE_URL, "coralogix:sim:organization")),
-        )
-        term_default = "vscode"
+        org_id = claude_organization_id_for_user(roster_user or user_attrs, session_id, flavor=flavor)
+    term = claude_terminal_type_for_user(roster_user or user_attrs, session_id)
     return {
         "session.id": session_id,
         **user_attrs,
         "service.name": svc,
         "service.version": app_version,
         "user.account.id": _anthropic_style_account_id(acc),
-        "terminal.type": os.environ.get("SIM_TERMINAL_TYPE", term_default),
+        "terminal.type": term,
         "organization.id": org_id,
         "os.version": os.environ.get("SIM_OS_VERSION", platform.release()),
         "os.type": os.environ.get("SIM_OS_TYPE", platform.system().lower()),
@@ -200,7 +211,6 @@ def emit_claude_code_dashboard(
     if (
         cc_session is None
         or cc_token is None
-        or cc_token_coralogix is None
         or cc_cost is None
         or cc_active is None
         or cc_loc is None
@@ -215,138 +225,128 @@ def emit_claude_code_dashboard(
 
     def _cc_token_inc(lb: dict, typ: str, model: str, amount: float | int) -> None:
         amt = int(amount)
+        if amt <= 0:
+            return
         lab = {**lb, "type": typ, "model": model}
         cc_token.labels(**lab).inc(amt)
-        cc_token_coralogix.labels(**lab).inc(amt)
+        if cc_token_coralogix is not None:
+            cc_token_coralogix.labels(**lab).inc(amt)
 
-    _ctp = _claude_telemetry_profile()
+    _ctp = _claude_resolved_telemetry_profile(session_id)
+    turn_idx = claude_session_note_turn(session_id)
+    turns_expected = max(1, _env_int("SIM_CLAUDE_SESSION_TURNS_EXPECTED", 6))
+    model = claude_session_model_for_turn(session_id, max(0, turn_idx - 1))
     av_dotted = os.environ.get("SIM_CLAUDE_DOTTED_SERVICE_VERSION", "1.0.33").strip() or "1.0.33"
     _pin_metric_labels = _env_bool("SIM_CLAUDE_PIN_METRIC_LABELS", True)
     _pin_key = _claude_metric_label_pin_key(roster_user, session_id)
     if _pin_metric_labels:
-        av_flat, model = _claude_pinned_flat_version_and_model(_pin_key)
+        av_flat, _pinned_model = _claude_pinned_flat_version_and_model(_pin_key)
+        # Prefer session model mix (c4c shape) over a single pinned model.
+        if os.environ.get("SIM_CLAUDE_MODEL", "").strip():
+            model = _pinned_model
     else:
         av_flat = app_version or os.environ.get("SIM_CC_APP_VERSION") or tool_version_for("claude_code")
-        model = profile["gen_ai.request.model"]
+    av_flat = claude_service_version_for_user(roster_user, session_id) or av_flat
 
-    if _ctp == "both":
-        core = dict(roster_user) if roster_user is not None else _claude_roster_core_user(session_id)
-        user_flat = dict(core)
-        user_dotted = dict(core)
-        _apply_claude_dotted_email_domain(user_dotted)
-        base_flat = _cc_dashboard_base_attrs(session_id, user_flat, av_flat, flavor="flat")
-        base_dotted = _cc_dashboard_base_attrs(session_id, user_dotted, av_dotted, flavor="dotted")
-        base_by_profile = {"flat": base_flat, "dotted": base_dotted}
-        _bps = (
-            (_cc_base_for_prometheus_labels(session_id, base_flat), cx_sub_flat),
-            (_cc_base_for_prometheus_labels(session_id, base_dotted), cx_sub_dotted),
-        )
-        lbs = [_map_cc_base_labels(bp[0], cx_app, bp[1]) for bp in _bps]
-    elif _ctp == "dotted":
+    team_sub = claude_cx_subsystem_for_user(roster_user, session_id)
+    if _ctp == "dotted":
         user_attrs = (
             _claude_user_identity_flavor(session_id, "dotted")
             if roster_user is None
             else _claude_otlp_span_user_attrs_from_roster(roster_user)
         )
+        _apply_claude_dotted_email_domain(user_attrs)
         ver_s = av_dotted if _pin_metric_labels else (app_version or av_dotted)
-        base = _cc_dashboard_base_attrs(session_id, user_attrs, ver_s, flavor="dotted")
+        base = _cc_dashboard_base_attrs(
+            session_id, user_attrs, ver_s, flavor="dotted", roster_user=roster_user
+        )
         base_by_profile = {"dotted": base}
         base_prom = _cc_base_for_prometheus_labels(session_id, base)
-        lbs = [_map_cc_base_labels(base_prom, cx_app, cx_sub_dotted)]
+        sub = team_sub or cx_sub_dotted
+        lbs = [_map_cc_base_labels(base_prom, cx_app, sub)]
     else:
         user_attrs = (
             _claude_user_identity_flavor(session_id, "flat")
             if roster_user is None
             else dict(roster_user)
         )
-        base = _cc_dashboard_base_attrs(session_id, user_attrs, av_flat, flavor="flat")
+        base = _cc_dashboard_base_attrs(
+            session_id, user_attrs, av_flat, flavor="flat", roster_user=roster_user
+        )
         base_by_profile = {"flat": base}
         base_prom = _cc_base_for_prometheus_labels(session_id, base)
-        lbs = [_map_cc_base_labels(base_prom, cx_app, cx_sub_flat)]
+        sub = team_sub or cx_sub_flat
+        lbs = [_map_cc_base_labels(base_prom, cx_app, sub)]
 
-    billable_input, cache_read_amt_i, _cache_hit = sim_prompt_cache_token_split(
-        input_tokens,
-        turn_index=0,
-        hit_prob_env="SIM_CLAUDE_CACHE_READ_PROB",
-        hit_prob_default=0.96,
-        frac_min_env="SIM_CLAUDE_CACHE_READ_FRAC_MIN",
-        frac_max_env="SIM_CLAUDE_CACHE_READ_FRAC_MAX",
-        frac_min_default=0.88,
-        frac_max_default=0.96,
-        first_turn_miss=False,
-    )
-    cache_read_amt: int | None = cache_read_amt_i if cache_read_amt_i > 0 else None
-    ccn_prob = _env_float("SIM_CLAUDE_CACHE_CREATION_PROB", 0.10)
-    cache_creation_amt: int | None = None
-    if random.random() < ccn_prob:
-        cc_lo = max(500, int(input_tokens * _env_float("SIM_CLAUDE_CACHE_CREATION_FRAC_MIN", 0.82)))
-        cc_hi = max(
-            cc_lo + 1,
-            int(input_tokens * _env_float("SIM_CLAUDE_CACHE_CREATION_FRAC_MAX", 0.98)),
-        )
-        cache_creation_amt = random.randint(cc_lo, cc_hi)
+    _cc_log_emitters = [
+        emitter for emitter in st.cc_log_emitters if emitter[1] == _ctp
+    ]
+    if not _cc_log_emitters:
+        return
+    # When team subsystems are on, stamp log cx_subsystem to the same team label.
+    if team_sub:
+        _cc_log_emitters = [(lg, prof, team_sub) for lg, prof, _old in _cc_log_emitters]
 
-    # Single canonical USD total (micro-dollars) for ``cc_cost`` and log ``cost_usd`` rows (exact sum).
-    from sim.common.model_pricing import estimate_llm_cost_usd
+    # Brief §6: ~3.7M tokens/session; type mix cacheRead 95% / cacheCreation 4% / output 0.5% / input 0.3%.
+    # Fall back to caller token counts when session token budgeting is disabled.
+    if _env_bool("SIM_CLAUDE_SESSION_TOKEN_BUDGET", True):
+        parts = claude_session_token_parts(session_id, turns_expected=turns_expected)
+        billable_input = parts["input"]
+        output_tokens = parts["output"]
+        cache_read_amt: int | None = parts["cacheRead"] or None
+        cache_creation_amt: int | None = parts["cacheCreation"] or None
+    else:
+        billable_input = int(input_tokens)
+        cache_read_amt = None
+        cache_creation_amt = None
 
-    _est_cost_raw = round(
-        estimate_llm_cost_usd(
-            model,
-            billable_input,
-            output_tokens,
-            cache_read_tokens=int(cache_read_amt or 0),
-            cache_creation_tokens=int(cache_creation_amt or 0),
-            jitter_usd=random.uniform(0.001, 0.02),
-        ),
-        6,
-    )
-    _cost_micro = int(round(float(_est_cost_raw) * 1_000_000))
-    est_cost = _cost_micro / 1_000_000.0
-    _at_floor = _env_float("SIM_CLAUDE_ACTIVE_TIME_MIN_S", 2.0)
+    # Cost: target ~$2.2/session split across expected turns (keep log cost aligned).
+    session_cost = claude_session_cost_usd_target() * random.uniform(0.85, 1.15)
+    est_cost = session_cost / turns_expected
+    _cost_micro = int(round(float(est_cost) * 1_000_000))
     prod = max(0.08, float(productivity_mult)) * random.uniform(0.75, 1.25)
-    cli_s = max(_at_floor, max(1.0, float(active_cli_s)))
-    user_s = max(_at_floor, max(1.0, random.uniform(0.5, 4.0) * prod))
+    if _env_bool("SIM_CLAUDE_SESSION_ACTIVE_TIME_BUDGET", True):
+        cli_s, user_s = claude_session_active_time_slice(session_id, turns_expected=turns_expected)
+    else:
+        _at_floor = _env_float("SIM_CLAUDE_ACTIVE_TIME_MIN_S", 2.0)
+        cli_s = max(_at_floor, max(1.0, float(active_cli_s)))
+        user_s = max(_at_floor, max(1.0, random.uniform(0.5, 4.0) * prod))
 
-    loc_a0 = _env_int("SIM_CLAUDE_LOC_ADDED_MIN", 2)
-    loc_a1 = _env_int("SIM_CLAUDE_LOC_ADDED_MAX", 72)
-    loc_lo, loc_hi = min(loc_a0, loc_a1), max(loc_a0, loc_a1)
-    loc_span = max(1, loc_hi - loc_lo + 1)
-    added = max(0, int(round(random.randint(loc_lo, loc_hi) * prod * random.uniform(0.6, 1.4))))
-    if added == 0 and random.random() < min(0.92, 0.35 + prod * 0.4):
-        added = random.randint(max(1, loc_lo), max(loc_lo, min(loc_hi, loc_lo + loc_span // 3)))
-    added = max(1, added)
-    rem_cap = _env_int("SIM_CLAUDE_LOC_REMOVED_MAX", 48)
-    removed = random.randint(0, min(added - 1, rem_cap, max(0, added // 2)))
-    c0, c1 = _env_int("SIM_CLAUDE_COMMITS_MIN", 0), _env_int("SIM_CLAUDE_COMMITS_MAX", 1)
-    p0, p1 = _env_int("SIM_CLAUDE_PRS_MIN", 0), _env_int("SIM_CLAUDE_PRS_MAX", 1)
-    commit_hi = max(c0, c1, int(round(max(c0, c1) * prod * random.uniform(0.5, 1.5))))
-    pr_hi = max(p0, p1, int(round(max(p0, p1) * prod * random.uniform(0.5, 1.5))))
-    commit_delta = random.randint(min(c0, c1), commit_hi) if commit_hi > 0 else 0
-    pr_delta = random.randint(min(p0, p1), pr_hi) if pr_hi > 0 and random.random() < min(0.95, 0.25 + prod * 0.55) else 0
-    n_decisions = max(
-        1,
-        int(
-            round(
-                random.randint(
-                    _env_int("SIM_CLAUDE_EDIT_DECISIONS_MIN", 6),
-                    _env_int("SIM_CLAUDE_EDIT_DECISIONS_MAX", 36),
-                )
-                * prod
-                * random.uniform(0.65, 1.35),
-            ),
-        ),
-    )
-    accept_rate = float(os.environ.get("SIM_TOOL_ACCEPT_RATE", "0.78"))
+    # LOC: ~18% of sessions; ~260 lines; added:removed ≈ 88:12; include model label.
+    emit_loc = claude_session_should_emit_loc(session_id)
+    loc_total = max(1, _env_int("SIM_CLAUDE_LOC_PER_SESSION", 260))
+    added = int(round(loc_total * 0.88 / turns_expected)) if emit_loc and turn_idx == 1 else 0
+    removed = int(round(loc_total * 0.12 / turns_expected)) if emit_loc and turn_idx == 1 else 0
+    if emit_loc and turn_idx == 1:
+        added = max(1, int(round(added * prod * random.uniform(0.85, 1.15))))
+        removed = max(0, int(round(removed * random.uniform(0.85, 1.15))))
+
+    # Commits ~10% sessions × ~1.2; PRs ~5% × ~1.1 — emit on first turn only.
+    commit_delta = 0
+    pr_delta = 0
+    if turn_idx == 1 and claude_session_should_emit_commit(session_id):
+        commit_delta = 1 if random.random() < 0.8 else 2
+    if turn_idx == 1 and claude_session_should_emit_pr(session_id):
+        pr_delta = 1 if random.random() < 0.9 else 2
+
+    # Edit decisions: ~18% of sessions; ~5 decisions; ~2 series (tool×decision); ~25 langs / 6 sources.
+    emit_edit = claude_session_should_emit_edit(session_id)
+    n_decisions = 0
     edit_rows: list[tuple[str, str, str, str]] = []
-    for _ in range(n_decisions):
-        tool_name = random.choice(["Edit", "Write", "NotebookEdit"])
-        decision = "accept" if random.random() < accept_rate else "reject"
-        edit_rows.append(
-            (tool_name, decision, random.choice(_DECISION_SOURCES), random.choice(_LANGS)),
-        )
+    langs = claude_edit_languages()
+    if emit_edit and turn_idx == 1:
+        n_decisions = max(1, _env_int("SIM_CLAUDE_EDIT_DECISIONS_PER_SESSION", 5))
+        accept_rate = float(os.environ.get("SIM_TOOL_ACCEPT_RATE", "0.78"))
+        for _ in range(n_decisions):
+            tool_name = random.choice(["Edit", "Write", "NotebookEdit"])
+            decision = "accept" if random.random() < accept_rate else "reject"
+            edit_rows.append(
+                (tool_name, decision, random.choice(_DECISION_SOURCES), random.choice(langs)),
+            )
 
     for lb in lbs:
-        cc_session.labels(**lb).inc()
+        if claude_should_inc_session_count(session_id):
+            cc_session.labels(**lb).inc()
         _cc_token_inc(lb, "input", model, billable_input)
         _cc_token_inc(lb, "output", model, output_tokens)
         if cache_read_amt is not None:
@@ -355,16 +355,34 @@ def emit_claude_code_dashboard(
             _cc_token_inc(lb, "cacheCreation", model, cache_creation_amt)
         cc_cost.labels(**{**lb, "model": model}).inc(est_cost)
         cc_active.labels(**{**lb, "type": "cli"}).inc(cli_s)
-        cc_active.labels(**{**lb, "type": "user"}).inc(user_s)
-        cc_loc.labels(**{**lb, "type": "added"}).inc(added)
-        cc_loc.labels(**{**lb, "type": "removed"}).inc(removed)
-        cc_commit.labels(**lb).inc(commit_delta)
-        cc_pr.labels(**lb).inc(pr_delta)
-        if _pin_metric_labels:
-            _mix = _CC_PINNED_EDIT_LABEL_MIX
-            _counts = _cc_weighted_partition_nonneg(n_decisions, tuple(w for _, w in _mix))
-            for (tool_name, decision, src, lang), k in zip((t for t, _ in _mix), _counts):
-                if k:
+        if user_s > 0:
+            cc_active.labels(**{**lb, "type": "user"}).inc(user_s)
+        if emit_loc and (added or removed):
+            if added:
+                cc_loc.labels(**{**lb, "type": "added", "model": model}).inc(added)
+            if removed:
+                cc_loc.labels(**{**lb, "type": "removed", "model": model}).inc(removed)
+        if commit_delta:
+            cc_commit.labels(**lb).inc(commit_delta)
+        if pr_delta:
+            cc_pr.labels(**lb).inc(pr_delta)
+        if emit_edit and n_decisions:
+            if _pin_metric_labels and not _env_bool("SIM_CLAUDE_EDIT_FULL_CARDINALITY", True):
+                _mix = _CC_PINNED_EDIT_LABEL_MIX
+                _counts = _cc_weighted_partition_nonneg(n_decisions, tuple(w for _, w in _mix))
+                for (tool_name, decision, src, lang), k in zip((t for t, _ in _mix), _counts):
+                    if k:
+                        cc_edit_decision.labels(
+                            **{
+                                **lb,
+                                "tool_name": tool_name,
+                                "decision": decision,
+                                "source": src,
+                                "language": lang,
+                            }
+                        ).inc(k)
+            else:
+                for tool_name, decision, src, lang in edit_rows:
                     cc_edit_decision.labels(
                         **{
                             **lb,
@@ -373,26 +391,17 @@ def emit_claude_code_dashboard(
                             "source": src,
                             "language": lang,
                         }
-                    ).inc(k)
-        else:
-            for tool_name, decision, src, lang in edit_rows:
-                cc_edit_decision.labels(
-                    **{
-                        **lb,
-                        "tool_name": tool_name,
-                        "decision": decision,
-                        "source": src,
-                        "language": lang,
-                    }
-                ).inc()
+                    ).inc()
 
-    repo_names = claude_session_repository_names(session_id, roster_user)
-    for lb in lbs:
-        # Use the same ``session_id`` label set as ``claude_code_cost_usage_USD`` (``lb``). When
-        # ``SIM_CLAUDE_METRICS_SESSION_ID_ALIGN_LOGS=true``, that matches OTLP log ``session.id``;
-        # otherwise counters/repo use bucketed ids and logs stay on the raw trace id.
-        for repo_name in repo_names:
-            cc_session_repo.labels(**{**lb, "repository_name": repo_name}).set(1)
+    if claude_session_should_emit_repo(session_id):
+        repo_names = sim_session_repository_names(
+            session_id,
+            roster_user,
+            agent_product="claude_code",
+        )
+        for lb in lbs:
+            for repo_name in repo_names:
+                cc_session_repo.labels(**{**lb, "repository_name": repo_name}).set(1)
 
     seq = 0
 

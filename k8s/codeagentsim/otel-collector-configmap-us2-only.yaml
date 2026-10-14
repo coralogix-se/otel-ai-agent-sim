@@ -1,0 +1,79 @@
+# Single-tenant Coralogix export (US2 only). Use on dedicated sim clusters instead of the
+# multi-export configmap (otel-collector-configmap.yaml).
+# On IPv4-only nodes, pair with otel-collector-deployment-us2-only.yaml (initContainer pins
+# ingress.us2.coralogix.com to its A record — the hostname publishes AAAA and breaks gRPC).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-codeagentsim-config
+  namespace: codeagentsim
+  labels:
+    app: otel-collector-codeagentsim
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13134
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:24317
+          http:
+            endpoint: 0.0.0.0:24318
+      prometheus:
+        trim_metric_suffixes: false
+        config:
+          scrape_configs:
+            - job_name: otel-ai-agent-sim
+              scrape_interval: 15s
+              static_configs:
+                - targets:
+                    - otel-ai-agent-sim:9090
+            - job_name: otel-anthropic-admin-sim
+              scrape_interval: 15s
+              static_configs:
+                - targets:
+                    - otel-anthropic-admin-sim:9090
+
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 2400
+        spike_limit_mib: 384
+      batch:
+        timeout: 5s
+        send_batch_size: 256
+
+    exporters:
+      otlp/us2:
+        endpoint: ingress.us2.coralogix.com:443
+        tls:
+          insecure: false
+        headers:
+          Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_US2}
+
+      prometheusremotewrite/us2:
+        endpoint: https://ingress.us2.coralogix.com/prometheus/v1
+        tls:
+          insecure: false
+        headers:
+          Authorization: Bearer ${env:CORALOGIX_PRIVATE_KEY_US2}
+        translation_strategy: UnderscoreEscapingWithoutSuffixes
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/us2]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/us2]
+        metrics:
+          receivers: [prometheus]
+          processors: [memory_limiter, batch]
+          exporters: [prometheusremotewrite/us2]

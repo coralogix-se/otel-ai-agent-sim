@@ -22,19 +22,38 @@ import prometheus_rw
 from sim.claude.dashboard import emit_claude_code_dashboard
 from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.constants import claude_prompt_for_session
-from sim.claude.repos import claude_rogue_user_token_multiplier
+from sim.common.repos import (
+    sim_heavy_session_token_multiplier,
+    sim_rogue_user_token_multiplier,
+    sim_top_spender_base_token_multiplier,
+)
+from sim.common.env import claude_long_session_slots_enabled
 from sim.claude.user_variance import (
     claude_user_emit_turns_this_cycle,
     claude_user_productivity_multiplier,
-    claude_user_session_phase_offset,
+    claude_session_id_rotate_deadline,
+    claude_slot_pin_deadline,
     claude_user_session_rotate_duration_from_env,
     claude_user_should_emit_this_cycle,
     claude_user_token_multiplier,
+)
+from sim.claude.spend_pacing import (
+    note_claude_user_spend_usd,
+    sim_top_spender_pace_multiplier,
 )
 from sim.codex.agent import _codex_model_for_turn
 from sim.common.otel import _gen_ai_dashboard_llm_span_attributes
 from sim.common.model_pricing import estimate_llm_cost_usd
 from sim.common.identity import (
+    claude_align_products_roster,
+    claude_aligned_slot_count,
+    claude_slot_roster_user,
+    otel_only_roster_users,
+    products_roster_always_emit_otel,
+    products_roster_size,
+    products_roster_slot_user,
+    products_roster_user_for_slot,
+    products_roster_users,
     random_coralogix_identity_for_agent,
     roster_core_user_for_agent,
     roster_indices_for_agent,
@@ -57,6 +76,11 @@ from sim.common.constants import (
 )
 from sim.copilot.cli import emit_copilot_cli_session
 from sim.copilot.collector_metrics import copilot_collector_enabled, register_copilot_collector_metrics
+from sim.cursor.usage_v2 import (
+    emit_cursor_usage_metrics_cycle,
+    register_cursor_usage_metrics,
+    usage_metrics_enabled,
+)
 from sim.common.state import st
 from opentelemetry import trace
 from opentelemetry._logs import set_logger_provider
@@ -391,7 +415,8 @@ _CC_BASE_LABEL_NAMES = (
 
 # ``claude_code_lines_of_code_count_*`` — same user dimensions as commit/PR counters so
 # ``sum by (user_email)`` / ``sum by (user_name)`` panels do not drop LOC while showing commits.
-_CC_LOC_LABEL_NAMES = _CC_BASE_LABEL_NAMES + ("type",)
+# ``model`` matches c4c ``claude_code_lines_of_code_count`` (onlineboutique brief §6).
+_CC_LOC_LABEL_NAMES = _CC_BASE_LABEL_NAMES + ("type", "model")
 
 
 def _map_cc_base_labels(base: dict, cx_app: str, cx_sub: str) -> dict[str, str]:
@@ -632,11 +657,11 @@ def _sim_claude_usage_token_counts() -> tuple[int, int]:
     """
     Input/output token counts for Claude Code metrics and the ``user_prompt`` span.
     Combined input+output is drawn in ``[SIM_CLAUDE_TOTAL_TOKENS_MIN, SIM_CLAUDE_TOTAL_TOKENS_MAX]``
-    (defaults ~4.5k–~225k per simulated turn so charts do not auto-scale to one giant spike and
-    hide everything else). Override env for stress tests (e.g. ``50_000_000`` max).
+    (defaults ~2.5k–~18k per simulated turn — realistic CLI turn sizes; was up to ~225k which
+    produced absurd weekly spend). Override env for stress tests (e.g. ``50_000_000`` max).
     """
-    t0 = _env_int("SIM_CLAUDE_TOTAL_TOKENS_MIN", 4_500)
-    t1 = _env_int("SIM_CLAUDE_TOTAL_TOKENS_MAX", 225_000)
+    t0 = _env_int("SIM_CLAUDE_TOTAL_TOKENS_MIN", 2_500)
+    t1 = _env_int("SIM_CLAUDE_TOTAL_TOKENS_MAX", 18_000)
     lo, hi = min(t0, t1), max(t0, t1)
     pair_total = random.randint(lo, hi)
     inp_frac = random.uniform(0.55, 0.75)
@@ -817,17 +842,19 @@ def _agent_selection_weight(agent_product: str) -> int:
     """
     Relative weights for ``random.choices`` (higher = selected more often per iteration).
     Override with env ``SIM_WEIGHT_<PRODUCT>`` e.g. ``SIM_WEIGHT_GEMINI_CLI``, ``SIM_WEIGHT_CODEX``.
+    Use ``0`` to disable a product without removing its emit path.
     """
     defaults = {
         # Slightly favor Claude so token/cost panels see samples without long waits (override with SIM_WEIGHT_*).
         "claude_code": 5,
-        "gemini_cli": 5,
+        # Gemini CLI is retired from the live mix; keep emit code, weight 0 unless overridden.
+        "gemini_cli": 0,
         "codex": 5,
         "cursor": 5,
         "copilot_cli": 5,
     }
     key = agent_product.upper().replace("-", "_")
-    return max(1, _env_int(f"SIM_WEIGHT_{key}", defaults.get(agent_product, 1)))
+    return max(0, _env_int(f"SIM_WEIGHT_{key}", defaults.get(agent_product, 1)))
 
 
 # Three release lines per simulated product (instrumentation scope + app.version / dashboards).
@@ -1877,8 +1904,10 @@ _cc_slot_rr: int = 0
 # ``SIM_CLAUDE_PIN_METRIC_LABELS`` (default true): stable ``app.version``/``service.version``/``model`` per pin key
 # so Prometheus scrapes hit the **same** time series across iterations (``increase()`` needs ≥2 samples).
 _cc_metric_label_pins: dict[str, tuple[str, str]] = {}
-# Per roster user: ``user_key -> (session_id, monotonic deadline)`` for rotating ``session.id``.
-_cc_user_session_ids: dict[str, tuple[str, float]] = {}
+# Per roster user: ``user_key -> (session_id, monotonic deadline, prompts_emitted, prompt_limit)``.
+# Prompt limit caps ``user_prompt`` logs per session so Claude insights don't flag ~all sessions as
+# needing an "unusually high number of user prompts".
+_cc_user_session_ids: dict[str, tuple[str, float, int, int]] = {}
 
 
 def _apply_claude_dotted_email_domain(user_attrs: dict) -> None:
@@ -1976,11 +2005,19 @@ def _claude_session_id_rotate_sec() -> float:
     return max(0.0, _env_float("SIM_CLAUDE_SESSION_ID_ROTATE_SEC", 3600.0))
 
 
+def _claude_session_prompt_limit() -> int:
+    """Max ``user_prompt`` emits for one ``session.id`` before forced rotation."""
+    lo = max(1, _env_int("SIM_CLAUDE_SESSION_PROMPTS_MIN", 2))
+    hi = max(lo, _env_int("SIM_CLAUDE_SESSION_PROMPTS_MAX", 6))
+    return random.randint(lo, hi)
+
+
 def _claude_session_id_for_roster_user(user: dict) -> str:
     """
     ``session.id`` for a roster user: stable across emits/logs/metrics in one session window, then rotates.
 
-    Same ``user.email`` / account labels throughout; only ``session.id`` changes when the rotate window expires.
+    Same ``user.email`` / account labels throughout; only ``session.id`` changes when the rotate window
+    expires **or** the session hits ``SIM_CLAUDE_SESSION_PROMPTS_*`` (whichever comes first).
     """
     rotate = claude_user_session_rotate_duration_from_env(user)
     if rotate <= 0:
@@ -1990,55 +2027,200 @@ def _claude_session_id_for_roster_user(user: dict) -> str:
     now = time.monotonic()
     cached = _cc_user_session_ids.get(key)
     if cached is not None:
-        sid, deadline = cached
-        if now < deadline:
+        sid, deadline, prompts, limit = cached
+        if now < deadline and prompts < limit:
             return sid
     sid = str(uuid.uuid4())
-    phase = claude_user_session_phase_offset(user)
-    _cc_user_session_ids[key] = (sid, now + float(rotate) + phase)
+    _cc_user_session_ids[key] = (
+        sid,
+        claude_session_id_rotate_deadline(now, float(rotate)),
+        0,
+        _claude_session_prompt_limit(),
+    )
     return sid
 
 
+def _claude_note_session_user_prompt(user: dict | None) -> None:
+    """Count a ``user_prompt`` toward the current session's turn budget."""
+    if user is None:
+        return
+    key = _claude_roster_user_key(user)
+    cached = _cc_user_session_ids.get(key)
+    if cached is None:
+        return
+    sid, deadline, prompts, limit = cached
+    _cc_user_session_ids[key] = (sid, deadline, prompts + 1, limit)
+
+
+_cli_user_session_ids: dict[str, tuple[str, float]] = {}
+
+
+def _cli_rotating_session_id(
+    product: str, user: dict, *, rotate_sec: float | None = None
+) -> str:
+    """Per-user session id that rotates so counts aren't 1 or unbounded."""
+    rotate = (
+        float(rotate_sec)
+        if rotate_sec is not None
+        else float(claude_user_session_rotate_duration_from_env(user))
+    )
+    key = f"{product}:{_claude_roster_user_key(user)}"
+    now = time.monotonic()
+    cached = _cli_user_session_ids.get(key)
+    if cached is not None and now < cached[1]:
+        return cached[0]
+    if rotate <= 0:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, "otel-ai-agent-sim:" + key))
+    sid = str(uuid.uuid4())
+    _cli_user_session_ids[key] = (sid, claude_session_id_rotate_deadline(now, float(rotate)))
+    return sid
+
+
+def _copilot_session_rotate_sec(user: dict) -> float:
+    """Copilot keeps conversations longer than Claude so session totals stay realistic."""
+    pinned = os.environ.get("SIM_COPILOT_SESSION_ROTATE_SEC", "").strip()
+    if pinned:
+        return max(0.0, float(pinned))
+    lo = max(0, _env_int("SIM_COPILOT_SESSION_ROTATE_SEC_MIN", 14_400))
+    hi = max(lo, _env_int("SIM_COPILOT_SESSION_ROTATE_SEC_MAX", 28_800))
+    if hi <= 0:
+        return float(claude_user_session_rotate_duration_from_env(user))
+    return float(random.randint(lo, hi))
+
+
 def _claude_emit_all_session_slots() -> bool:
-    """When true and ``SIM_CLAUDE_LONG_SESSION_SEC`` > 0, emit once per active slot user each Claude cycle."""
+    """When true and long-session slots are active, emit once per active slot user each Claude cycle."""
+    if not claude_long_session_slots_enabled():
+        return False
+    if claude_align_products_roster() and products_roster_always_emit_otel():
+        return True
     if not _env_bool("SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS", True):
         return False
-    return _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0) > 0
+    return True
+
+
+def _claude_slot_user(n_slots: int, slot_index: int) -> dict:
+    n_products = products_roster_size() if claude_align_products_roster() else 0
+    return dict(claude_slot_roster_user(slot_index, n_products))
+
+
+def _claude_prefill_slot_user(slot_index: int, allowed: tuple[int, ...], base: int) -> dict:
+    if claude_align_products_roster():
+        return dict(claude_slot_roster_user(slot_index, products_roster_size()))
+    idx = allowed[(base + slot_index) % len(allowed)]
+    return dict(_CORALOGIX_TEAM_USERS[idx])
+
+
+def _claude_emit_session_slot_count(n_slots: int) -> int:
+    """
+    How many parallel slot users emit when Claude Code wins agent selection.
+
+    With ``SIM_CLAUDE_ACTIVITY_PACING=true`` (default): daily × hourly multiplier × peak frac
+    (onlineboutique brief §6/§9) — typically ~35 peak concurrent of a 100-user roster.
+
+    Else ``SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS=true`` → all slots; otherwise
+    ``SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT`` (default 1) caps fan-out.
+    """
+    if n_slots <= 0:
+        return 0
+    if _env_bool("SIM_CLAUDE_ACTIVITY_PACING", True):
+        from sim.claude.day_variation import claude_target_emit_count
+
+        return claude_target_emit_count(n_slots)
+    if _claude_emit_all_session_slots():
+        return n_slots
+    cap = _env_int("SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT", 1)
+    return min(n_slots, max(1, cap))
+
+
+def _claude_pick_session_slot_indices(n_emit: int, n_slots: int) -> list[int]:
+    """Pick ``n_emit`` distinct slot indices (``SIM_CLAUDE_SESSION_SLOT_STRATEGY``)."""
+    if n_emit >= n_slots:
+        return list(range(n_slots))
+    strat = os.environ.get("SIM_CLAUDE_SESSION_SLOT_STRATEGY", "random").strip().lower().replace("-", "_")
+    if strat in ("round_robin", "rr"):
+        global _cc_slot_rr
+        start = _cc_slot_rr % n_slots
+        _cc_slot_rr += n_emit
+        return [(start + i) % n_slots for i in range(n_emit)]
+    return random.sample(range(n_slots), n_emit)
 
 
 def _claude_ensure_session_slots() -> int:
     """Initialize / refresh parallel Claude user slots; return slot count."""
-    dur = _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0)
-    n_slots = max(1, _env_int("SIM_CLAUDE_CONCURRENT_LONG_SESSIONS", 15))
+    slots_on = claude_long_session_slots_enabled()
+    n_slots = claude_aligned_slot_count() if claude_align_products_roster() else max(
+        1, _env_int("SIM_CLAUDE_CONCURRENT_LONG_SESSIONS", 15)
+    )
+    if claude_align_products_roster():
+        n_slots = max(n_slots, _env_int("SIM_CLAUDE_CONCURRENT_LONG_SESSIONS", n_slots))
     global _cc_slot_users, _cc_slot_deadlines, _cc_slot_rr
     if len(_cc_slot_users) != n_slots:
         _cc_slot_users = [None] * n_slots
         _cc_slot_deadlines = [0.0] * n_slots
         _cc_slot_rr = 0
-        if dur > 0 and _env_bool("SIM_CLAUDE_PREFILL_SESSION_SLOTS", True):
+        if slots_on and _env_bool("SIM_CLAUDE_PREFILL_SESSION_SLOTS", True):
             now = time.monotonic()
             allowed = roster_indices_for_agent("claude_code")
             base = random.randrange(len(allowed))
             for i in range(n_slots):
-                idx = allowed[(base + i) % len(allowed)]
-                _cc_slot_users[i] = dict(_CORALOGIX_TEAM_USERS[idx])
-                _cc_slot_deadlines[i] = now + float(dur)
-    if dur > 0:
+                user = _claude_prefill_slot_user(i, allowed, base)
+                _cc_slot_users[i] = user
+                _cc_slot_deadlines[i] = claude_slot_pin_deadline(
+                    now, slot_index=i, n_slots=n_slots, roster_user=user, initial=True
+                )
+    if slots_on:
         now = time.monotonic()
         for i in range(n_slots):
             if _cc_slot_users[i] is None or now >= _cc_slot_deadlines[i]:
-                _cc_slot_users[i] = _claude_roster_core_user(str(uuid.uuid4()) + f":slot:{i}")
-                _cc_slot_deadlines[i] = now + float(dur)
+                user = _claude_slot_user(n_slots, i)
+                _cc_slot_users[i] = user
+                _cc_slot_deadlines[i] = claude_slot_pin_deadline(
+                    now, slot_index=i, n_slots=n_slots, roster_user=user, initial=False
+                )
     return n_slots
 
 
 def _claude_roster_users_for_claude_code_emit() -> list[dict]:
-    """All active slot users when fan-out is enabled; otherwise a one-element list."""
-    dur = _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0)
-    if dur <= 0:
+    """Active slot users to emit this Claude cycle (1, capped N, or all slots)."""
+    if not claude_long_session_slots_enabled():
+        if claude_align_products_roster() and products_roster_always_emit_otel():
+            users = [dict(u) for u in products_roster_users()]
+            users.extend(dict(u) for u in otel_only_roster_users())
+            return users
         return [_claude_roster_core_user(str(uuid.uuid4()))]
+    n_slots = _claude_ensure_session_slots()
+    n_emit = _claude_emit_session_slot_count(n_slots)
+    indices = _claude_pick_session_slot_indices(n_emit, n_slots)
+    return [dict(_cc_slot_users[i]) for i in indices if _cc_slot_users[i] is not None]
+
+
+def _prefill_products_roster_claude_otel(claude_profile: dict) -> None:
+    """One-shot emit so Products/API + OTEL-only users have repo + cost metrics at pod start."""
+    if not claude_align_products_roster():
+        return
+    if not _env_bool("SIM_CLAUDE_PREFILL_PRODUCTS_ROSTER_OTEL", True):
+        return
+    cc_ver = os.environ.get("SIM_CC_APP_VERSION") or tool_version_for("claude_code")
     _claude_ensure_session_slots()
-    return [dict(u) for u in _cc_slot_users if u is not None]
+    roster_users = [dict(u) for u in products_roster_users()]
+    roster_users.extend(dict(u) for u in otel_only_roster_users())
+    for user in roster_users:
+        session_id = _claude_session_id_for_roster_user(user)
+        input_tokens, output_tokens = _sim_claude_usage_token_counts()
+        input_tokens = max(800, int(input_tokens * 0.35))
+        output_tokens = max(120, int(output_tokens * 0.35))
+        emit_claude_code_dashboard(
+            claude_profile,
+            session_id,
+            input_tokens,
+            output_tokens,
+            random.uniform(2.5, 5.5),
+            app_version=cc_ver,
+            roster_user=user,
+            prompt=claude_prompt_for_session(session_id),
+            productivity_mult=claude_user_productivity_multiplier(user),
+        )
 
 
 def _claude_roster_user_for_claude_code_emit() -> dict:
@@ -2054,7 +2236,7 @@ def _claude_roster_user_for_claude_code_emit() -> dict:
     ``SIM_CLAUDE_SESSION_ID_ROTATE_SEC``).
     """
     dur = _env_float("SIM_CLAUDE_LONG_SESSION_SEC", 0.0)
-    if dur <= 0:
+    if not claude_long_session_slots_enabled():
         return _claude_roster_core_user(str(uuid.uuid4()))
 
     n_slots = _claude_ensure_session_slots()
@@ -2820,6 +3002,7 @@ def emit_codex_user_prompt_span(conversation_id: str, profile: dict) -> None:
                 "model_reasoning_effort": os.environ.get("SIM_CODEX_MODEL_REASONING_EFFORT", "medium"),
                 "app.version": ver,
                 "conversation.id": conversation_id,
+                **user_attrs,
             },
             trace_id=ctx_run.trace_id,
             span_id=ctx_run.span_id,
@@ -2872,6 +3055,7 @@ def emit_codex_user_prompt_span(conversation_id: str, profile: dict) -> None:
                 "prompt_length": len(prompt),
                 "model": model,
                 "conversation.id": conversation_id,
+                **user_attrs,
             }
             if _env_bool("SIM_CODEX_LOG_USER_PROMPT", False):
                 up_log["prompt"] = prompt
@@ -2938,11 +3122,13 @@ def emit_codex_user_prompt_span(conversation_id: str, profile: dict) -> None:
             attributes={
                 "event.name": "codex.tool_decision",
                 "tool": last_tool,
+                "tool_name": last_tool,
                 "decision": random.choice(
                     ("approved", "approved_with_amendment", "approved_for_session", "denied", "abort")
                 ),
                 "source": random.choice(("config", "user")),
                 "conversation.id": conversation_id,
+                **user_attrs,
             },
             trace_id=ctx_run.trace_id,
             span_id=ctx_run.span_id,
@@ -2953,10 +3139,12 @@ def emit_codex_user_prompt_span(conversation_id: str, profile: dict) -> None:
             attributes={
                 "event.name": "codex.tool_result",
                 "tool": last_tool,
+                "tool_name": last_tool,
                 "success": tool_ok,
                 "duration_ms": random.randint(15, 1200),
                 "output_snippet": ("ok" if tool_ok else "error: rejected")[:200],
                 "conversation.id": conversation_id,
+                **user_attrs,
             },
             trace_id=ctx_run.trace_id,
             span_id=ctx_run.span_id,
@@ -3658,6 +3846,15 @@ def main() -> None:
         if copilot_collector_enabled()
         else None
     )
+    _cursor_usage_collector = (
+        register_cursor_usage_metrics(_prom_registry) if usage_metrics_enabled() else None
+    )
+    if _cursor_usage_collector is not None:
+        print(
+            "Cursor Usage v2 metrics enabled (cursor_* Admin APIs family; "
+            "SIM_CURSOR_USAGE_METRICS_ENABLED=true)",
+            flush=True,
+        )
 
     _cc_tok_l = _CC_BASE_LABEL_NAMES + ("type", "model")
     _cc_cost_l = _CC_BASE_LABEL_NAMES + ("model",)
@@ -3670,19 +3867,22 @@ def main() -> None:
         labelnames=_CC_BASE_LABEL_NAMES,
         registry=_prom_registry,
     )
-    # HAR name + Coralogix volume name (both incremented together; see ``_cc_token_inc`` in ``main``).
+    # HAR / c4c name. Do not emit ``claude_code_token_usage__token_`` — brief §6 Delete
+    # (duplicate with broken name; ~84k extra series on onlineboutique).
     cc_token = Counter(
         "claude_code_token_usage_tokens",
         "Claude Code token usage (HAR metric name)",
         labelnames=_cc_tok_l,
         registry=_prom_registry,
     )
-    cc_token_coralogix = Counter(
-        "claude_code_token_usage__token_",
-        "Claude Code token usage (Coralogix token volume series)",
-        labelnames=_cc_tok_l,
-        registry=_prom_registry,
-    )
+    cc_token_coralogix = None
+    if _env_bool("SIM_CLAUDE_EMIT_DUPLICATE_TOKEN_METRIC", False):
+        cc_token_coralogix = Counter(
+            "claude_code_token_usage__token_",
+            "Claude Code token usage (legacy Coralogix twin — disabled by default)",
+            labelnames=_cc_tok_l,
+            registry=_prom_registry,
+        )
     cc_cost = Counter(
         "claude_code_cost_usage_USD",
         "Claude Code cost USD",
@@ -3691,7 +3891,7 @@ def main() -> None:
     )
     cc_active = Counter(
         "claude_code_active_time_total_s",
-        "Claude Code active time (seconds)",
+        "Claude Code active time (seconds); Prom name claude_code_active_time_total_s_total (cxai-dev)",
         labelnames=_cc_act_l,
         registry=_prom_registry,
     )
@@ -3908,7 +4108,16 @@ def main() -> None:
     else:
         agent_profiles = agent_profiles_all
     by_product = {p["agent.product"]: p for p in agent_profiles_all}
-    _weights = tuple(_agent_selection_weight(p["agent.product"]) for p in agent_profiles)
+    # Drop weight-0 products from the mix (code kept; set SIM_WEIGHT_*=0 to disable).
+    _weighted = [
+        (p, _agent_selection_weight(p["agent.product"])) for p in agent_profiles
+    ]
+    agent_profiles = tuple(p for p, w in _weighted if w > 0)
+    _weights = tuple(w for _, w in _weighted if w > 0)
+    if not agent_profiles:
+        raise RuntimeError(
+            "No agent products have SIM_WEIGHT_* > 0; cannot emit traces."
+        )
 
     def run_sophisticated_trace() -> None:
         session_id = str(uuid.uuid4())
@@ -3921,12 +4130,14 @@ def main() -> None:
             if co >= 1.0 - 1e-9:
                 weights_run = _weights
             else:
+                # Same office / weekend / US-holiday scale as Claude, for every CLI sim.
+                _calendar = frozenset(
+                    {"claude_code", "gemini_cli", "codex", "cursor", "copilot_cli"}
+                )
                 w_adj = list(_weights)
                 for i, p in enumerate(agent_profiles):
-                    if p["agent.product"] == "claude_code":
-                        base = w_adj[i]
-                        w_adj[i] = max(1, round(float(base) * co))
-                        break
+                    if p["agent.product"] in _calendar and w_adj[i] > 0:
+                        w_adj[i] = max(1, round(float(w_adj[i]) * co))
                 weights_run = tuple(w_adj)
             profile = random.choices(agent_profiles, weights=weights_run, k=1)[0]
 
@@ -3942,6 +4153,127 @@ def main() -> None:
 
         otlp_metrics.record_trace_iteration(otlp_iter_counter, profile)
 
+        def _run_claude_code_emit(cc_profile: dict) -> None:
+            """Emit paced Claude Code metrics/logs for the active slot subset."""
+            cc_ver = os.environ.get("SIM_CC_APP_VERSION") or tool_version_for("claude_code")
+            mult = max(0.01, _env_float("SIM_CLAUDE_PER_EMIT_TOKEN_MULT", 1.0))
+            batch = max(1, _env_int("SIM_CLAUDE_TOKEN_EMIT_BATCH", 1))
+            pacing = _env_bool("SIM_CLAUDE_ACTIVITY_PACING", True)
+            stable_user = _env_bool("SIM_CLAUDE_STABLE_SESSION_PER_USER", True)
+            if stable_user:
+                roster_users = _claude_roster_users_for_claude_code_emit()
+            else:
+                roster_users = [None]
+            for user_idx, _ru in enumerate(roster_users):
+                # Activity pacing already chose the active subset — do not randomly skip again.
+                if (
+                    not pacing
+                    and _ru is not None
+                    and not claude_user_should_emit_this_cycle(_ru)
+                ):
+                    continue
+                if pacing:
+                    turns = 1
+                else:
+                    turns = (
+                        claude_user_emit_turns_this_cycle(_ru, default_batch=batch)
+                        if _ru is not None
+                        else batch
+                    )
+                if turns <= 0:
+                    continue
+                if stable_user and _ru is not None:
+                    emit_session_id = _claude_session_id_for_roster_user(_ru)
+                else:
+                    emit_session_id = _claude_long_session_trace_id()
+                user_tok_mult = claude_user_token_multiplier(_ru)
+                user_prod_mult = claude_user_productivity_multiplier(_ru)
+                for b in range(turns):
+                    emit_sid = emit_session_id
+                    turn_prompt = claude_prompt_for_session(emit_sid)
+                    input_tokens, output_tokens = _sim_claude_usage_token_counts()
+                    rogue_mult = sim_rogue_user_token_multiplier(_ru)
+                    heavy_mult = sim_heavy_session_token_multiplier(_ru)
+                    top_base = sim_top_spender_base_token_multiplier(_ru)
+                    pace_mult = sim_top_spender_pace_multiplier(_ru)
+                    turn_jitter = random.uniform(0.82, 1.18)
+                    if mult != 1.0:
+                        input_tokens = max(1, int(input_tokens * mult))
+                        output_tokens = max(1, int(output_tokens * mult))
+                    input_tokens = max(1, int(input_tokens * user_tok_mult * turn_jitter))
+                    output_tokens = max(1, int(output_tokens * user_tok_mult * turn_jitter))
+                    if top_base != 1.0:
+                        input_tokens = max(1, int(input_tokens * top_base))
+                        output_tokens = max(1, int(output_tokens * top_base))
+                    if rogue_mult != 1.0:
+                        input_tokens = max(1, int(input_tokens * rogue_mult))
+                        output_tokens = max(1, int(output_tokens * rogue_mult))
+                    if heavy_mult != 1.0:
+                        input_tokens = max(1, int(input_tokens * heavy_mult))
+                        output_tokens = max(1, int(output_tokens * heavy_mult))
+                    if pace_mult != 1.0:
+                        input_tokens = max(1, int(input_tokens * pace_mult))
+                        output_tokens = max(1, int(output_tokens * pace_mult))
+                    if _ru is not None:
+                        model_for_cost = str(
+                            cc_profile.get("gen_ai.request.model")
+                            or os.environ.get("SIM_CLAUDE_MODEL", "")
+                            or CLAUDE_CODE_DEFAULT_MODEL
+                        )
+                        note_claude_user_spend_usd(
+                            _ru,
+                            estimate_llm_cost_usd(
+                                model_for_cost, input_tokens, output_tokens
+                            ),
+                        )
+                    if _env_bool("SIM_CLAUDE_OTLP_TRACES_ENABLED", False) and user_idx == 0 and b == 0:
+                        t0 = time.perf_counter()
+                        emit_claude_code_user_prompt_span(
+                            emit_session_id,
+                            cc_profile,
+                            tool_version=cc_ver,
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            roster_user=_ru,
+                            prompt=turn_prompt,
+                        )
+                        active_cli_s = max(0.01, time.perf_counter() - t0)
+                    else:
+                        active_cli_s = random.uniform(2.2, 6.0) * max(0.35, user_prod_mult)
+                    emit_claude_code_dashboard(
+                        cc_profile,
+                        emit_sid,
+                        input_tokens,
+                        output_tokens,
+                        active_cli_s,
+                        app_version=cc_ver,
+                        roster_user=_ru,
+                        prompt=turn_prompt,
+                        productivity_mult=user_prod_mult,
+                    )
+                    _claude_note_session_user_prompt(_ru)
+
+        # Brief §6 volume: emit Claude every TRACE_INTERVAL under activity pacing so session
+        # rate is not diluted by multi-agent selection (~1/5 of cycles otherwise).
+        _cc_prof = by_product.get("claude_code")
+        _cc_independent = _env_bool("SIM_CLAUDE_INDEPENDENT_EMIT", True) and _env_bool(
+            "SIM_CLAUDE_ACTIVITY_PACING", True
+        )
+        if _cc_independent and _cc_prof is not None:
+            _cc_run = {
+                **_cc_prof,
+                "gen_ai.request.model": (
+                    os.environ.get("SIM_CLAUDE_MODEL", "").strip()
+                    or random.choice(_CLAUDE_CODE_MODELS)
+                ),
+            }
+            _run_claude_code_emit(_cc_run)
+            if profile["agent.product"] == "claude_code":
+                return
+        elif profile["agent.product"] == "claude_code":
+            _run_claude_code_emit(profile)
+            return
+
         # Raw Gemini CLI shape: single INTERNAL span `user_prompt` on tracer `gemini-cli`
         # with a version from ``AGENT_TOOL_VERSIONS`` (see sample: gen_ai.* / cx.* / otel.library.*).
         if profile["agent.product"] == "gemini_cli":
@@ -3953,92 +4285,22 @@ def main() -> None:
             emit_gemini_cli_user_prompt_span(gid, roster_user=gru)
             return
 
-        if profile["agent.product"] == "claude_code":
-            cc_ver = os.environ.get("SIM_CC_APP_VERSION") or tool_version_for("claude_code")
-            mult = max(0.01, _env_float("SIM_CLAUDE_PER_EMIT_TOKEN_MULT", 1.0))
-            batch = max(1, _env_int("SIM_CLAUDE_TOKEN_EMIT_BATCH", 1))
-            stable_user = _env_bool("SIM_CLAUDE_STABLE_SESSION_PER_USER", True)
-            if stable_user and _claude_emit_all_session_slots():
-                roster_users = _claude_roster_users_for_claude_code_emit()
-            elif stable_user:
-                roster_users = [_claude_roster_user_for_claude_code_emit()]
-            else:
-                roster_users = [None]
-            for user_idx, _ru in enumerate(roster_users):
-                if _ru is not None and not claude_user_should_emit_this_cycle(_ru):
-                    continue
-                turns = (
-                    claude_user_emit_turns_this_cycle(_ru, default_batch=batch)
-                    if _ru is not None
-                    else batch
-                )
-                if turns <= 0:
-                    continue
-                if stable_user and _ru is not None:
-                    session_id = _claude_session_id_for_roster_user(_ru)
-                else:
-                    session_id = _claude_long_session_trace_id()
-                user_tok_mult = claude_user_token_multiplier(_ru)
-                user_prod_mult = claude_user_productivity_multiplier(_ru)
-                for b in range(turns):
-                    # Same ``session_id`` per user for every sub-emit in this batch window.
-                    emit_sid = session_id
-                    turn_prompt = claude_prompt_for_session(emit_sid)
-                    input_tokens, output_tokens = _sim_claude_usage_token_counts()
-                    rogue_mult = claude_rogue_user_token_multiplier(_ru)
-                    turn_jitter = random.uniform(0.82, 1.18)
-                    if mult != 1.0:
-                        input_tokens = max(1, int(input_tokens * mult))
-                        output_tokens = max(1, int(output_tokens * mult))
-                    input_tokens = max(1, int(input_tokens * user_tok_mult * turn_jitter))
-                    output_tokens = max(1, int(output_tokens * user_tok_mult * turn_jitter))
-                    if rogue_mult != 1.0:
-                        input_tokens = max(1, int(input_tokens * rogue_mult))
-                        output_tokens = max(1, int(output_tokens * rogue_mult))
-                    if _env_bool("SIM_CLAUDE_OTLP_TRACES_ENABLED", False) and user_idx == 0 and b == 0:
-                        t0 = time.perf_counter()
-                        emit_claude_code_user_prompt_span(
-                            session_id,
-                            profile,
-                            tool_version=cc_ver,
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                            roster_user=_ru,
-                            prompt=turn_prompt,
-                        )
-                        active_cli_s = max(0.01, time.perf_counter() - t0)
-                    else:
-                        active_cli_s = random.uniform(2.2, 6.0) * max(0.35, user_prod_mult)
-                    emit_claude_code_dashboard(
-                        profile,
-                        emit_sid,
-                        input_tokens,
-                        output_tokens,
-                        active_cli_s,
-                        app_version=cc_ver,
-                        roster_user=_ru,
-                        prompt=turn_prompt,
-                        productivity_mult=user_prod_mult,
-                    )
-            return
-
         if profile["agent.product"] == "codex":
             emit_codex_user_prompt_span(session_id, profile)
             return
 
         if profile["agent.product"] == "copilot_cli":
-            profile = {
-                **profile,
-                "gen_ai.request.model": (
-                    os.environ.get("SIM_COPILOT_MODEL", "").strip()
-                    or random.choice(COPILOT_CLI_MODELS)
-                ),
-            }
-            gid = session_id
-            pru: dict | None = None
-            if _env_bool("SIM_COPILOT_STABLE_SESSION_PER_USER", True):
-                pru = roster_core_user_for_agent(session_id, "copilot_cli")
-                gid = _cursor_stable_session_id_from_roster_user(pru)
+            # Optional sample rate (default 1.0). Prefer cutting TOKEN_MULT / COST_SCALE for spend,
+            # not EMIT_PROB — low emit rates collapse active-user counts.
+            emit_prob = min(1.0, max(0.0, _env_float("SIM_COPILOT_EMIT_PROB", 1.0)))
+            if emit_prob < 1.0 and random.random() > emit_prob:
+                return
+            pru = roster_core_user_for_agent(str(uuid.uuid4()), "copilot_cli")
+            if not claude_user_should_emit_this_cycle(pru):
+                return
+            gid = _cli_rotating_session_id(
+                "copilot_cli", pru, rotate_sec=_copilot_session_rotate_sec(pru)
+            )
             emit_copilot_cli_session(gid, profile, roster_user=pru)
             return
 
@@ -4099,13 +4361,19 @@ def main() -> None:
         flush=True,
     )
 
+    claude_profile = by_product.get("claude_code")
+    if claude_profile is not None:
+        _prefill_products_roster_claude_otel(claude_profile)
+
     try:
         if iterations_raw is not None and iterations_raw != "":
             for _ in range(int(iterations_raw)):
                 run_sophisticated_trace()
+                emit_cursor_usage_metrics_cycle()
         else:
             while True:
                 run_sophisticated_trace()
+                emit_cursor_usage_metrics_cycle()
                 time.sleep(interval)
     finally:
         if _prom_rw_stop is not None:

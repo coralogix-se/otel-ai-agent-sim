@@ -1,0 +1,31 @@
+Activity - insights we can trigger with the anthropic telemetry
+
+- heavySessions — fires when a session's tokens ≥ 10× the session average and ≥ 5M.
+sum by (session_id) (increase(claude_code_token_usage_tokens_total[86400s]))
+- high-tool-rejection — rejected / (accepted + rejected) > 30%, min 200 decisions.
+sum by (tool, decision) (max_over_time(anthropic_analytics_user_tool_decisions[86400s]))
+- costConcentration (tokens) — any user ≥ 10× the per-user average.
+sum by (user_email) (increase(claude_code_token_usage_tokens_total[86400s]))
+sum(increase(claude_code_token_usage_tokens_total[86400s]))
+
+Cost
+
+- user-cost-concentration — any user ≥ 10× the per-user average spend.
+sum by (user_email) (max_over_time(anthropic_analytics_user_cost{amount_type="actual"}[86400s]))
+- opus-spend-concentration — Opus-family share of actual cost ≥ 60% (substring match on model).
+sum by (model) (max_over_time(anthropic_analytics_cost{amount_type="actual"}[86400s]))
+- cost-spike — same expression twice, second one evaluated a window earlier; > +30% with baseline ≥ $100.
+sum(max_over_time(anthropic_analytics_cost{amount_type="actual"}[86400s]))          # at `to`
+sum(max_over_time(anthropic_analytics_cost{amount_type="actual"}[86400s]))          # at `to` - 24h
+
+Impact
+
+- multiOrgUser — needs four vectors; the rule flags a user whose session windows overlap across repo owners (or one session spanning two).
+max by (session_id, repository_name) (max_over_time(claude_code_session_repo_info[86400s]))
+sum by (user_email, session_id) (increase(claude_code_cost_usage_USD_total[86400s]))
+sum by (session_id) (claude_code_cost_usage_USD_total)                  # range query, 300s step → start time
+sum by (session_id) (increase(claude_code_active_time_total_s_total[86400s]))
+- unmanagedRepoSpend — unmanaged tokens > 10% of total; getTotalUnmanaged joins these three in the FE and keeps only sessions whose repos fall outside the configured org prefixes.
+sum by (session_id) (increase(claude_code_token_usage_tokens_total[86400s]))
+sum by (user_email, session_id) (increase(claude_code_cost_usage_USD_total[86400s]))
+max by (session_id, repository_name) (max_over_time(claude_code_session_repo_inf

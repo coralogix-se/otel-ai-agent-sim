@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 
 GEMINI_AGENT_DESCRIPTION = (
     "Gemini CLI is an open-source AI agent that brings the power of Gemini directly "
@@ -115,30 +116,39 @@ CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES = (
 )
 
 # Model pools below (Claude, Codex, Cursor, Copilot, Gemini) should be reviewed regularly against
-# each vendor's current model list. Exclude suspended Anthropic routes (claude-fable-5,
-# claude-mythos-5) until Anthropic re-enables them upstream.
+# each vendor's current model list. ``claude-fable-5`` restored globally Jul 2026 (was briefly suspended
+# Jun 2026). Do not simulate ``claude-mythos-5`` in general pools — Glasswing / limited release only.
+# Last reviewed 2026-09-01 against Claude / Codex / Cursor / Copilot / Gemini vendor docs + cxai live telemetry.
+# Dump pools + assert rates: ``python3 scripts/print_model_pools.py --check``.
 
-# Default when ``SIM_CLAUDE_MODEL`` unset and profile has no model (Anthropic API alias).
-CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-4-6"
+# Default when ``SIM_CLAUDE_MODEL`` unset and profile has no model.
+CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-5"
 
-# Claude Code ``/model`` aliases + common third-party routes (June 2026).
-# Anthropic: https://code.claude.com/docs/en/model-config
-# ``SIM_CLAUDE_MODEL`` overrides.
+# Claude Code API model ids (https://code.claude.com/docs/en/model-config).
+# ``model`` on ``claude_code.api_request`` logs, Prometheus counters, and spans uses full ids
+# (e.g. ``claude-sonnet-5``), not ``/model`` aliases like ``sonnet``. ``SIM_CLAUDE_MODEL`` overrides.
+# Weighted toward Sonnet/Haiku for realistic spend; Opus 5 + Fable remain but are rare.
 _CLAUDE_CODE_MODELS = (
-    "claude-opus-4-8",
+    "claude-sonnet-5",
+    "claude-sonnet-5",
+    "claude-sonnet-5",
+    "claude-sonnet-5",
     "claude-sonnet-4-6",
+    "claude-sonnet-4-5-20250929",
     "claude-haiku-4-5",
-    "gpt-5.5",
-    "gemini-3.1-pro-preview",
-    "gemini-3.5-flash",
-    "grok-4.3",
-    "qwen3.7-max",
+    "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-fable-5",
 )
 
 
 def claude_code_gen_ai_system_for_model(model: str) -> str:
-    """``gen_ai.system`` for Claude Code spans when routing Anthropic or third-party models."""
+    """``gen_ai.system`` for Claude Code spans (Anthropic API ids and legacy aliases)."""
     key = (model or "").strip().lower()
+    if key in ("sonnet", "opus", "haiku", "fable", "default", "opusplan"):
+        return "anthropic"
     if key.startswith("claude-"):
         return "anthropic"
     if key.startswith("gpt-"):
@@ -165,35 +175,51 @@ CODEX_SAMPLE_PROMPTS = (
     "optimize this hot loop for fewer allocations",
 )
 
-# Codex CLI default (OpenAI recommends ``gpt-5.5`` — https://developers.openai.com/codex/models).
-CODEX_DEFAULT_MODEL = "gpt-5.5"
+# Codex CLI default (https://developers.openai.com/codex/models — Power uses Sol).
+CODEX_DEFAULT_MODEL = "gpt-5.6-sol"
 
-# Codex CLI pool (https://developers.openai.com/codex/models). ``gpt-5.3-codex`` deprecated for ChatGPT sign-in.
+# Codex CLI pool: Astra (rare) + GPT-5.6 Sol / Terra / Luna.
+# gpt-5.5 retires from Codex on 2026-10-14; gpt-5.4 already retired from ChatGPT sign-in.
 CODEX_CLI_MODELS = (
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.3-codex-spark",
+    "gpt-5.6-sol",
+    "gpt-5.6-sol",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.6-luna",
+    "gpt-6-astra",
 )
 
-# Cursor Composer: third-party + Cursor-native models (see https://cursor.com/docs/models).
-CURSOR_DEFAULT_MODEL = "claude-sonnet-4-6"
+# Cursor Composer: Cursor-native + API-pool models (https://cursor.com/docs/models).
+# ``composer-2.5-fast`` is the default interactive tier; ``composer-2.5`` is the standard tier.
+CURSOR_DEFAULT_MODEL = "composer-2.5-fast"
 
 CURSOR_COMPOSER_MODELS = (
     "composer-2.5",
     "composer-2.5-fast",
+    "composer-2.5-fast",
+    "grok-4.6",
+    "grok-4.5",
+    "claude-sonnet-5",
     "claude-sonnet-4-6",
+    "claude-opus-5",
     "claude-opus-4-8",
-    "claude-opus-4-7",
     "claude-haiku-4-5",
-    "gemini-3.1-pro",
+    "claude-fable-5",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
     "gemini-3.5-flash",
-    "gemini-3-flash",
+    "gemini-3.1-pro",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.5",
-    "gpt-5.3-codex",
+    "gpt-5.4",
     "gpt-5.4-mini",
-    "grok-4.3",
-    "grok-build-0.1",
+    "kimi-k2.7-code",
+    "kimi-k3",
 )
 
 CURSOR_SAMPLE_PROMPTS = (
@@ -215,57 +241,257 @@ COPILOT_CLI_SAMPLE_PROMPTS = (
     "find where this API call is made and suggest error handling",
     "explain this stack trace and propose a minimal fix",
     "run the linter fixes for packages/api only",
+    "refactor this module to use async/await consistently",
+    "add error handling and structured logging to the API client",
+    "find flaky tests in packages/core and suggest fixes",
+    "explain what this git diff does in two short paragraphs",
+    "run the test suite and summarize failures by root cause",
+    "add unit tests for the checkout service retry logic",
+    "why is the OTLP exporter dropping spans under high load?",
+    "migrate this Dockerfile to a multi-stage build and shrink the image",
+    "review the PR for security issues in the auth middleware",
+    "generate a mermaid diagram of the payment flow",
+    "fix the race condition when two workers update inventory",
+    "add Prometheus metrics for queue depth and consumer lag",
+    "debug why p99 latency spiked after yesterday's deploy",
+    "wire up feature flags for the new billing UI behind a kill switch",
+    "convert this class hierarchy to composition and update call sites",
+    "add integration tests for the webhook signature verification path",
+    "trace this 500 error through the order service and propose a fix",
+    "implement idempotency keys on the payment capture endpoint",
+    "clean up deprecated API routes and add a migration guide in the README",
+    "reduce memory churn in the batch processor hot path",
+    "add OpenTelemetry baggage propagation across our gRPC services",
+    "fix the TypeScript strict-null errors in the dashboard package",
+    "write a runbook section for when the Redis cluster fails over",
+    "split this 800-line handler into smaller testable functions",
+    "add rate limiting to the public API without breaking existing clients",
+    "investigate duplicate charges in the reconciliation job logs",
+    "upgrade dependencies with known CVEs in packages/shared",
+    "add snapshot tests for the invoice PDF renderer",
+    "harden SQL queries in the admin search endpoint against injection",
+    "set up CI caching to speed up the monorepo pipeline",
+    "document the event schema for the customer.updated Kafka topic",
+    "fix the timezone bug in scheduled report generation for EU customers",
+    "add a health check that validates downstream dependency connectivity",
+    "implement graceful shutdown for the worker pool on SIGTERM",
+    "review N+1 queries in the catalog list endpoint and batch them",
+    "create a canary deployment config for the checkout microservice",
+    "fix flaky e2e test that fails on the first of the month",
+    "add structured audit logs for admin impersonation events",
+    "optimize the aggregation used on the usage dashboard",
+    "implement retry with exponential backoff for the Stripe webhook handler",
+    "add validation for env vars at startup and fail fast with clear errors",
+    "refactor the auth token refresh flow to avoid blocking the main thread",
+    "generate example curl commands for the new internal REST endpoints",
+    "fix CORS preflight failures on the staging API gateway",
+    "add circuit breaker around the third-party address validation API",
+    "write property-based tests for the pricing calculator edge cases",
+    "migrate secrets from flat env files to the team vault pattern",
+    "add pagination cursors to the activity feed API and update the client",
+    "investigate why canary pods are not receiving traffic after rollout",
+    "implement soft-delete on user records and update all list queries",
+    "add SLO burn-rate alerts for the authentication service",
+    "fix the memory leak in the websocket connection manager",
+    "create a minimal repro for the deadlock in the job scheduler",
+    "add input sanitization on the feedback form before persisting to DB",
+    "implement bulk export for audit logs with streaming CSV download",
+    "add feature parity tests between legacy and new checkout flows",
+    "fix incorrect metric labels after the service rename last sprint",
+    "draft ADR for moving session storage from Redis to Postgres",
+    "add retry-safe consumers for the dead-letter queue processor",
+    "align protobuf definitions between services and regenerate stubs",
+    "summarize OpenTelemetry gen_ai semantic conventions in five bullets",
+    "how do I safely rotate database credentials in a CI/CD pipeline",
+    "add structured logging around the API client and redact tokens",
+    "refactor the React hook to avoid stale closures in useEffect",
+    "add a guardrail check before LLM responses are shown to the user",
+    "optimize this database query and add an index if needed",
 )
 
-# Copilot CLI GA models (https://docs.github.com/en/copilot/reference/ai-models/supported-models).
-COPILOT_DEFAULT_MODEL = "gpt-5.5"
+# Short assistant replies for ``gen_ai.output.messages`` on Copilot ``invoke_agent`` spans (AI Analysis UI).
+COPILOT_CLI_SAMPLE_ASSISTANT_REPLIES = (
+    "I'll scan the repo for failing tests and propose a patch.",
+    "Here's a concise fix for the handler plus an updated unit test.",
+    "I found the root cause in the telemetry hook — applying a small refactor.",
+    "Summarizing the diff and suggested next steps for this Copilot CLI session.",
+    "Running the targeted grep and read_file steps, then I'll suggest edits.",
+    "I'll refactor the module to use async/await and add tests for the error paths.",
+    "The flaky tests point to shared global state in the fixture setup; I'll isolate them.",
+    "Here's a summary of the failures: 3 assertion errors in checkout, 1 timeout in shipping.",
+    "The diff adds a circuit breaker around the payment client and bumps the retry budget.",
+    "I found two N+1 queries in the catalog service; I'll batch the lookups next.",
+    "Latency spikes correlate with connection pool exhaustion; I'll add pool metrics and tune limits.",
+    "I'll gate the billing UI behind the feature flag and add a fallback for disabled tenants.",
+    "The webhook handler needs idempotency keys—I'll use the event ID header and a short TTL store.",
+    "I'll split the handler into three modules and keep the public API unchanged for callers.",
+    "Redis failover runbook steps look good; I'll add a synthetic check that validates write/read after promotion.",
+    "Strict-null fixes are localized to the dashboard package; I'll run tsc and update two call sites.",
+    "I'll add rate limiting via a token bucket middleware with per-API-key quotas.",
+    "The reconciliation duplicates come from at-least-once delivery; I'll dedupe on payment intent ID.",
+    "Graceful shutdown will drain the worker queue for up to 30s before exit.",
+    "I'll batch catalog queries with a DataLoader-style helper and add a regression test.",
+    "Canary analysis shows 502s from upstream timeouts; I'll increase connect timeout and add retries.",
+    "Circuit breaker config: 5 failures in 30s opens for 60s, half-open probe on next request.",
+    "I'll migrate secrets references to vault paths and document the rotation procedure.",
+    "Pagination cursors will use opaque base64 offsets; I'll update the mobile client parser too.",
+    "Memory leak is in unreleased websocket ping timers; I'll clear intervals on disconnect.",
+    "Added unit tests for the retry helper covering timeout and cancellation edge cases.",
+    "The patch introduces structured logging with request IDs on every outbound HTTP call.",
+    "I'll update the README with migration steps and add a changelog entry for the API break.",
+    "Tool results show the failing assertion is in the mock setup; I'll fix the fixture next.",
+    "Proposed changes are limited to three files; no public API surface changes required.",
+    "I'll run the linter and formatter on the touched packages before suggesting the final diff.",
+)
+
+# Copilot CLI (https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference).
+# Default is Claude Sonnet 4.6. Astra is opt-in, not the automatic default.
+# Kimi and Grok are Cursor models, not Copilot CLI.
+COPILOT_DEFAULT_MODEL = "claude-sonnet-4-6"
 
 COPILOT_CLI_MODELS = (
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.3-codex",
-    "gpt-5-mini",
     "claude-sonnet-4-6",
-    "claude-sonnet-4-5",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-haiku-4-5",
+    "gpt-5.4-mini",
+    "gpt-5.4-mini",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5-mini",
+    "gpt-5.4",
+    "gpt-5.5",
+    "gpt-5.6-sol",
+    "gpt-5.3-codex",
+    "gpt-6-astra",
     "claude-opus-4-8",
     "claude-opus-4-7",
-    "claude-opus-4-6",
-    "claude-opus-4-5",
-    "claude-haiku-4-5",
-    "gemini-3.1-pro-preview",
+    "claude-fable-5",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
     "gemini-3.5-flash",
+    "gemini-3.1-pro-preview",
+    "mai-code-1.1-flash",
+    "mai-code-1-flash",
 )
 
-# Gemini CLI model ids (https://geminicli.com/docs/reference/configuration/).
-GEMINI_DEFAULT_MODEL = "gemini-2.5-pro"
+# Gemini CLI (https://ai.google.dev/gemini-api/docs/pricing). Default is 3.8 Flash.
+# Gemma 4 has no paid API rate, so it is omitted.
+GEMINI_DEFAULT_MODEL = "gemini-3.8-flash"
 
 GEMINI_CLI_MODELS = (
-    "gemini-2.5-pro",
+    "gemini-3.8-flash",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
-    "gemini-3-pro-preview",
-    "gemini-3-flash-preview",
-    "gemini-3.1-pro-preview",
-    "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
-    "gemma-4-31b-it",
-    "gemma-4-26b-a4b-it",
 )
 
 
-def claude_prompt_for_session(session_id: str) -> str:
+def _generic_assistant_reply(prompt: str) -> str:
+    """Fallback assistant text when no curated reply exists for a prompt."""
+    p = prompt.strip().rstrip(".")
+    lower = p.lower()
+    if lower.startswith(("how ", "why ", "what ", "explain ", "summarize ", "document ")):
+        return f"Here's a concise answer on that: {p[:120]}."
+    if lower.startswith(
+        (
+            "add ",
+            "fix ",
+            "implement ",
+            "migrate ",
+            "refactor ",
+            "debug ",
+            "review ",
+            "run ",
+            "wire ",
+            "convert ",
+            "split ",
+            "reduce ",
+            "upgrade ",
+            "harden ",
+            "optimize ",
+            "create ",
+            "investigate ",
+            "align ",
+            "write ",
+            "generate ",
+            "clean ",
+            "set ",
+            "trace ",
+            "draft ",
+            "find ",
+        ),
+    ):
+        return f"I'll work on that next: {p[:120]}."
+    return f"Working on your request — {p[:120]}."
+
+
+def _build_prompt_reply_pairs(
+    prompts: Sequence[str],
+    replies: Sequence[str],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Pair each prompt with a semantically aligned reply (index-aligned when possible)."""
+    pairs: list[tuple[str, tuple[str, ...]]] = []
+    n_replies = len(replies)
+    for i, prompt in enumerate(prompts):
+        if i < n_replies:
+            pairs.append((prompt, (replies[i],)))
+        else:
+            pairs.append((prompt, (_generic_assistant_reply(prompt),)))
+    return tuple(pairs)
+
+
+CLAUDE_CODE_PROMPT_REPLY_PAIRS = _build_prompt_reply_pairs(
+    CLAUDE_CODE_SAMPLE_PROMPTS,
+    CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES,
+)
+COPILOT_CLI_PROMPT_REPLY_PAIRS = _build_prompt_reply_pairs(
+    COPILOT_CLI_SAMPLE_PROMPTS,
+    COPILOT_CLI_SAMPLE_ASSISTANT_REPLIES,
+)
+
+
+def _session_turn_pair_index(session_id: str, turn: int, n_pairs: int) -> int:
+    key = f"{session_id.strip() or 'unknown-session'}:{turn}"
+    return int(hashlib.sha256(key.encode()).hexdigest(), 16) % n_pairs
+
+
+def prompt_reply_for_turn(
+    session_id: str,
+    turn: int,
+    pairs: Sequence[tuple[str, Sequence[str]]],
+) -> tuple[str, str]:
+    """Stable prompt/reply for a session turn; reply is chosen from the aligned pair."""
+    idx = _session_turn_pair_index(session_id, turn, len(pairs))
+    prompt, replies = pairs[idx]
+    if len(replies) == 1:
+        return prompt, replies[0]
+    ridx = int(hashlib.sha256(f"reply:{session_id}:{turn}".encode()).hexdigest(), 16) % len(replies)
+    return prompt, replies[ridx]
+
+
+def claude_prompt_for_session(session_id: str, *, turn: int = 0) -> str:
     """Stable user_prompt text for a ``session.id`` (one plausible reason per session)."""
-    key = session_id.strip() or "unknown-session"
-    idx = int(hashlib.sha256(key.encode()).hexdigest(), 16) % len(CLAUDE_CODE_SAMPLE_PROMPTS)
-    return CLAUDE_CODE_SAMPLE_PROMPTS[idx]
+    prompt, _reply = prompt_reply_for_turn(session_id, turn, CLAUDE_CODE_PROMPT_REPLY_PAIRS)
+    return prompt
 
 
-def claude_assistant_reply_for_session(session_id: str) -> str:
+def claude_assistant_reply_for_session(session_id: str, *, turn: int = 0) -> str:
     """Stable assistant reply aligned with ``claude_prompt_for_session``."""
-    key = session_id.strip() or "unknown-session"
-    idx = int(hashlib.sha256(b"reply:" + key.encode()).hexdigest(), 16) % len(CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES)
-    return CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES[idx]
+    _prompt, reply = prompt_reply_for_turn(session_id, turn, CLAUDE_CODE_PROMPT_REPLY_PAIRS)
+    return reply
+
+
+def copilot_prompt_reply_for_turn(conversation_id: str, turn: int) -> tuple[str, str]:
+    """Stable Copilot CLI user/assistant message pair for a conversation turn."""
+    return prompt_reply_for_turn(conversation_id, turn, COPILOT_CLI_PROMPT_REPLY_PAIRS)
 
 
 def claude_api_response_body_json(text: str) -> str:
