@@ -26,6 +26,7 @@ import random
 import re
 import socket
 import sys
+import threading
 import time
 import uuid
 
@@ -50,7 +51,12 @@ from sim.common.constants import (
 )
 from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.env import _env_bool, _env_csv_model_pool, _env_float, _env_int
-from sim.common.identity import _claude_otlp_span_user_attrs_from_roster, random_coralogix_identity_for_agent
+from sim.common.identity import (
+    _claude_otlp_span_user_attrs_from_roster,
+    copilot_collector_user_metric_labels,
+    random_coralogix_identity_for_agent,
+)
+from sim.copilot.extra_metrics import copilot_token_mult
 from sim.common.state import st
 
 _COPILOT_TOOLS: tuple[tuple[str, str, str], ...] = (
@@ -438,6 +444,10 @@ def emit_copilot_cli_session(
     else:
         user_attrs = random_coralogix_identity_for_agent(conversation_id, "copilot_cli")
     user_email = str(user_attrs.get("user.email", "") or "unknown@coralogix.com")
+    # One stable heavy user makes runaway sessions / token concentration insights fire.
+    heavy_token_mult = copilot_token_mult(
+        copilot_collector_user_metric_labels(user_attrs, org="")["user_login"]
+    )
     pseudo_id = _copilot_enduser_pseudo_id(user_attrs)
 
     n_turns = max(1, _env_int("SIM_COPILOT_CHAT_ROUNDS", 2))
@@ -514,8 +524,8 @@ def emit_copilot_cli_session(
 
                 for _ in range(seg_turns):
                     prompt_tokens, out = _copilot_turn_token_counts()
-                    prompt_tokens = scale_tokens_for_user(prompt_tokens, roster_user)
-                    out = scale_tokens_for_user(out, roster_user)
+                    prompt_tokens = scale_tokens_for_user(prompt_tokens, roster_user) * heavy_token_mult
+                    out = scale_tokens_for_user(out, roster_user) * heavy_token_mult
                     billable_in, cache_read_in, cached = sim_prompt_cache_token_split(
                         prompt_tokens,
                         turn_index=turn_global,
@@ -788,5 +798,5 @@ def emit_copilot_cli_session(
         )
     finally:
         if session_tp is not None:
-            session_tp.force_flush()
-            session_tp.shutdown()
+            # shutdown() flushes and blocks up to the exporter timeout; keep a slow collector off the sim loop.
+            threading.Thread(target=session_tp.shutdown, daemon=True).start()

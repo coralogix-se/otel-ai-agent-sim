@@ -11,8 +11,9 @@ from sim.claude.day_variation import (
     claude_daily_multiplier,
     claude_date_unit_interval,
     claude_hourly_shape,
-    claude_target_emit_count,
+    claude_session_starts_per_cycle,
 )
+from sim.claude import day_variation as dv
 
 
 def test_date_unit_interval_stable() -> None:
@@ -49,10 +50,16 @@ def test_activity_multiplier_compounds(monkeypatch: pytest.MonkeyPatch) -> None:
     assert claude_activity_multiplier(when=day) > claude_activity_multiplier(when=night) * 5
 
 
-def test_target_emit_count_respects_peak_frac(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SIM_CLAUDE_ACTIVITY_PACING", "true")
+def test_session_starts_per_cycle_from_daily_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SIM_CLAUDE_DAY_VARIATION", "false")
-    monkeypatch.setenv("SIM_CLAUDE_HOURLY_SHAPE", "false")
-    monkeypatch.setenv("SIM_CLAUDE_PEAK_ACTIVE_USER_FRAC", "0.25")
-    assert claude_target_emit_count(100) == 25
-    assert claude_target_emit_count(0) == 0
+    monkeypatch.setenv("SIM_CLAUDE_HOURLY_SHAPE", "true")
+    monkeypatch.setenv("SIM_CLAUDE_DAILY_SESSIONS", "600")
+    monkeypatch.setenv("TRACE_INTERVAL_SEC", "60")
+    day = datetime(2026, 10, 7, 0, 0, tzinfo=timezone.utc)
+    per_cycle = []
+    for minute in range(24 * 60):
+        when = day.replace(hour=minute // 60, minute=minute % 60)
+        monkeypatch.setattr(dv, "claude_activity_multiplier", lambda when=when: dv.claude_hourly_shape(when.hour))
+        per_cycle.append(claude_session_starts_per_cycle())
+    assert sum(per_cycle) == pytest.approx(600)
+    assert min(per_cycle) > 0  # nights still start sessions, just rarely

@@ -14,27 +14,26 @@ from opentelemetry._logs.severity import SeverityNumber
 from opentelemetry.sdk._logs import LogRecord
 from opentelemetry.trace import TraceFlags
 
+from sim.claude.day_variation import claude_session_turns
 from sim.claude.logs import _cc_claude_log_record_attrs
 from sim.claude.meta import _claude_resolved_telemetry_profile
 from sim.claude.session_emit import (
     claude_cx_subsystem_for_user,
-    claude_edit_languages,
     claude_organization_id_for_user,
     claude_service_version_for_user,
     claude_session_active_time_slice,
-    claude_session_cost_usd_target,
     claude_session_model_for_turn,
+    claude_session_models,
     claude_session_note_turn,
-    claude_session_should_emit_commit,
-    claude_session_should_emit_edit,
-    claude_session_should_emit_loc,
-    claude_session_should_emit_pr,
+    claude_session_plan,
+    claude_session_primary_model,
     claude_session_should_emit_repo,
-    claude_session_token_parts,
+    claude_session_track_series,
     claude_should_inc_session_count,
     claude_terminal_type_for_user,
+    claude_turn_share,
 )
-from sim.common.repos import sim_session_repository_names
+from sim.common.repos import is_sim_rogue_user, is_sim_top_spender, sim_session_repository_names
 from sim.common.otel import (
     _anthropic_style_account_id,
     _cc_base_for_prometheus_labels,
@@ -71,6 +70,13 @@ _CC_TOOLS = (
     + ["Glob"] * 1
     + ["NotebookEdit"] * 1
 )
+_CC_EFFORT_MIX: tuple[tuple[str, int], ...] = (
+    ("high", 40),
+    ("xhigh", 12),
+    ("max", 5),
+    ("medium", 35),
+    ("low", 8),
+)
 _DECISION_SOURCES = (
     "user_permanent",
     "user_temporary",
@@ -80,34 +86,12 @@ _DECISION_SOURCES = (
     "user_abort",
 )
 
-# When ``SIM_CLAUDE_PIN_METRIC_LABELS`` is true: split each turn's ``n_decisions`` across this **fixed**
-# set only (bounded series count ≈ len × ``lbs``). Weights skew toward Edit like ``_CC_TOOLS``.
-_CC_PINNED_EDIT_LABEL_MIX: tuple[tuple[tuple[str, str, str, str], int], ...] = (
-    (("Edit", "accept", "config", "TypeScript"), 24),
-    (("Edit", "accept", "hook", "Python"), 10),
-    (("Edit", "reject", "user_reject", "TypeScript"), 6),
-    (("Write", "accept", "config", "Python"), 18),
-    (("Write", "accept", "user_permanent", "JavaScript"), 8),
-    (("Write", "reject", "user_abort", "Python"), 4),
-    (("NotebookEdit", "accept", "config", "Markdown"), 6),
-    (("NotebookEdit", "accept", "hook", "JSON"), 3),
-    (("NotebookEdit", "reject", "user_reject", "Markdown"), 3),
-)
-
-
-def _cc_weighted_partition_nonneg(total: int, weights: tuple[int, ...]) -> tuple[int, ...]:
-    """Split ``total`` across ``len(weights)`` bins proportional to weights (exact sum)."""
-    wt = tuple(max(0, int(w)) for w in weights)
-    s = sum(wt)
-    if s == 0:
-        return tuple(0 for _ in wt)
-    exact = [total * w / s for w in wt]
-    floors = [int(x) for x in exact]
-    rem = int(total) - sum(floors)
-    frac_order = sorted(range(len(wt)), key=lambda i: exact[i] - floors[i], reverse=True)
-    for j in range(rem):
-        floors[frac_order[j]] += 1
-    return tuple(floors)
+def _cc_effort(whale: bool) -> str:
+    """Whales run on high+ effort, so high/xhigh/max carry >60% of cost (effortOverProvisioned)."""
+    if whale:
+        return random.choice(("high", "xhigh", "max"))
+    efforts, weights = zip(*_CC_EFFORT_MIX)
+    return random.choices(efforts, weights=weights, k=1)[0]
 
 
 def _iso_z(ts_ns: int) -> str:
@@ -223,18 +207,22 @@ def emit_claude_code_dashboard(
     ):
         return
 
+    def _cc_inc(metric, lab: dict, amount: float | int) -> None:
+        # Create the child even at 0 so a later increment shows up in ``increase()``.
+        child = metric.labels(**lab)
+        claude_session_track_series(session_id, metric, lab)
+        if amount > 0:
+            child.inc(amount)
+
     def _cc_token_inc(lb: dict, typ: str, model: str, amount: float | int) -> None:
-        amt = int(amount)
-        if amt <= 0:
-            return
         lab = {**lb, "type": typ, "model": model}
-        cc_token.labels(**lab).inc(amt)
+        _cc_inc(cc_token, lab, int(amount))
         if cc_token_coralogix is not None:
-            cc_token_coralogix.labels(**lab).inc(amt)
+            _cc_inc(cc_token_coralogix, lab, int(amount))
 
     _ctp = _claude_resolved_telemetry_profile(session_id)
     turn_idx = claude_session_note_turn(session_id)
-    turns_expected = max(1, _env_int("SIM_CLAUDE_SESSION_TURNS_EXPECTED", 6))
+    turns_expected = claude_session_turns()
     model = claude_session_model_for_turn(session_id, max(0, turn_idx - 1))
     av_dotted = os.environ.get("SIM_CLAUDE_DOTTED_SERVICE_VERSION", "1.0.33").strip() or "1.0.33"
     _pin_metric_labels = _env_bool("SIM_CLAUDE_PIN_METRIC_LABELS", True)
@@ -287,113 +275,49 @@ def emit_claude_code_dashboard(
     if team_sub:
         _cc_log_emitters = [(lg, prof, team_sub) for lg, prof, _old in _cc_log_emitters]
 
-    # Brief §6: ~3.7M tokens/session; type mix cacheRead 95% / cacheCreation 4% / output 0.5% / input 0.3%.
-    # Fall back to caller token counts when session token budgeting is disabled.
-    if _env_bool("SIM_CLAUDE_SESSION_TOKEN_BUDGET", True):
-        parts = claude_session_token_parts(session_id, turns_expected=turns_expected)
-        billable_input = parts["input"]
-        output_tokens = parts["output"]
-        cache_read_amt: int | None = parts["cacheRead"] or None
-        cache_creation_amt: int | None = parts["cacheCreation"] or None
-    else:
-        billable_input = int(input_tokens)
-        cache_read_amt = None
-        cache_creation_amt = None
+    plan = claude_session_plan(session_id, roster_user)
+    whale = is_sim_top_spender(roster_user)
 
-    # Cost: target ~$2.2/session split across expected turns (keep log cost aligned).
-    session_cost = claude_session_cost_usd_target() * random.uniform(0.85, 1.15)
-    est_cost = session_cost / turns_expected
+    def _share(total: int) -> int:
+        return claude_turn_share(total, turn_idx, turns_expected)
+
+    tokens = {typ: _share(n) for typ, n in plan.tokens.items()}
+    billable_input = tokens["input"]
+    output_tokens = tokens["output"]
+    est_cost = plan.cost_usd / turns_expected if turn_idx <= turns_expected else 0.0
     _cost_micro = int(round(float(est_cost) * 1_000_000))
-    prod = max(0.08, float(productivity_mult)) * random.uniform(0.75, 1.25)
     if _env_bool("SIM_CLAUDE_SESSION_ACTIVE_TIME_BUDGET", True):
         cli_s, user_s = claude_session_active_time_slice(session_id, turns_expected=turns_expected)
     else:
+        prod = max(0.08, float(productivity_mult)) * random.uniform(0.75, 1.25)
         _at_floor = _env_float("SIM_CLAUDE_ACTIVE_TIME_MIN_S", 2.0)
         cli_s = max(_at_floor, max(1.0, float(active_cli_s)))
         user_s = max(_at_floor, max(1.0, random.uniform(0.5, 4.0) * prod))
-
-    # LOC: ~18% of sessions; ~260 lines; added:removed ≈ 88:12; include model label.
-    emit_loc = claude_session_should_emit_loc(session_id)
-    loc_total = max(1, _env_int("SIM_CLAUDE_LOC_PER_SESSION", 260))
-    added = int(round(loc_total * 0.88 / turns_expected)) if emit_loc and turn_idx == 1 else 0
-    removed = int(round(loc_total * 0.12 / turns_expected)) if emit_loc and turn_idx == 1 else 0
-    if emit_loc and turn_idx == 1:
-        added = max(1, int(round(added * prod * random.uniform(0.85, 1.15))))
-        removed = max(0, int(round(removed * random.uniform(0.85, 1.15))))
-
-    # Commits ~10% sessions × ~1.2; PRs ~5% × ~1.1 — emit on first turn only.
-    commit_delta = 0
-    pr_delta = 0
-    if turn_idx == 1 and claude_session_should_emit_commit(session_id):
-        commit_delta = 1 if random.random() < 0.8 else 2
-    if turn_idx == 1 and claude_session_should_emit_pr(session_id):
-        pr_delta = 1 if random.random() < 0.9 else 2
-
-    # Edit decisions: ~18% of sessions; ~5 decisions; ~2 series (tool×decision); ~25 langs / 6 sources.
-    emit_edit = claude_session_should_emit_edit(session_id)
-    n_decisions = 0
-    edit_rows: list[tuple[str, str, str, str]] = []
-    langs = claude_edit_languages()
-    if emit_edit and turn_idx == 1:
-        n_decisions = max(1, _env_int("SIM_CLAUDE_EDIT_DECISIONS_PER_SESSION", 5))
-        accept_rate = float(os.environ.get("SIM_TOOL_ACCEPT_RATE", "0.78"))
-        for _ in range(n_decisions):
-            tool_name = random.choice(["Edit", "Write", "NotebookEdit"])
-            decision = "accept" if random.random() < accept_rate else "reject"
-            edit_rows.append(
-                (tool_name, decision, random.choice(_DECISION_SOURCES), random.choice(langs)),
-            )
+    primary_model = claude_session_primary_model(session_id)
 
     for lb in lbs:
         if claude_should_inc_session_count(session_id):
-            cc_session.labels(**lb).inc()
-        _cc_token_inc(lb, "input", model, billable_input)
-        _cc_token_inc(lb, "output", model, output_tokens)
-        if cache_read_amt is not None:
-            _cc_token_inc(lb, "cacheRead", model, cache_read_amt)
-        if cache_creation_amt is not None:
-            _cc_token_inc(lb, "cacheCreation", model, cache_creation_amt)
-        cc_cost.labels(**{**lb, "model": model}).inc(est_cost)
-        cc_active.labels(**{**lb, "type": "cli"}).inc(cli_s)
-        if user_s > 0:
-            cc_active.labels(**{**lb, "type": "user"}).inc(user_s)
-        if emit_loc and (added or removed):
-            if added:
-                cc_loc.labels(**{**lb, "type": "added", "model": model}).inc(added)
-            if removed:
-                cc_loc.labels(**{**lb, "type": "removed", "model": model}).inc(removed)
-        if commit_delta:
-            cc_commit.labels(**lb).inc(commit_delta)
-        if pr_delta:
-            cc_pr.labels(**lb).inc(pr_delta)
-        if emit_edit and n_decisions:
-            if _pin_metric_labels and not _env_bool("SIM_CLAUDE_EDIT_FULL_CARDINALITY", True):
-                _mix = _CC_PINNED_EDIT_LABEL_MIX
-                _counts = _cc_weighted_partition_nonneg(n_decisions, tuple(w for _, w in _mix))
-                for (tool_name, decision, src, lang), k in zip((t for t, _ in _mix), _counts):
-                    if k:
-                        cc_edit_decision.labels(
-                            **{
-                                **lb,
-                                "tool_name": tool_name,
-                                "decision": decision,
-                                "source": src,
-                                "language": lang,
-                            }
-                        ).inc(k)
-            else:
-                for tool_name, decision, src, lang in edit_rows:
-                    cc_edit_decision.labels(
-                        **{
-                            **lb,
-                            "tool_name": tool_name,
-                            "decision": decision,
-                            "source": src,
-                            "language": lang,
-                        }
-                    ).inc()
+            _cc_inc(cc_session, lb, 1)
+        # Every session model gets its children on turn 1 so a later Haiku turn is not lost to ``increase()``.
+        for session_model in claude_session_models(session_id):
+            on = session_model == model
+            for typ, amount in tokens.items():
+                _cc_token_inc(lb, typ, session_model, amount if on else 0)
+            _cc_inc(cc_cost, {**lb, "model": session_model}, est_cost if on else 0)
+        # One active-time series per session; the FE sums both types anyway.
+        _cc_inc(cc_active, {**lb, "type": "cli"}, cli_s + user_s)
+        if plan.loc_added:
+            _cc_inc(cc_loc, {**lb, "type": "added", "model": primary_model}, _share(plan.loc_added))
+            _cc_inc(cc_loc, {**lb, "type": "removed", "model": primary_model}, _share(plan.loc_removed))
+        if plan.commits:
+            _cc_inc(cc_commit, lb, _share(plan.commits))
+        if plan.prs:
+            _cc_inc(cc_pr, lb, _share(plan.prs))
+        for (tool_name, decision), n in plan.edit_decisions.items():
+            _cc_inc(cc_edit_decision, {**lb, "tool_name": tool_name, "decision": decision}, _share(n))
 
-    if claude_session_should_emit_repo(session_id):
+    # The rogue whale always tags its repos so its spend lands in the unmanaged-repo join.
+    if turn_idx == 1 and (is_sim_rogue_user(roster_user) or claude_session_should_emit_repo(session_id)):
         repo_names = sim_session_repository_names(
             session_id,
             roster_user,
@@ -401,7 +325,9 @@ def emit_claude_code_dashboard(
         )
         for lb in lbs:
             for repo_name in repo_names:
-                cc_session_repo.labels(**{**lb, "repository_name": repo_name}).set(1)
+                lab = {**lb, "repository_name": repo_name}
+                cc_session_repo.labels(**lab).set(1)
+                claude_session_track_series(session_id, cc_session_repo, lab)
 
     seq = 0
 
@@ -433,24 +359,23 @@ def emit_claude_code_dashboard(
             )
             lg.emit(rec)
 
-    up_ts = time.time_ns()
     up_prompt = prompt or claude_prompt_for_session(session_id)
-    _emit_log(
-        "claude_code.user_prompt",
-        event_name="user_prompt",
-        ts_ns=up_ts,
-        prompt=up_prompt,
-        prompt_length=len(up_prompt),
-    )
+    # Re-prompt churn sessions send several user prompts in one turn.
+    for _ in range(_share(plan.user_prompts)):
+        _emit_log(
+            "claude_code.user_prompt",
+            event_name="user_prompt",
+            ts_ns=time.time_ns(),
+            prompt=up_prompt,
+            prompt_length=len(up_prompt),
+        )
 
     # One log row per turn by default so token fields match Prometheus increments without summing partitions.
     n_api = max(1, _env_int("SIM_CLAUDE_API_REQUEST_LOG_PARTITIONS", 1))
     inp_parts = _partition_nonneg_repair(billable_input, n_api)
     out_parts = _partition_nonneg_repair(output_tokens, n_api)
-    cr_tot = int(cache_read_amt) if cache_read_amt is not None else 0
-    cc_tot = int(cache_creation_amt) if cache_creation_amt is not None else 0
-    cr_parts = _partition_nonneg_repair(cr_tot, n_api)
-    cc_parts = _partition_nonneg_repair(cc_tot, n_api)
+    cr_parts = _partition_nonneg_repair(tokens["cacheRead"], n_api)
+    cc_parts = _partition_nonneg_repair(tokens["cacheCreation"], n_api)
     cost_micro_parts = _partition_nonneg_repair(_cost_micro, n_api)
     for i in range(n_api):
         dur = random.randint(120, 9000)
@@ -473,7 +398,7 @@ def emit_claude_code_dashboard(
             cache_creation_tokens=cc_tok,
             cost_usd=cost_micro_parts[i] / 1_000_000.0,
             cost_usd_micros=cost_micro_parts[i],
-            effort=random.choice(["high", "medium", "high"]),
+            effort=_cc_effort(whale),
             query_source=random.choice(["repl_main_thread", "repl_main_thread", "sdk"]),
             speed=random.choice(["fast", "normal"]),
         )
@@ -532,7 +457,3 @@ def emit_claude_code_dashboard(
             attempt=random.randint(1, 4),
             speed=random.choice(["fast", "normal"]),
         )
-
-    log_provider.force_flush(timeout_millis=30000)
-    if st.claude_dotted_log_provider is not None:
-        st.claude_dotted_log_provider.force_flush(timeout_millis=30000)

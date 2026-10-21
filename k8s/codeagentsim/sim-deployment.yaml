@@ -38,6 +38,9 @@ spec:
             # collector scrapes this pod and exports to Coralogix (see e.g. Coralogix otel-integration).
             - name: PROMETHEUS_METRICS_PORT
               value: "9090"
+            # No ``*_created`` twin per counter child (halves exported series).
+            - name: PROMETHEUS_DISABLE_CREATED_SERIES
+              value: "true"
             # Direct remote_write from the sim (same registry as :9090). Keep **false** when the collector
             # already scrapes :9090 — otherwise you duplicate series. Set **true** if metrics panels are
             # empty (nothing scrapes this pod). Optional job/instance for PromQL: PROMETHEUS_RW_* in app.
@@ -245,21 +248,21 @@ spec:
             # Parallel **long** Claude users (same duration N): ``SIM_CLAUDE_CONCURRENT_LONG_SESSIONS`` independent
             # slots (like Gemini); each slot pins one roster row for N seconds — up to that many distinct users at once
             # without shortening N. Slot pick: ``SIM_CLAUDE_SESSION_SLOT_STRATEGY`` = ``random`` (default) or ``round_robin``.
-            # Brief §6: ~6 min session lifetime, ~30 sessions/user/day, ~3k sessions/day from ~100 users.
-            # User pin ≈ session.id rotate ≈ 300–420s; activity pacing picks ~35% of roster at peak hours.
+            # A live session keeps its user every 60s cycle until its 6 prompts are done (~6 min); the
+            # rotate window is only a backstop. ``SIM_CLAUDE_DAILY_SESSIONS`` paces how many run at once.
             - name: SIM_CLAUDE_LONG_SESSION_SEC_MIN
               value: "300"
             - name: SIM_CLAUDE_LONG_SESSION_SEC_MAX
               value: "420"
             - name: SIM_CLAUDE_SESSION_ID_ROTATE_SEC_MIN
-              value: "300"
+              value: "3600"
             - name: SIM_CLAUDE_SESSION_ID_ROTATE_SEC_MAX
-              value: "420"
-            # ~6 emits/session at 60s TRACE_INTERVAL (do not cut session early via prompt budget).
+              value: "3600"
+            # Keep equal to SIM_CLAUDE_SESSION_TURNS_EXPECTED: one turn per cycle, one session ends after 6.
             - name: SIM_CLAUDE_SESSION_PROMPTS_MIN
-              value: "5"
+              value: "6"
             - name: SIM_CLAUDE_SESSION_PROMPTS_MAX
-              value: "8"
+              value: "6"
             - name: SIM_CLAUDE_SESSION_TURNS_EXPECTED
               value: "6"
             - name: SIM_CLAUDE_PREFILL_SESSION_SLOTS
@@ -271,9 +274,11 @@ spec:
               value: "true"
             - name: SIM_CLAUDE_HOURLY_SHAPE
               value: "true"
-            # ~0.25 × 100 users × avg hourly ~0.5 × 1440 cycles / 6 turns ≈ ~3k sessions/day.
-            - name: SIM_CLAUDE_PEAK_ACTIVE_USER_FRAC
-              value: "0.25"
+            # Sessions/day at daily multiplier 1.0 (weekday base × growth scales it), ~1.1× Cursor
+            # conversations; also splits the daily cost/token budgets per session. Starts are paced
+            # per cycle (fractions carry over): peak ≈ 5 live sessions, evenings ≈ 1.5, nights ≈ 0.25.
+            - name: SIM_CLAUDE_DAILY_SESSIONS
+              value: "600"
             - name: SIM_CLAUDE_INDEPENDENT_EMIT
               value: "true"
             - name: SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS
@@ -284,13 +289,11 @@ spec:
               value: "false"
             - name: SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT
               value: "1"
-            # Per-session metric budgets (brief §6).
-            - name: SIM_CLAUDE_SESSION_TOKEN_BUDGET
-              value: "true"
-            - name: SIM_CLAUDE_SESSION_TOKENS_TOTAL
-              value: "3700000"
-            - name: SIM_CLAUDE_SESSION_COST_USD
-              value: "2.2"
+            # Daily totals at multiplier 1.0 (~$7.8 and ~450k tokens per session on average).
+            - name: SIM_CLAUDE_DAILY_COST_USD
+              value: "4700"
+            - name: SIM_CLAUDE_DAILY_TOKENS
+              value: "270000000"
             - name: SIM_CLAUDE_SESSION_ACTIVE_TIME_BUDGET
               value: "true"
             - name: SIM_CLAUDE_SESSION_ACTIVE_TIME_S
@@ -305,8 +308,6 @@ spec:
               value: "0.10"
             - name: SIM_CLAUDE_EMIT_PR_SESSION_FRAC
               value: "0.05"
-            - name: SIM_CLAUDE_EDIT_FULL_CARDINALITY
-              value: "true"
             - name: SIM_CLAUDE_EMIT_DUPLICATE_TOKEN_METRIC
               value: "false"
             # Keep at 1 when PRODUCTS_ROSTER_ALWAYS_EMIT fans out all 32 users each cycle.
@@ -333,7 +334,11 @@ spec:
             # Brief §8: ~172 member series (c4c); sparse samples ~2/day; scale values toward c4c.
             # Brief §8: member_info ~201; brief scales cut high-cardinality series.
             - name: SIM_CURSOR_USAGE_ROSTER_SIZE
-              value: "201"
+              value: "225"
+            - name: SIM_CURSOR_USAGE_IDLE_SEATS
+              value: "72"
+            - name: SIM_CURSOR_USAGE_STALE_CLIENT_SEATS
+              value: "60"
             - name: SIM_CURSOR_USAGE_BRIEF_SCALES
               value: "true"
             - name: SIM_CURSOR_USAGE_SPARSE_SAMPLES
@@ -343,18 +348,18 @@ spec:
             - name: SIM_CURSOR_USAGE_SAMPLE_WINDOW_SEC
               value: "90"
             - name: SIM_CURSOR_USAGE_VOLUME
-              value: "0.05"
+              value: "1"
             - name: SIM_DAY_VARIATION
               value: "true"
-            # Per-loop event burst cap. Daily pacing targets ~400 conversations × 20–40 events.
+            # Per-loop event burst cap. Daily pacing targets ~358 conversations × 5–10 events.
             - name: SIM_CURSOR_USAGE_EMITS_PER_CYCLE
               value: "2"
             - name: SIM_CURSOR_USAGE_CONVERSATIONS_PER_DAY
-              value: "400"
+              value: "358"
             - name: SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN
-              value: "20"
+              value: "5"
             - name: SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX
-              value: "40"
+              value: "10"
             - name: SIM_CURSOR_USAGE_EVENTS_PER_USER_DAY
               value: "350"
             # Align first 24 with Anthropic Admin Claude Products; grow Claude Code DAU via OTEL-only (~100 total).
@@ -425,12 +430,14 @@ spec:
             # All sessions emit linkable ``org/repo`` names on ``claude_code_session_repo_info`` (no ``unknown``).
             # Managed = repos in GitHub integration scan (``GetScan``), not all coralogix/* on GitHub.
             # obdev scan (2026-06): ``coralogix/cxai-observability-demo-playground`` only.
-            # Enterprise top spenders (products roster): ~$2K/day each; #1 is unmanaged-repo rogue.
+            # Whales: ~13% of daily cost each (≥12× the per-user average); #1 is the unmanaged-repo rogue.
+            # Whales start sessions 3× as often (SIM_CLAUDE_WHALE_SESSION_WEIGHT); 10% of their sessions are
+            # heavy ($100–150, SIM_CLAUDE_HEAVY_SESSION_*) ≈ 5/day, >10× the average session cost.
             # Indices: 17=sam.martinez (highest), 14=avery.okafor, 3=taylor.silva.
             - name: SIM_CLAUDE_TOP_SPENDER_INDICES
               value: "17,14,3"
             - name: SIM_CLAUDE_TOP_SPENDER_DAILY_USD
-              value: "2000"
+              value: "650"
             - name: SIM_CLAUDE_ROGUE_USER_INDICES
               value: "17"
             - name: SIM_CLAUDE_ROGUE_UNMANAGED_FRAC

@@ -20,9 +20,11 @@ from zoneinfo import ZoneInfo
 import otlp_metrics
 import prometheus_rw
 from sim.claude.dashboard import emit_claude_code_dashboard
+from sim.claude.session_emit import claude_reap_idle_sessions
 from sim.common.cache_usage import sim_prompt_cache_token_split
 from sim.common.constants import claude_prompt_for_session
 from sim.common.repos import (
+    is_sim_top_spender,
     sim_heavy_session_token_multiplier,
     sim_rogue_user_token_multiplier,
     sim_top_spender_base_token_multiplier,
@@ -37,10 +39,7 @@ from sim.claude.user_variance import (
     claude_user_should_emit_this_cycle,
     claude_user_token_multiplier,
 )
-from sim.claude.spend_pacing import (
-    note_claude_user_spend_usd,
-    sim_top_spender_pace_multiplier,
-)
+from sim.claude.spend_pacing import sim_top_spender_pace_multiplier
 from sim.codex.agent import _codex_model_for_turn
 from sim.common.otel import _gen_ai_dashboard_llm_span_attributes
 from sim.common.model_pricing import estimate_llm_cost_usd
@@ -1901,6 +1900,10 @@ _cc_long_session_deadline: float = 0.0
 _cc_slot_users: list[dict | None] = []
 _cc_slot_deadlines: list[float] = []
 _cc_slot_rr: int = 0
+# Slots with a session still inside its prompt budget; they keep emitting until it is spent.
+_cc_live_slots: set[int] = set()
+# Fractional session starts carried between cycles so low rates (nights) still add up per day.
+_cc_start_carry: float = 0.0
 # ``SIM_CLAUDE_PIN_METRIC_LABELS`` (default true): stable ``app.version``/``service.version``/``model`` per pin key
 # so Prometheus scrapes hit the **same** time series across iterations (``increase()`` needs ≥2 samples).
 _cc_metric_label_pins: dict[str, tuple[str, str]] = {}
@@ -2113,37 +2116,17 @@ def _claude_prefill_slot_user(slot_index: int, allowed: tuple[int, ...], base: i
 
 def _claude_emit_session_slot_count(n_slots: int) -> int:
     """
-    How many parallel slot users emit when Claude Code wins agent selection.
+    Live-session cap when ``SIM_CLAUDE_ACTIVITY_PACING=false``.
 
-    With ``SIM_CLAUDE_ACTIVITY_PACING=true`` (default): daily × hourly multiplier × peak frac
-    (onlineboutique brief §6/§9) — typically ~35 peak concurrent of a 100-user roster.
-
-    Else ``SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS=true`` → all slots; otherwise
+    ``SIM_CLAUDE_EMIT_ALL_SESSION_SLOTS=true`` → all slots; otherwise
     ``SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT`` (default 1) caps fan-out.
     """
     if n_slots <= 0:
         return 0
-    if _env_bool("SIM_CLAUDE_ACTIVITY_PACING", True):
-        from sim.claude.day_variation import claude_target_emit_count
-
-        return claude_target_emit_count(n_slots)
     if _claude_emit_all_session_slots():
         return n_slots
     cap = _env_int("SIM_CLAUDE_EMIT_SESSION_SLOT_COUNT", 1)
     return min(n_slots, max(1, cap))
-
-
-def _claude_pick_session_slot_indices(n_emit: int, n_slots: int) -> list[int]:
-    """Pick ``n_emit`` distinct slot indices (``SIM_CLAUDE_SESSION_SLOT_STRATEGY``)."""
-    if n_emit >= n_slots:
-        return list(range(n_slots))
-    strat = os.environ.get("SIM_CLAUDE_SESSION_SLOT_STRATEGY", "random").strip().lower().replace("-", "_")
-    if strat in ("round_robin", "rr"):
-        global _cc_slot_rr
-        start = _cc_slot_rr % n_slots
-        _cc_slot_rr += n_emit
-        return [(start + i) % n_slots for i in range(n_emit)]
-    return random.sample(range(n_slots), n_emit)
 
 
 def _claude_ensure_session_slots() -> int:
@@ -2189,10 +2172,36 @@ def _claude_roster_users_for_claude_code_emit() -> list[dict]:
             users.extend(dict(u) for u in otel_only_roster_users())
             return users
         return [_claude_roster_core_user(str(uuid.uuid4()))]
+    global _cc_start_carry
     n_slots = _claude_ensure_session_slots()
-    n_emit = _claude_emit_session_slot_count(n_slots)
-    indices = _claude_pick_session_slot_indices(n_emit, n_slots)
-    return [dict(_cc_slot_users[i]) for i in indices if _cc_slot_users[i] is not None]
+    # Sticky: a live session keeps its user every cycle until its turns are done, so each
+    # session gets all its turns; pacing only decides how many new sessions start.
+    for i in list(_cc_live_slots):
+        if i >= n_slots or _cc_slot_users[i] is None or _claude_session_done(_cc_slot_users[i]):
+            _cc_live_slots.discard(i)
+    idle = [i for i in range(n_slots) if i not in _cc_live_slots and _cc_slot_users[i] is not None]
+    if _env_bool("SIM_CLAUDE_ACTIVITY_PACING", True):
+        # Pace session starts, not concurrency: starts spread evenly so live sessions stay flat,
+        # and the carried fraction keeps the daily total exact at low rates.
+        from sim.claude.day_variation import claude_session_starts_per_cycle, claude_whale_session_weight
+
+        _cc_start_carry += claude_session_starts_per_cycle()
+        starts = int(_cc_start_carry)
+        _cc_start_carry -= starts
+    else:
+        starts = _claude_emit_session_slot_count(n_slots) - len(_cc_live_slots)
+    whale_weight = claude_whale_session_weight()
+    for _ in range(min(len(idle), starts)):
+        weights = [whale_weight if is_sim_top_spender(_cc_slot_users[i]) else 1.0 for i in idle]
+        pick = random.choices(idle, weights=weights, k=1)[0]
+        idle.remove(pick)
+        _cc_live_slots.add(pick)
+    return [dict(_cc_slot_users[i]) for i in sorted(_cc_live_slots)]
+
+
+def _claude_session_done(user: dict) -> bool:
+    cached = _cc_user_session_ids.get(_claude_roster_user_key(user))
+    return cached is not None and cached[2] >= cached[3]
 
 
 def _prefill_products_roster_claude_otel(claude_profile: dict) -> None:
@@ -3859,7 +3868,8 @@ def main() -> None:
     _cc_tok_l = _CC_BASE_LABEL_NAMES + ("type", "model")
     _cc_cost_l = _CC_BASE_LABEL_NAMES + ("model",)
     _cc_act_l = _CC_BASE_LABEL_NAMES + ("type",)
-    _cc_ed_l = _CC_BASE_LABEL_NAMES + ("tool_name", "decision", "source", "language")
+    # tool_name + decision only: the FE reads nothing else, and the 20-label shape never reached Coralogix.
+    _cc_ed_l = _CC_BASE_LABEL_NAMES + ("tool_name", "decision")
 
     cc_session = Counter(
         "claude_code_session_count",
@@ -4155,6 +4165,7 @@ def main() -> None:
 
         def _run_claude_code_emit(cc_profile: dict) -> None:
             """Emit paced Claude Code metrics/logs for the active slot subset."""
+            claude_reap_idle_sessions()
             cc_ver = os.environ.get("SIM_CC_APP_VERSION") or tool_version_for("claude_code")
             mult = max(0.01, _env_float("SIM_CLAUDE_PER_EMIT_TOKEN_MULT", 1.0))
             batch = max(1, _env_int("SIM_CLAUDE_TOKEN_EMIT_BATCH", 1))
@@ -4214,18 +4225,6 @@ def main() -> None:
                     if pace_mult != 1.0:
                         input_tokens = max(1, int(input_tokens * pace_mult))
                         output_tokens = max(1, int(output_tokens * pace_mult))
-                    if _ru is not None:
-                        model_for_cost = str(
-                            cc_profile.get("gen_ai.request.model")
-                            or os.environ.get("SIM_CLAUDE_MODEL", "")
-                            or CLAUDE_CODE_DEFAULT_MODEL
-                        )
-                        note_claude_user_spend_usd(
-                            _ru,
-                            estimate_llm_cost_usd(
-                                model_for_cost, input_tokens, output_tokens
-                            ),
-                        )
                     if _env_bool("SIM_CLAUDE_OTLP_TRACES_ENABLED", False) and user_idx == 0 and b == 0:
                         t0 = time.perf_counter()
                         emit_claude_code_user_prompt_span(
@@ -4372,9 +4371,12 @@ def main() -> None:
                 emit_cursor_usage_metrics_cycle()
         else:
             while True:
+                cycle_start = time.monotonic()
                 run_sophisticated_trace()
                 emit_cursor_usage_metrics_cycle()
-                time.sleep(interval)
+                # Fixed-rate cycles: pacing assumes 3600 / TRACE_INTERVAL_SEC cycles per hour, so a
+                # slow cycle (e.g. a blocking OTLP flush) must not push every later cycle back.
+                time.sleep(max(0.0, interval - (time.monotonic() - cycle_start)))
     finally:
         if _prom_rw_stop is not None:
             _prom_rw_stop.set()

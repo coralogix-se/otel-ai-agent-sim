@@ -39,6 +39,16 @@ from prometheus_client.registry import Collector
 
 from sim.common.env import _env_bool, _env_float, _env_int
 from sim.common.identity import copilot_collector_dau_identity, copilot_collector_user_metric_labels
+from sim.copilot.extra_metrics import (
+    _SEAT_PRICE_USD,
+    copilot_default_model,
+    copilot_seat_profile,
+    copilot_user_language,
+    emit_copilot_extra_gauges,
+    emit_copilot_extra_session,
+    emit_copilot_pr_gauges,
+    emit_copilot_team_membership,
+)
 
 _BILLING_METRIC_NAMES = frozenset(
     {
@@ -63,7 +73,10 @@ _USER_MODEL_FEATURE_L = _USER_L + ("model", "feature")
 
 _CLI_FEATURE = "copilot_cli"
 _CLI_IDE = "Copilot CLI"
-_LANGUAGES = ("Python", "TypeScript", "Go", "Java", "Rust", "Ruby")
+# Share of org interactions attributed to the default (premium) model; the rest follows the session model.
+_DEFAULT_MODEL_SHARE = 0.6
+# Gross is net grossed up by this discount share, kept under the low-discount insight's 5% bar.
+_DISCOUNT_SHARE = 0.035
 _BILLING_SKUS: tuple[tuple[str, float], ...] = (
     ("copilot_enterprise", 0.88),
     ("copilot_business", 0.12),
@@ -182,8 +195,16 @@ _DAU_ADMITTED_TODAY: set[str] = set()
 _DAU_ADMIT_DAY = ""
 
 
-def _copilot_user_counts_toward_dau(dau_key: str) -> bool:
-    """First-N users today toward the ~26-DAU budget (brief §7 + day variation)."""
+def _daily_value_scale() -> float:
+    """One daily sample must carry the day's whole value (the old level summed ~2,880 scrapes)."""
+    return max(1.0, _env_float("SIM_COPILOT_DAILY_VALUE_SCALE", 600.0))
+
+
+def _copilot_user_counts_toward_dau(dau_key: str, *, always: bool = False) -> bool:
+    """First-N users today toward the ~26-DAU budget (brief §7 + day variation).
+
+    ``always`` admits the stable heavy user without spending budget, so the token outlier shows every day.
+    """
     global _DAU_ADMIT_DAY
     from sim.common.day_variation import daily_activity_multiplier
 
@@ -192,7 +213,7 @@ def _copilot_user_counts_toward_dau(dau_key: str) -> bool:
         _DAU_ADMIT_DAY = today
         _DAU_ADMITTED_TODAY.clear()
     target = max(1, int(round(_env_int("SIM_COPILOT_TARGET_DAU", 26) * daily_activity_multiplier())))
-    if dau_key in _DAU_ADMITTED_TODAY:
+    if always or dau_key in _DAU_ADMITTED_TODAY:
         return True
     if len(_DAU_ADMITTED_TODAY) >= target:
         return False
@@ -274,6 +295,9 @@ class GitHubCopilotCollector(Collector):
         self._billing_discount.clear()
         self._billing_quantity.clear()
         self._billing_first_accrual_mono = 0.0
+        # Counters are exported once/day as that day's value, so they must start from zero each UTC day.
+        self._counters.clear()
+        self._gauges.clear()
         # Keep _billing_exported_day so a late scrape after midnight starts a new day cleanly.
 
     def accrue_daily_billing(
@@ -332,11 +356,13 @@ class GitHubCopilotCollector(Collector):
             return
         key = (name, _label_key(labels))
         with self._lock:
+            self._rollover_billing_day_locked()
             self._counters[key] += amount
 
     def _set_gauge(self, name: str, labels: dict[str, str], value: float) -> None:
         key = (name, _label_key(labels))
         with self._lock:
+            self._rollover_billing_day_locked()
             self._gauges[key] = value
 
     def _handle(self, name: str, labelnames: tuple[str, ...]) -> _MetricHandle:
@@ -465,13 +491,6 @@ class CopilotCollectorMetrics:
     org_billing_gross: _MetricHandle
     org_billing_discount: _MetricHandle
     org_billing_quantity: _MetricHandle
-    org_pr_created: _MetricHandle
-    org_pr_reviewed: _MetricHandle
-    org_pr_merged: _MetricHandle
-    org_pr_created_by_copilot: _MetricHandle
-    org_pr_reviewed_by_copilot: _MetricHandle
-    org_pr_suggestions: _MetricHandle
-    org_pr_applied_suggestions: _MetricHandle
     org_daily_active: _MetricHandle
     org_weekly_active: _MetricHandle
     org_monthly_active: _MetricHandle
@@ -479,7 +498,6 @@ class CopilotCollectorMetrics:
     org_daily_active_cloud: _MetricHandle
     org_daily_active_cr: _MetricHandle
     org_daily_passive_cr: _MetricHandle
-    org_pr_median_merge_min: _MetricHandle
     user_cli_session: _MetricHandle
     user_cli_prompt_tokens: _MetricHandle
     user_cli_output_tokens: _MetricHandle
@@ -526,13 +544,6 @@ def register_copilot_collector_metrics(registry) -> CopilotCollectorMetrics:
         org_billing_gross=h("github_copilot_billing_gross_amount", _SKU_L),
         org_billing_discount=h("github_copilot_billing_discount_amount", _SKU_L),
         org_billing_quantity=h("github_copilot_billing_net_quantity", _SKU_L),
-        org_pr_created=h("github_copilot_org_pull_requests_created"),
-        org_pr_reviewed=h("github_copilot_org_pull_requests_reviewed"),
-        org_pr_merged=h("github_copilot_org_pull_requests_merged"),
-        org_pr_created_by_copilot=h("github_copilot_org_pull_requests_created_by_copilot"),
-        org_pr_reviewed_by_copilot=h("github_copilot_org_pull_requests_reviewed_by_copilot"),
-        org_pr_suggestions=h("github_copilot_org_pull_requests_copilot_suggestions"),
-        org_pr_applied_suggestions=h("github_copilot_org_pull_requests_copilot_applied_suggestions"),
         org_daily_active=h("github_copilot_org_daily_active_users"),
         org_weekly_active=h("github_copilot_org_weekly_active_users"),
         org_monthly_active=h("github_copilot_org_monthly_active_users"),
@@ -540,7 +551,6 @@ def register_copilot_collector_metrics(registry) -> CopilotCollectorMetrics:
         org_daily_active_cloud=h("github_copilot_org_daily_active_copilot_cloud_agent_users"),
         org_daily_active_cr=h("github_copilot_org_daily_active_copilot_code_review_users"),
         org_daily_passive_cr=h("github_copilot_org_daily_passive_copilot_code_review_users"),
-        org_pr_median_merge_min=h("github_copilot_org_pull_requests_median_minutes_to_merge"),
         user_cli_session=h("github_copilot_user_cli_session_count", _USER_L),
         user_cli_prompt_tokens=h("github_copilot_user_cli_prompt_tokens_sum", _USER_L),
         user_cli_output_tokens=h("github_copilot_user_cli_output_tokens_sum", _USER_L),
@@ -562,27 +572,36 @@ def register_copilot_collector_metrics(registry) -> CopilotCollectorMetrics:
     )
 
 
-def _maybe_pr_activity(metrics: CopilotCollectorMetrics, org: str) -> None:
-    rate = _env_float("SIM_COPILOT_COLLECTOR_PR_RATE", 0.02)
-    if random.random() >= rate:
-        return
-    metrics.org_pr_created.labels(organization=org).inc()
-    if random.random() < 0.35:
-        metrics.org_pr_created_by_copilot.labels(organization=org).inc()
-    if random.random() < 0.55:
-        metrics.org_pr_reviewed.labels(organization=org).inc()
-    if random.random() < 0.25:
-        metrics.org_pr_reviewed_by_copilot.labels(organization=org).inc()
-    suggestions = random.randint(1, 8)
-    metrics.org_pr_suggestions.labels(organization=org).inc(suggestions)
-    metrics.org_pr_applied_suggestions.labels(organization=org).inc(
-        random.randint(0, suggestions)
-    )
-    if random.random() < 0.4:
-        metrics.org_pr_merged.labels(organization=org).inc()
-        metrics.org_pr_median_merge_min.labels(organization=org).set(
-            random.uniform(15.0, 720.0)
-        )
+def _refresh_active_user_gauges(
+    metrics: CopilotCollectorMetrics,
+    org_name: str,
+    dau: int,
+    wau: int,
+    mau: int,
+    cli_dau: int,
+) -> None:
+    from sim.common.day_variation import daily_activity_multiplier
+
+    # Cap reported AU toward brief targets (~26/46/51) with day variation.
+    day_mult = daily_activity_multiplier()
+    target_dau = max(1, int(round(_env_int("SIM_COPILOT_TARGET_DAU", 26) * day_mult)))
+    target_wau = max(target_dau, int(round(_env_int("SIM_COPILOT_TARGET_WAU", 46) * day_mult)))
+    target_mau = max(target_wau, int(round(_env_int("SIM_COPILOT_TARGET_MAU", 51) * day_mult)))
+    dau = min(dau, target_dau)
+    wau = min(max(wau, dau), target_wau)
+    mau = min(max(mau, wau), target_mau)
+    cli_dau = min(cli_dau, dau)
+    metrics.org_daily_active.labels(organization=org_name).set(float(dau))
+    metrics.org_weekly_active.labels(organization=org_name).set(float(wau))
+    metrics.org_monthly_active.labels(organization=org_name).set(float(mau))
+    metrics.org_daily_active_cli.labels(organization=org_name).set(float(cli_dau))
+    emit_copilot_extra_gauges(metrics.collector, org=org_name, dau=dau, wau=wau, mau=mau)
+    # Deterministic (not sampled) so these series exist every day.
+    cr_users = max(1, dau // 7)
+    metrics.org_daily_active_cloud.labels(organization=org_name).set(max(1, cli_dau // 5))
+    metrics.org_daily_active_cr.labels(organization=org_name).set(cr_users)
+    metrics.org_daily_passive_cr.labels(organization=org_name).set(max(1, cr_users // 2))
+    emit_copilot_pr_gauges(metrics.collector, org=org_name)
 
 
 def record_copilot_collector_session(
@@ -607,10 +626,26 @@ def record_copilot_collector_session(
 
     Billing accrues into **today's** daily buckets and is exposed on at most one Prometheus
     scrape per UTC day (sparse samples for ``sum_over_time`` net-cost PromQL).
+
+    Users outside today's DAU budget only publish their team membership. Idle seats publish
+    at most one interaction a day; counters are scaled so one daily sample carries the day's value.
     """
     org_name = org or copilot_collector_org()
     user_l = copilot_collector_user_metric_labels(user_attrs, org=org_name)
-    language = random.choice(_LANGUAGES)
+    dau_key = copilot_collector_dau_identity(user_l)
+    profile = copilot_seat_profile(user_l["user_login"])
+    # The seat roster is independent of the DAU budget: every licensed seat must appear in it.
+    emit_copilot_team_membership(metrics.collector, org=org_name, user_l=user_l, profile=profile)
+    if not _copilot_user_counts_toward_dau(dau_key, always=profile == "heavy"):
+        return
+    first_touch_today = dau_key not in _tracker.all_users
+    dau, wau, mau, cli_dau = _tracker.touch(dau_key, cli=True)
+    if profile == "idle":
+        metrics.user_interaction.labels(**user_l).inc(1 if first_touch_today else 0)
+        _refresh_active_user_gauges(metrics, org_name, dau, wau, mau, cli_dau)
+        return
+
+    language = copilot_user_language(user_l)
     feature = _CLI_FEATURE
     ide = _CLI_IDE
     loc_added = random.randint(4, 120) if productivity_ok else random.randint(0, 24)
@@ -620,11 +655,16 @@ def record_copilot_collector_session(
     generations = max(1, n_turns + random.randint(0, 2))
     interactions = max(1, n_turns)
     acceptances = 1 if productivity_ok else 0
+    daily_scale = _daily_value_scale()
+    (requests, total_in, total_out, generations, interactions, acceptances, loc_added, loc_deleted, loc_suggested) = (
+        round(value * daily_scale)
+        for value in (requests, total_in, total_out, generations, interactions, acceptances, loc_added, loc_deleted, loc_suggested)
+    )
+    default_model = copilot_default_model()
     sku = _pick_billing_sku()
-    gross = cost_usd * random.uniform(1.05, 1.18)
-    discount = max(0.0, gross - cost_usd)
+    gross = cost_usd / (1.0 - _DISCOUNT_SHARE)
+    discount = gross - cost_usd
 
-    dau_key = copilot_collector_dau_identity(user_l)
     if count_session:
         sess_delta = _user_cli_session_delta(dau_key)
         if sess_delta:
@@ -644,8 +684,11 @@ def record_copilot_collector_session(
             organization=org_name, language=language, feature=feature
         ).inc(loc_deleted)
     metrics.org_interaction_model.labels(
+        organization=org_name, model=default_model, feature=feature
+    ).inc(interactions * _DEFAULT_MODEL_SHARE)
+    metrics.org_interaction_model.labels(
         organization=org_name, model=model, feature=feature
-    ).inc(interactions)
+    ).inc(interactions * (1.0 - _DEFAULT_MODEL_SHARE))
     metrics.org_interaction_ide.labels(organization=org_name, ide=ide).inc(interactions)
     metrics.org_interaction_feature.labels(organization=org_name, feature=feature).inc(
         interactions
@@ -659,7 +702,7 @@ def record_copilot_collector_session(
             net_usd=cost_usd,
             gross_usd=gross,
             discount_usd=discount,
-            quantity=float(max(1, requests // 2)),
+            quantity=cost_usd / _SEAT_PRICE_USD,
         )
 
     metrics.user_cli_prompt_tokens.labels(**user_l).inc(total_in)
@@ -667,19 +710,16 @@ def record_copilot_collector_session(
     metrics.user_interaction.labels(**user_l).inc(interactions)
     metrics.user_code_generation.labels(**user_l).inc(generations)
     metrics.user_loc_added.labels(**user_l).inc(loc_added)
-    metrics.user_interaction_model.labels(**user_l, model=model, feature=feature).inc(
+    metrics.user_interaction_model.labels(**user_l, model=default_model, feature=feature).inc(
         interactions
     )
     if acceptances:
         metrics.user_code_acceptance_activity.labels(**user_l).inc(acceptances)
 
-    from sim.copilot.extra_metrics import emit_copilot_extra_gauges, emit_copilot_extra_session
-
     emit_copilot_extra_session(
         metrics.collector,
         org=org_name,
         user_l=user_l,
-        model=model,
         generations=generations,
         acceptances=acceptances,
         interactions=interactions,
@@ -687,44 +727,4 @@ def record_copilot_collector_session(
         loc_deleted=loc_deleted,
         loc_suggested=loc_suggested,
     )
-
-    if _copilot_user_counts_toward_dau(dau_key):
-        dau, wau, mau, cli_dau = _tracker.touch(dau_key, cli=True)
-    else:
-        dau, wau, mau, cli_dau = _tracker.counts()
-    # Cap reported AU toward brief targets (~26/46/51) with day variation.
-    from sim.common.day_variation import daily_activity_multiplier
-
-    day_mult = daily_activity_multiplier()
-    target_dau = max(1, int(round(_env_int("SIM_COPILOT_TARGET_DAU", 26) * day_mult)))
-    target_wau = max(target_dau, int(round(_env_int("SIM_COPILOT_TARGET_WAU", 46) * day_mult)))
-    target_mau = max(target_wau, int(round(_env_int("SIM_COPILOT_TARGET_MAU", 51) * day_mult)))
-    dau = min(dau, target_dau)
-    wau = min(max(wau, dau), target_wau)
-    mau = min(max(mau, wau), target_mau)
-    cli_dau = min(cli_dau, dau)
-    metrics.org_daily_active.labels(organization=org_name).set(float(dau))
-    metrics.org_weekly_active.labels(organization=org_name).set(float(wau))
-    metrics.org_monthly_active.labels(organization=org_name).set(float(mau))
-    metrics.org_daily_active_cli.labels(organization=org_name).set(float(cli_dau))
-    emit_copilot_extra_gauges(
-        metrics.collector,
-        org=org_name,
-        user_l=user_l,
-        dau=dau,
-        wau=wau,
-        mau=mau,
-    )
-    if random.random() < _env_float("SIM_COPILOT_COLLECTOR_CLOUD_AGENT_RATE", 0.08):
-        metrics.org_daily_active_cloud.labels(organization=org_name).set(
-            max(1, cli_dau // random.randint(3, 8))
-        )
-    if random.random() < _env_float("SIM_COPILOT_COLLECTOR_CODE_REVIEW_RATE", 0.05):
-        cr_users = max(1, dau // random.randint(4, 10))
-        metrics.org_daily_active_cr.labels(organization=org_name).set(cr_users)
-        if random.random() < 0.5:
-            metrics.org_daily_passive_cr.labels(organization=org_name).set(
-                max(1, cr_users // 2)
-            )
-
-    _maybe_pr_activity(metrics, org_name)
+    _refresh_active_user_gauges(metrics, org_name, dau, wau, mau, cli_dau)

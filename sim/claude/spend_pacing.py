@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from sim.claude.day_variation import claude_daily_multiplier
 from sim.common.env import _env_float
 from sim.common.repos import is_sim_top_spender, sim_top_spender_rank
 
@@ -58,7 +59,8 @@ def sim_top_spender_pace_multiplier(roster_user: dict | None) -> float:
     """
     if not is_sim_top_spender(roster_user):
         return 1.0
-    target = claude_top_spender_daily_usd_target()
+    # Scale with the day so whales keep the same share of a busy Tuesday as of a quiet Sunday.
+    target = claude_top_spender_daily_usd_target() * claude_daily_multiplier()
     if target <= 0:
         return 1.0
     rank = sim_top_spender_rank(roster_user) or 2
@@ -72,4 +74,4 @@ def sim_top_spender_pace_multiplier(roster_user: dict | None) -> float:
         # Mild front-load so demos see spend early without blowing past ~$2K/day.
         return 1.35 if rank == 1 else 1.2
     ratio = expected / max(accrued, 0.01)
-    return max(0.1, min(1.8, ratio))
+    return max(0.1, min(3.0, ratio))
