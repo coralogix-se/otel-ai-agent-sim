@@ -93,3 +93,48 @@ def test_heavy_session_multiplier_respects_env(monkeypatch: pytest.MonkeyPatch) 
 def test_heavy_session_multiplier_skips_other_users() -> None:
     user = _user_at(0)
     assert sim_heavy_session_token_multiplier(user) == 1.0
+
+
+def test_session_budgets_sum_to_daily_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One simulated day (whales picked 4× as often, like the slot sampler) lands on the daily knobs."""
+    import random
+
+    from sim.claude import session_emit as se
+    from sim.claude import spend_pacing
+
+    for key, value in {
+        "SIM_CLAUDE_ALIGN_PRODUCTS_ROSTER": "true",
+        "SIM_PRODUCTS_ROSTER_SIZE": "24",
+        "SIM_CLAUDE_OTEL_ONLY_ROSTER_SIZE": "76",
+        "SIM_CLAUDE_DAILY_SESSIONS": "600",
+        "SIM_CLAUDE_DAILY_COST_USD": "4700",
+        "SIM_CLAUDE_DAILY_TOKENS": "270000000",
+        "SIM_CLAUDE_TOP_SPENDER_DAILY_USD": "650",
+        "SIM_DAY_VARIATION": "false",
+    }.items():
+        monkeypatch.setenv(key, value)
+    progress = {"n": 0}
+    monkeypatch.setattr(spend_pacing, "_elapsed_day_fraction", lambda: max(0.02, progress["n"] / 600))
+    monkeypatch.setattr(spend_pacing, "_accrued_usd", {})
+    monkeypatch.setattr(se, "_SESSION_STATE", {})
+    random.seed(7)
+
+    cost_by_user: dict[int, float] = {}
+    tokens: dict[str, int] = {}
+    weights = [4.0 if i in (17, 14, 3) else 1.0 for i in range(100)]
+    for n in range(600):
+        progress["n"] = n
+        user_idx = random.choices(range(100), weights=weights, k=1)[0]
+        plan = se.claude_session_plan(f"day-{n}", _user_at(user_idx))
+        cost_by_user[user_idx] = cost_by_user.get(user_idx, 0.0) + plan.cost_usd
+        for typ, amount in plan.tokens.items():
+            tokens[typ] = tokens.get(typ, 0) + amount
+
+    total_cost = sum(cost_by_user.values())
+    assert total_cost == pytest.approx(4700, rel=0.15)
+    assert sum(tokens.values()) == pytest.approx(270_000_000, rel=0.15)
+    cache_hit = tokens["cacheRead"] / (tokens["input"] + tokens["cacheRead"] + tokens["cacheCreation"])
+    assert 0.8 < cache_hit < 0.9
+    avg_user_cost = total_cost / len(cost_by_user)
+    for whale in (17, 14, 3):
+        assert cost_by_user[whale] >= 12 * avg_user_cost

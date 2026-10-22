@@ -66,6 +66,33 @@ def _pick(items: tuple[str, ...], weights: tuple[float, ...] | None = None) -> s
     return random.choices(items, weights=weights, k=1)[0]
 
 
+# Per-day c4c targets (see scales.py): $204 event cost, $4.3k member daily spend, $3.2k cycle gross.
+_EVENT_COST_SCALE = 0.0200
+_EVENT_TOKEN_FEE_SHARE = 0.13
+_DAILY_SPEND_PER_MEMBER_USD = 22.4
+_CYCLE_GROSS_PER_MEMBER_USD = 11.06
+# Two seats sit just over a low limit so the members-limited and overage insights always fire.
+_LIMITED_SEATS = 2
+_LIMITED_SEAT_LIMIT_USD = 525.0
+_LIMITED_SEAT_SPEND_RATIO = 1.05
+# One runaway max-mode conversation per day (>= the heavy-conversation insight's $100 floor); it also
+# makes its owner the cost-concentration outlier and tips the max-mode and premium-model shares.
+_HEAVY_CONVERSATION_INDEX = 2
+_HEAVY_CONVERSATION_COST_USD = 105.0
+_HEAVY_CONVERSATION_MODEL = "claude-opus-5-thinking-high"
+# Skewed so the autonomous-complex-work insight (>=40% high complexity, >=50% low guidance) fires.
+_DIMENSION_WEIGHTS: dict[str, tuple[float, ...]] = {
+    "complexity": (0.10, 0.15, 0.25, 0.50),
+    "guidanceLevels": (0.60, 0.25, 0.15),
+}
+
+
+def _work_type_weights(day_ordinal: int) -> tuple[float, ...]:
+    """bug / ktlo / new_feature; the KTLO share ramps 45%->70% over 28 days so the rising-share insight fires."""
+    ktlo = 0.45 + 0.25 * ((day_ordinal % 28) / 28)
+    return ((1 - ktlo) / 2, ktlo, (1 - ktlo) / 2)
+
+
 @dataclass(frozen=True)
 class _UsagePersona:
     """Stable per-member knobs that feed FE Usage Pattern tags (cx498 Ba/al/sl/ll/cl).
@@ -344,10 +371,8 @@ def _build_roster() -> list[_UsageMember]:
         email = row["user.email"]
         gid, gname = CURSOR_GROUPS[rank % len(CURSOR_GROUPS)]
         is_unassigned = gid == "unassigned"
-        # ~10% of the roster may exceed their monthly limit (idle seats excluded).
-        active_n = n - idle_count
-        overage_slots = max(1, round(active_n * 0.10))
         is_idle = rank >= n - idle_count
+        may_exceed_limit = (not is_idle) and rank < _LIMITED_SEATS
         members.append(
             _UsageMember(
                 email=email,
@@ -357,9 +382,11 @@ def _build_roster() -> list[_UsageMember]:
                 group_id=gid,
                 group_name=gname,
                 is_unassigned=is_unassigned,
-                monthly_limit_usd=_stable_limit_usd(email),
+                monthly_limit_usd=(
+                    _LIMITED_SEAT_LIMIT_USD if may_exceed_limit else _stable_limit_usd(email)
+                ),
                 client_version=client_versions.get(email, CURSOR_CLIENT_VERSION_LATEST),
-                may_exceed_limit=(not is_idle) and rank < overage_slots,
+                may_exceed_limit=may_exceed_limit,
                 is_idle=is_idle,
                 surfaces=() if is_idle else _stable_surface_affinity(email),
                 persona=_stable_persona(email),
@@ -369,8 +396,6 @@ def _build_roster() -> list[_UsageMember]:
 
 
 _ROSTER: list[_UsageMember] | None = None
-_CYCLE_GROSS: dict[str, float] = {}
-_SPEND_CAPS: dict[str, float] = {}
 _MODEL_USERS_TODAY: dict[str, set[str]] = {}
 _ROSTER_SEEDED = False
 # Annual pooled budget snapshots (Admin /organizations/pooled-usage).
@@ -390,6 +415,8 @@ class _OpenConversation:
     service_account: str
     events_remaining: int
     day: str
+    # Set only on the daily heavy conversation: every event costs this much.
+    fixed_event_cost_usd: float | None = None
 
 
 _OPEN_CONVERSATIONS: list[_OpenConversation] = []
@@ -402,7 +429,9 @@ _SURFACE_USERS_TODAY: dict[str, set[str]] = {}
 # Soft "active day" flags for members who didn't emit events (stable within the UTC day).
 _SOFT_ACTIVE_TODAY: set[str] = set()
 _SOFT_ACTIVE_DECIDED = False
-_ADOPTION_BACKFILLED = False
+_BRIEF_EXTRA_DAY = ""
+# Full day multiplier (up and down) for the daily conversation budget and spend; set each cycle.
+_DAY_MULT = 1.0
 
 
 def _roster() -> list[_UsageMember]:
@@ -456,7 +485,7 @@ def _events_to_emit_this_cycle(now: datetime, target_day: int) -> int:
 
 
 def _can_start_conversation(now: datetime) -> bool:
-    budget = cursor_usage_conversations_per_day()
+    budget = max(1, round(cursor_usage_conversations_per_day() * _DAY_MULT))
     if _CONVERSATIONS_STARTED_TODAY >= budget:
         return False
     expected = budget * _day_fraction(now)
@@ -489,7 +518,9 @@ def _pick_member_for_new_conversation(active_members: list[_UsageMember]) -> _Us
     return random.choices(eligible, weights=weights, k=1)[0]
 
 
-def _start_conversation(member: _UsageMember, day: str) -> _OpenConversation:
+def _start_conversation(
+    member: _UsageMember, day: str, active_members: list[_UsageMember]
+) -> _OpenConversation:
     global _CONVERSATIONS_STARTED_TODAY
     lo, hi = cursor_usage_events_per_conversation()
     billing_class = _pick(CURSOR_BILLING_CLASSES, CURSOR_BILLING_CLASS_WEIGHTS)
@@ -498,6 +529,7 @@ def _start_conversation(member: _UsageMember, day: str) -> _OpenConversation:
         service_account = _pick(tuple(a for a in CURSOR_SERVICE_ACCOUNTS if a != "none"))
     else:
         service_account = "none"
+    event_count = random.randint(lo, hi)
     conv = _OpenConversation(
         conversation_id=str(uuid.uuid4()),
         member=member,
@@ -505,9 +537,15 @@ def _start_conversation(member: _UsageMember, day: str) -> _OpenConversation:
         kind=kind,
         max_mode=random.random() < member.persona.max_mode_p,
         service_account=service_account,
-        events_remaining=random.randint(lo, hi),
+        events_remaining=event_count,
         day=day,
     )
+    if _CONVERSATIONS_STARTED_TODAY == _HEAVY_CONVERSATION_INDEX:
+        conv.member = active_members[min(_HEAVY_CONVERSATION_INDEX, len(active_members) - 1)]
+        conv.model = _HEAVY_CONVERSATION_MODEL
+        conv.max_mode = True
+        conv.service_account = "none"
+        conv.fixed_event_cost_usd = _HEAVY_CONVERSATION_COST_USD / event_count
     _OPEN_CONVERSATIONS.append(conv)
     _CONVERSATIONS_STARTED_TODAY += 1
     return conv
@@ -531,7 +569,7 @@ def _acquire_conversation(
     if _can_start_conversation(now):
         member = _pick_member_for_new_conversation(active_members)
         if member is not None:
-            return _start_conversation(member, day), True
+            return _start_conversation(member, day, active_members), True
     return None
 
 
@@ -544,18 +582,6 @@ def _consume_conversation_event(conv: _OpenConversation) -> None:
     )
     if conv.events_remaining <= 0 and conv in _OPEN_CONVERSATIONS:
         _OPEN_CONVERSATIONS.remove(conv)
-
-
-def _spend_cap_for(member: _UsageMember) -> float:
-    """Stable per-member gross cap: under-limit for 90%, slightly over for ~10%."""
-    if member.email not in _SPEND_CAPS:
-        if member.may_exceed_limit:
-            _SPEND_CAPS[member.email] = member.monthly_limit_usd * random.uniform(1.08, 1.35)
-        else:
-            digest = hashlib.sha256(f"cursor-cap:{member.email}".encode()).hexdigest()
-            frac = 0.35 + (int(digest[:4], 16) % 58) / 100.0  # 0.35..0.92
-            _SPEND_CAPS[member.email] = member.monthly_limit_usd * frac
-    return _SPEND_CAPS[member.email]
 
 
 def _ensure_org_pool(now: datetime) -> tuple[float, float]:
@@ -709,7 +735,7 @@ def _seed_snapshots(collector: CursorUsageCollector, *, now: datetime) -> None:
         {**org_labels, "role": "admin"},
         2.0,
     )
-    for i, model in enumerate(CURSOR_USAGE_MODELS[:12]):
+    for i, model in enumerate(CURSOR_USAGE_MODELS):
         collector.set_snapshot(
             "cursor_model_access_enabled",
             {**base, "model": model},
@@ -780,7 +806,7 @@ def _seed_snapshots(collector: CursorUsageCollector, *, now: datetime) -> None:
             {**base, "email": m.email, "user_id": m.user_id, "name": m.name},
             round(m.monthly_limit_usd * random.uniform(0.05, 0.45), 2),
         )
-    # Brief §8: cut group_members series 5 → ~1; value scale ×34 applied in scales.py.
+    # Brief §8: cut group_members series 5 → ~1.
     if _roster():
         m0 = _roster()[0]
         collector.set_snapshot(
@@ -891,7 +917,8 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
     # Brief §9: date-seeded weekday/weekend multiplier on active members + event volume.
     from sim.common.day_variation import daily_activity_multiplier
 
-    day_mult = daily_activity_multiplier(now.date())
+    global _DAY_MULT
+    day_mult = _DAY_MULT = daily_activity_multiplier(now.date())
     if day_mult < 0.999 and active_members:
         keep_n = max(1, int(round(len(active_members) * day_mult)))
         active_members = active_members[:keep_n]
@@ -919,15 +946,19 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
         billing_class = _pick(CURSOR_BILLING_CLASSES, CURSOR_BILLING_CLASS_WEIGHTS)
         # One event per emit — conversation_id is reused across 20–40 of these.
         event_n = 1
-        cost = round(
-            random.uniform(0.02, 1.8)
-            * volume
-            * (2.5 if max_mode else 1.0)
-            * member.persona.spend_mult,
-            4,
-        )
+        if conv.fixed_event_cost_usd is not None:
+            cost = round(conv.fixed_event_cost_usd, 6)
+        else:
+            cost = round(
+                random.uniform(0.02, 1.8)
+                * volume
+                * (2.5 if max_mode else 1.0)
+                * member.persona.spend_mult
+                * _EVENT_COST_SCALE,
+                6,
+            )
         cycle_pool_cost += cost
-        list_price = round(cost * 1.15, 4)
+        list_price = round(cost * 1.15, 6)
         units = float(random.randint(1, 12))
         ev = _event_labels(
             base,
@@ -944,7 +975,9 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
         collector.add_delta("cursor_event_list_price_usd", ev, list_price)
         collector.add_delta("cursor_event_request_units_total", ev, units)
         # Brief §8 Add: token fee accompanies cost (c4c ~358 series).
-        collector.add_delta("cursor_event_token_fee_usd", ev, round(cost * 0.08, 4))
+        collector.add_delta(
+            "cursor_event_token_fee_usd", ev, round(cost * _EVENT_TOKEN_FEE_SHARE, 6)
+        )
 
         # Persona-skewed token mix — cache_read/request drives longSessions/shortSessions.
         base_shares = [0.45, 0.30, 0.18, 0.07]  # input, output, cache_read, cache_write
@@ -967,7 +1000,7 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                 "date": day,
                 "service_account": service_account,
             }
-            tokens = int(random.randint(200, 8000) * share * volume)
+            tokens = round(random.randint(200, 8000) * share * volume)
             if tokens:
                 collector.add_delta("cursor_event_tokens_total", tok_labels, tokens)
 
@@ -1050,8 +1083,8 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             float(tab_rej),
         )
         # Brief §8 Add: lines / rejects / extension / AI deleted lines.
-        added_lines = int(random.randint(4, 40) * volume)
-        deleted_lines = int(random.randint(0, 12) * volume)
+        added_lines = round(random.randint(4, 40) * volume)
+        deleted_lines = round(random.randint(0, 12) * volume)
         collector.add_delta(
             "cursor_lines_added_total",
             {**base, "email": member.email, "user_id": member.user_id, "date": day},
@@ -1121,7 +1154,7 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                 {**base, "email": member.email, "user_id": member.user_id, "date": day},
                 random.randint(1, 5),
             )
-        if service_account == "true" and random.random() < 0.2:
+        if service_account != "none" and random.random() < 0.2:
             collector.add_delta(
                 "cursor_user_api_key_events_total",
                 {**base, "email": member.email, "date": day, "event": "use"},
@@ -1148,7 +1181,7 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             if random.random() < 0.28
             else _pick(("composer", "tab", "agent", "unattributed"), (0.40, 0.30, 0.20, 0.10))
         )
-        lines = int(random.randint(5, 120) * volume)
+        lines = round(random.randint(5, 120) * volume)
         collector.add_delta(
             "cursor_ai_code_lines_total",
             {
@@ -1256,54 +1289,6 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             accepts,
         )
 
-        collector.accrue_snapshot(
-            "cursor_member_daily_spend_usd",
-            {
-                **base,
-                "email": member.email,
-                "user_id": member.user_id,
-                "name": member.name,
-                "group_id": member.group_id,
-                "group_name": member.group_name,
-                "date": day,
-                "is_former": "false",
-                "is_unassigned": "true" if member.is_unassigned else "false",
-            },
-            cost,
-        )
-        # Cap cycle gross so ~90% stay under limit; ~10% (may_exceed_limit) go over.
-        prev = _CYCLE_GROSS.get(member.email)
-        cap = _spend_cap_for(member)
-        if prev is None:
-            # Seed overage users already past limit so demos show ~10% over immediately.
-            prev = member.monthly_limit_usd * 1.1 if member.may_exceed_limit else 0.0
-        step = cost * (random.uniform(2.0, 6.0) if member.may_exceed_limit else 1.0)
-        gross = min(prev + step, cap)
-        _CYCLE_GROSS[member.email] = gross
-        collector.set_snapshot(
-            "cursor_member_spend_gross_usd",
-            {
-                **base,
-                "email": member.email,
-                "user_id": member.user_id,
-                "name": member.name,
-                "role": member.role,
-            },
-            round(gross, 4),
-        )
-        overage = max(0.0, gross - member.monthly_limit_usd)
-        collector.set_snapshot(
-            "cursor_member_spend_overage_usd",
-            {
-                **base,
-                "email": member.email,
-                "user_id": member.user_id,
-                "name": member.name,
-                "role": member.role,
-            },
-            round(overage, 4),
-        )
-
         # Conversation dimensions once per new conversation.
         # Dual-emit: legacy team-level cursor_conversation_* (no email) + cx498
         # cursor_user_conversation_* (with email). Snapshot is a delta despite the
@@ -1325,9 +1310,14 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
 
             _emit_conversation_dimension("intents", intent)
             # Always classify work/complexity/guidance so Work Type + Insights populate.
+            dimension_weights = {
+                **_DIMENSION_WEIGHTS,
+                "workTypes": _work_type_weights(now.date().toordinal()),
+            }
             for dimension in ("workTypes", "complexity", "guidanceLevels"):
                 _emit_conversation_dimension(
-                    dimension, _pick(CURSOR_CONVERSATION_DIMENSIONS[dimension])
+                    dimension,
+                    _pick(CURSOR_CONVERSATION_DIMENSIONS[dimension], dimension_weights[dimension]),
                 )
             for dimension, values in CURSOR_CONVERSATION_DIMENSIONS.items():
                 if dimension in ("intents", "workTypes", "complexity", "guidanceLevels"):
@@ -1420,22 +1410,20 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             candidates = [m for m in active_members if surface in m.surfaces]
             if not candidates:
                 continue
-            touch_n = max(1, int(len(candidates) * 0.14 * volume))
-            for member in random.sample(candidates, min(touch_n, len(candidates))):
-                active_today.add(member.email)
-                req_n = max(1, int(random.randint(1, 3) * volume))
-                collector.accrue_snapshot(
-                    "cursor_requests_total",
-                    {
-                        **base,
-                        "email": member.email,
-                        "user_id": member.user_id,
-                        "surface": surface,
-                        "date": day,
-                    },
-                    req_n,
-                )
-                _SURFACE_USERS_TODAY.setdefault(surface, set()).add(member.email)
+            member = random.choice(candidates)
+            active_today.add(member.email)
+            collector.accrue_snapshot(
+                "cursor_requests_total",
+                {
+                    **base,
+                    "email": member.email,
+                    "user_id": member.user_id,
+                    "surface": surface,
+                    "date": day,
+                },
+                1,
+            )
+            _SURFACE_USERS_TODAY.setdefault(surface, set()).add(member.email)
 
     # Bugbot activity (team-level — no email).
     for repo in CURSOR_REPOS:
@@ -1470,6 +1458,56 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
                         },
                         n,
                     )
+
+    # Daily spend and cycle gross are stable per-member levels (persona-weighted, +-10% per day) so the
+    # Spend tab shows no spikes; only the trimmed active_members list moves with the day multiplier.
+    for member in active_members:
+        daily_jitter = 0.9 + 0.2 * (
+            int(hashlib.sha256(f"cursor-spend:{member.email}:{day}".encode()).hexdigest()[:4], 16)
+            / 0xFFFF
+        )
+        collector.set_snapshot(
+            "cursor_member_daily_spend_usd",
+            {
+                **base,
+                "email": member.email,
+                "user_id": member.user_id,
+                "name": member.name,
+                "group_id": member.group_id,
+                "group_name": member.group_name,
+                "date": day,
+                "is_former": "false",
+                "is_unassigned": "true" if member.is_unassigned else "false",
+            },
+            round(
+                _DAILY_SPEND_PER_MEMBER_USD
+                * max(1.0, day_mult)
+                * member.persona.spend_mult
+                * daily_jitter,
+                4,
+            ),
+        )
+    for member in _roster():
+        if member.is_idle:
+            continue
+        gross = (
+            member.monthly_limit_usd * _LIMITED_SEAT_SPEND_RATIO
+            if member.may_exceed_limit
+            else _CYCLE_GROSS_PER_MEMBER_USD * member.persona.spend_mult
+        )
+        gross_labels = {
+            **base,
+            "email": member.email,
+            "user_id": member.user_id,
+            "name": member.name,
+            "role": member.role,
+        }
+        collector.set_snapshot("cursor_member_spend_gross_usd", gross_labels, round(gross, 4))
+        collector.set_snapshot(
+            "cursor_member_spend_overage_usd",
+            gross_labels,
+            round(max(0.0, gross - member.monthly_limit_usd), 4),
+        )
 
     # member_active flags (Idle Seats drawer / insights). KPI Active Users / Adoption Rate use
     # cursor_user_lines_total{source=agent,outcome=suggested} + cursor_user_tab_suggestions_total.
@@ -1531,14 +1569,10 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
     ):
         collector.set_snapshot(metric_name, {**base, "date": day}, value)
 
-    # Keep ~16 days of date-labeled snapshots in memory (FE windows ≤14d); drop older to limit OOM.
-    keep_dates = {(now.date() - timedelta(days=i)).isoformat() for i in range(0, 16)}
+    # Today + yesterday only: each date-labeled series is sampled on at most two UTC days. Earlier
+    # days live in the TSDB from the days the sim already ran.
+    keep_dates = {(now.date() - timedelta(days=i)).isoformat() for i in range(0, 2)}
     collector.prune_snapshots_by_date(keep_dates=keep_dates)
-
-    global _ADOPTION_BACKFILLED
-    if not _ADOPTION_BACKFILLED:
-        _backfill_adoption_days(collector, base=base, today=now)
-        _ADOPTION_BACKFILLED = True
 
     # Restate bugbot snapshots every cycle for last_over_time widgets.
     enabled_n = max(1, int(len(CURSOR_REPOS) * 0.6))
@@ -1573,14 +1607,17 @@ def emit_cursor_usage_cycle(*, now: datetime | None = None) -> None:
             float(len(emails)),
         )
 
-    # Brief §8 remaining Add metrics (c4c label shapes).
-    _emit_cursor_brief_extra_metrics(
-        collector,
-        base=base,
-        day=day,
-        active_today=active_today | _SOFT_ACTIVE_TODAY,
-        volume=volume,
-    )
+    # Brief §8 remaining Add metrics (c4c label shapes): daily amounts, once per UTC day. Waits until
+    # 10:00 UTC so active_today is populated before the first (11:00) sample.
+    global _BRIEF_EXTRA_DAY
+    if _BRIEF_EXTRA_DAY != day and now.hour >= 10:
+        _BRIEF_EXTRA_DAY = day
+        _emit_cursor_brief_extra_metrics(
+            collector,
+            base=base,
+            day=day,
+            active_today=active_today | _SOFT_ACTIVE_TODAY,
+        )
 
     # Annual Budget: accrue this cycle's event $ into pooled usage, then restate gauges.
     _accrue_org_pool_usage(cycle_pool_cost)
@@ -1593,7 +1630,6 @@ def _emit_cursor_brief_extra_metrics(
     base: dict[str, str],
     day: str,
     active_today: set[str],
-    volume: float,
 ) -> None:
     """Emit remaining c4c-parity metrics from brief §8 Add rows."""
     org = cursor_usage_organization()
@@ -1601,8 +1637,8 @@ def _emit_cursor_brief_extra_metrics(
     org_base = {**base, "organization": org, "team_name": team_name, "date": day}
 
     # Org agent line totals (green=added / red=deleted).
-    green_acc = int(random.randint(800, 4000) * volume * 40)
-    red_acc = int(random.randint(100, 900) * volume * 40)
+    green_acc = random.randint(800, 4000) * 10
+    red_acc = random.randint(100, 900) * 10
     collector.add_delta("cursor_agent_green_lines_accepted_total", org_base, green_acc)
     collector.add_delta("cursor_agent_red_lines_accepted_total", org_base, red_acc)
     if random.random() < 0.08:
@@ -1622,7 +1658,7 @@ def _emit_cursor_brief_extra_metrics(
         collector.add_delta(
             "cursor_ai_changes_total",
             {**org_base, "source": source},
-            int(random.randint(20, 120) * volume * 10),
+            random.randint(200, 1200),
         )
 
     # Commit-range lines: keep series near ~60/day (sample a few active users × repos).
@@ -1642,7 +1678,7 @@ def _emit_cursor_brief_extra_metrics(
                 "model": _pick(CURSOR_USAGE_MODELS, CURSOR_USAGE_MODEL_WEIGHTS),
                 "operation_type": random.choice(("addition", "deletion")),
             },
-            int(random.randint(5, 80) * volume * 5),
+            random.randint(25, 400),
         )
 
     if random.random() < 0.25:
@@ -1659,20 +1695,21 @@ def _emit_cursor_brief_extra_metrics(
             1,
         )
 
-    if random.random() < 0.2:
-        repo = _pick(CURSOR_REPOS)
+    # Dry-run reviews are 36-60% of the total, above the unpublished-reviews insight's 30% floor.
+    repo = _pick(CURSOR_REPOS)
+    for dry_run, reviews in (("false", random.randint(4, 7)), ("true", random.randint(4, 6))):
         bb = {
             **org_base,
             "repo_name": repo if repo.startswith("github.com/") else f"github.com/{repo}",
-            "dry_run": "false",
-            "publication_status": random.choice(("posted", "pending")),
+            "dry_run": dry_run,
+            "publication_status": "pending" if dry_run == "true" else "posted",
         }
-        collector.add_delta("cursor_bugbot_reviews_total", bb, random.randint(1, 3))
+        collector.add_delta("cursor_bugbot_reviews_total", bb, reviews)
         collector.add_delta("cursor_bugbot_review_bugs_found_total", bb, random.randint(0, 4))
         collector.add_delta(
             "cursor_bugbot_review_cost_usd",
             bb,
-            round(random.uniform(0.5, 4.0) * volume * 20, 4),
+            round(random.uniform(0.5, 4.0) * reviews, 4),
         )
 
     # Client versions — restated daily snapshot (~22 series on c4c).
@@ -1730,104 +1767,17 @@ def _emit_cursor_brief_extra_metrics(
         )
 
 
-def _backfill_adoption_days(
-    collector: CursorUsageCollector,
-    *,
-    base: dict[str, str],
-    today: datetime,
-) -> None:
-    """Seed prior UTC days so FE date=~ windows for Adoption are non-empty after deploy/OOM."""
-    roster = _roster()
-    active_members = [m for m in roster if not m.is_idle]
-    for age in range(14, 0, -1):
-        day_dt = today - timedelta(days=age)
-        day = day_dt.date().isoformat()
-        # ~85% of non-idle seats active on a typical weekday; weekends quieter.
-        weekend = day_dt.weekday() >= 5
-        active_frac = 0.55 if weekend else 0.88
-        active_n = max(1, int(len(active_members) * active_frac))
-        active_set = {m.email for m in active_members[:active_n]}
-        for m in roster:
-            val = 0.0 if m.is_idle or m.email not in active_set else 1.0
-            collector.set_snapshot(
-                "cursor_member_active",
-                {
-                    **base,
-                    "email": m.email,
-                    "user_id": m.user_id,
-                    "date": day,
-                    "client_version": m.client_version,
-                },
-                val,
-            )
-        dau = float(len(active_set))
-        collector.set_snapshot("cursor_active_users_total", {**base, "date": day}, dau)
-        collector.set_snapshot(
-            "cursor_active_users_cli", {**base, "date": day}, float(max(1, int(dau * 0.12)))
-        )
-        collector.set_snapshot(
-            "cursor_active_users_cloud_agent",
-            {**base, "date": day},
-            float(max(1, int(dau * 0.18))),
-        )
-        collector.set_snapshot(
-            "cursor_active_users_bugbot",
-            {**base, "date": day},
-            float(max(1, int(dau * 0.14))),
-        )
-        # Light request/spend/seat-activity levels so drawers + Adoption KPIs aren't empty.
-        for m in active_members[:active_n]:
-            for surface in m.surfaces:
-                collector.set_snapshot(
-                    "cursor_requests_total",
-                    {
-                        **base,
-                        "email": m.email,
-                        "user_id": m.user_id,
-                        "surface": surface,
-                        "date": day,
-                    },
-                    float(random.randint(8, 40)),
-                )
-            collector.set_snapshot(
-                "cursor_ai_change_lines_added_total",
-                {**base, "email": m.email, "user_id": m.user_id, "date": day},
-                float(random.randint(40, 400)),
-            )
-            collector.set_snapshot(
-                "cursor_accepts_total",
-                {**base, "email": m.email, "user_id": m.user_id, "date": day},
-                float(random.randint(5, 30)),
-            )
-            collector.set_snapshot(
-                "cursor_applies_total",
-                {**base, "email": m.email, "user_id": m.user_id, "date": day},
-                float(random.randint(8, 40)),
-            )
-            _accrue_seat_activity(
-                collector,
-                base=base,
-                email=m.email,
-                day=day,
-                agent_suggested_lines=float(random.randint(20, 120)),
-                agent_accepted_lines=float(random.randint(8, 60)),
-                tab_suggestions=float(random.randint(10, 40)),
-                tab_accepts=float(random.randint(2, 20)),
-            )
-
-
 def reset_cursor_usage_runtime_for_tests() -> None:
     """Test helper — clear module state."""
-    global _ROSTER, _CYCLE_GROSS, _SPEND_CAPS, _MODEL_USERS_TODAY, _ROSTER_SEEDED
+    global _ROSTER, _MODEL_USERS_TODAY, _ROSTER_SEEDED
     global _OPEN_CONVERSATIONS, _USAGE_DAY, _CONVERSATIONS_STARTED_TODAY
     global _EVENTS_EMITTED_TODAY, _EVENTS_BY_USER_TODAY
     global _ORG_POOL_LIMIT_USD, _ORG_POOL_USAGE_USD, _ORG_POOL_SEEDED
-    global _SURFACE_USERS_TODAY, _SOFT_ACTIVE_TODAY, _SOFT_ACTIVE_DECIDED, _ADOPTION_BACKFILLED
+    global _SURFACE_USERS_TODAY, _SOFT_ACTIVE_TODAY, _SOFT_ACTIVE_DECIDED, _BRIEF_EXTRA_DAY
+    global _DAY_MULT
     from sim.cursor.usage_v2.collector import reset_cursor_usage_collector_for_tests
 
     _ROSTER = None
-    _CYCLE_GROSS = {}
-    _SPEND_CAPS = {}
     _MODEL_USERS_TODAY = {}
     _ROSTER_SEEDED = False
     _ORG_POOL_LIMIT_USD = None
@@ -1841,5 +1791,6 @@ def reset_cursor_usage_runtime_for_tests() -> None:
     _SURFACE_USERS_TODAY = {}
     _SOFT_ACTIVE_TODAY = set()
     _SOFT_ACTIVE_DECIDED = False
-    _ADOPTION_BACKFILLED = False
+    _BRIEF_EXTRA_DAY = ""
+    _DAY_MULT = 1.0
     reset_cursor_usage_collector_for_tests()

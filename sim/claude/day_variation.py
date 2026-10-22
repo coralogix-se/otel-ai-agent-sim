@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 
 from sim.common.day_variation import daily_activity_multiplier, date_unit_interval
-from sim.common.env import _env_bool, _env_float
+from sim.common.env import _env_bool, _env_float, _env_int
 
 # Re-export for existing imports/tests.
 claude_date_unit_interval = date_unit_interval
@@ -38,14 +38,22 @@ def claude_activity_multiplier(*, when: datetime | None = None) -> float:
     return claude_daily_multiplier(now.date()) * claude_hourly_shape(now.hour)
 
 
-def claude_peak_active_user_frac() -> float:
-    return min(1.0, max(0.05, _env_float("SIM_CLAUDE_PEAK_ACTIVE_USER_FRAC", 0.25)))
+def claude_daily_sessions() -> float:
+    """Sessions on a day with daily multiplier 1.0; drives slot pacing and the per-session cost/token split."""
+    return max(1.0, _env_float("SIM_CLAUDE_DAILY_SESSIONS", 2100.0))
 
 
-def claude_target_emit_count(n_slots: int) -> int:
-    if n_slots <= 0:
-        return 0
-    if not _env_bool("SIM_CLAUDE_ACTIVITY_PACING", True):
-        return n_slots
-    target = int(round(n_slots * claude_peak_active_user_frac() * claude_activity_multiplier()))
-    return max(1, min(n_slots, target))
+def claude_session_turns() -> int:
+    return max(1, _env_int("SIM_CLAUDE_SESSION_TURNS_EXPECTED", 6))
+
+
+def claude_session_starts_per_cycle() -> float:
+    """Expected new sessions this cycle; each runs its turns one per cycle, so live ≈ this × turns."""
+    cycles_per_hour = 3600.0 / max(1.0, _env_float("TRACE_INTERVAL_SEC", 3.0))
+    shape_hours = sum(claude_hourly_shape(h) for h in range(24))
+    return claude_daily_sessions() * claude_activity_multiplier() / (shape_hours * cycles_per_hour)
+
+
+def claude_whale_session_weight() -> float:
+    """How much likelier a top spender is to start the next session than any other user."""
+    return max(1.0, _env_float("SIM_CLAUDE_WHALE_SESSION_WEIGHT", 4.0))

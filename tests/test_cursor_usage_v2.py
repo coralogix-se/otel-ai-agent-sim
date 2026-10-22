@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
 from prometheus_client import CollectorRegistry, generate_latest
 
 from sim.cursor.usage_v2.collector import register_cursor_usage_metrics
@@ -17,6 +18,11 @@ from sim.cursor.usage_v2.runtime import (
     reset_cursor_usage_runtime_for_tests,
     _roster,
 )
+
+
+@pytest.fixture(autouse=True)
+def _expose_every_scrape(monkeypatch) -> None:
+    monkeypatch.setenv("SIM_CURSOR_USAGE_SAMPLE_ALWAYS", "true")
 
 
 def _users_by_surface(payload: bytes) -> dict[str, set[str]]:
@@ -51,6 +57,9 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
     monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", "1")
     monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", "1")
     monkeypatch.setenv("SIM_CURSOR_USAGE_VOLUME", "1")
+    # Sticky per-series sampling would drop most series from a single 12-event cycle.
+    monkeypatch.setenv("SIM_CURSOR_USAGE_FULL_CARDINALITY", "true")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_SAMPLE_ALWAYS", "true")
 
     registry = CollectorRegistry()
     register_cursor_usage_metrics(registry)
@@ -101,7 +110,8 @@ def test_emit_cycle_exposes_p0_cursor_usage_gauges(monkeypatch) -> None:
     pool_limit_lines = _metric_lines(payload, "cursor_org_pool_limit_usd")
     assert pool_limit_lines
     limit_val = float(pool_limit_lines[0].rsplit(" ", 1)[-1])
-    assert abs(limit_val - 129_000 * 52) < 1.0
+    # Pool gauges carry the brief value scale (scales.py).
+    assert abs(limit_val - 129_000 * 52 * 0.0345) < 1.0
     usage_lines = _metric_lines(payload, "cursor_org_pooled_usage_usd")
     assert any(
         'organization="coralogix"' in line
@@ -398,9 +408,12 @@ def test_idle_seats_and_surface_user_diversity(monkeypatch) -> None:
 
     by_surface = _users_by_surface(payload)
     chart_counts = {s: len(by_surface.get(s, set())) for s in ("agent", "chat", "composer", "cmdk", "bugbot")}
-    assert chart_counts["agent"] > chart_counts["composer"] > chart_counts["chat"]
-    assert chart_counts["cmdk"] < chart_counts["chat"]
-    assert chart_counts["bugbot"] < chart_counts["cmdk"]
+    # Requests land only on a member's own surfaces; the burst is random, so compare to adoption sets.
+    for surface, users in by_surface.items():
+        owners = {m.email for m in roster if surface in m.surfaces}
+        assert users <= owners, surface
+    assert chart_counts["cmdk"] < chart_counts["agent"]
+    assert chart_counts["bugbot"] < chart_counts["agent"]
     assert len(set(chart_counts.values())) > 1
 
 
@@ -441,17 +454,17 @@ def test_conversation_ids_reused_across_events(monkeypatch) -> None:
     conv_ids: set[str] = set()
     event_lines = _metric_lines(payload, "cursor_events_total")
     assert event_lines, "expected cursor_events_total samples"
-    total_events = 0.0
     for line in event_lines:
         conv_ids.add(line.split('conversation_id="', 1)[1].split('"', 1)[0])
-        total_events += float(line.rsplit(" ", 1)[-1])
 
+    from sim.cursor.usage_v2 import runtime as rt
+
+    # Sample values carry the brief scale, so count events from the runtime.
+    total_events = rt._EVENTS_EMITTED_TODAY
     assert total_events >= 20
     # Many events must share conversation_ids (≈20–40 events each, not ~1:1).
     assert len(conv_ids) <= max(1, int(total_events / 15))
     assert len(conv_ids) < total_events / 10
-
-    from sim.cursor.usage_v2 import runtime as rt
 
     assert rt._CONVERSATIONS_STARTED_TODAY <= 400
     assert rt._EVENTS_EMITTED_TODAY >= 20
@@ -479,3 +492,37 @@ def test_daily_conversation_budget_caps_cardinality(monkeypatch) -> None:
     assert rt._CONVERSATIONS_STARTED_TODAY <= 12
     # After budgets fill, further cycles should keep reusing open sessions / stop.
     assert rt._CONVERSATIONS_STARTED_TODAY >= 1
+
+
+def test_daily_heavy_conversation_and_limited_seats(monkeypatch) -> None:
+    reset_cursor_usage_runtime_for_tests()
+    monkeypatch.setenv("SIM_CURSOR_USAGE_ROSTER_SIZE", "20")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EMITS_PER_CYCLE", "40")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MIN", "5")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_EVENTS_PER_CONV_MAX", "10")
+    monkeypatch.setenv("SIM_CURSOR_USAGE_SAMPLE_ALWAYS", "true")
+
+    registry = CollectorRegistry()
+    register_cursor_usage_metrics(registry)
+    now = datetime(2026, 8, 28, 23, 0, tzinfo=timezone.utc)
+    for _ in range(40):
+        emit_cursor_usage_cycle(now=now)
+    payload = generate_latest(registry)
+
+    cost_by_conversation: dict[str, float] = {}
+    for line in _metric_lines(payload, "cursor_event_cost_usd"):
+        conversation_id = line.split('conversation_id="', 1)[1].split('"', 1)[0]
+        cost_by_conversation[conversation_id] = cost_by_conversation.get(
+            conversation_id, 0.0
+        ) + float(line.rsplit(" ", 1)[-1])
+    assert any(cost >= 100.0 for cost in cost_by_conversation.values())
+
+    gross = {
+        line.split('email="', 1)[1].split('"', 1)[0]: float(line.rsplit(" ", 1)[-1])
+        for line in _metric_lines(payload, "cursor_member_spend_gross_usd")
+    }
+    limits = {
+        line.split('email="', 1)[1].split('"', 1)[0]: float(line.rsplit(" ", 1)[-1])
+        for line in _metric_lines(payload, "cursor_member_effective_limit_usd")
+    }
+    assert sum(1 for email, spend in gross.items() if spend >= limits[email]) == 2

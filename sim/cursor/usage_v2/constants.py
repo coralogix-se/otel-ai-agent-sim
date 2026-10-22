@@ -339,10 +339,10 @@ def cursor_usage_events_per_user_day_max() -> int:
 def cursor_usage_idle_seats() -> int:
     from sim.common.env import _env_int
 
-    return max(0, min(4, _env_int("SIM_CURSOR_USAGE_IDLE_SEATS", 2)))
+    return max(0, min(100, _env_int("SIM_CURSOR_USAGE_IDLE_SEATS", 2)))
 
 
 def cursor_usage_stale_client_seats() -> int:
     from sim.common.env import _env_int
 
-    return max(0, min(4, _env_int("SIM_CURSOR_USAGE_STALE_CLIENT_SEATS", 2)))
+    return max(0, min(100, _env_int("SIM_CURSOR_USAGE_STALE_CLIENT_SEATS", 2)))
