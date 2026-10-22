@@ -34,18 +34,76 @@ def test_team_subsystem_stable(monkeypatch: pytest.MonkeyPatch) -> None:
     assert a in {"team1", "team2", "team3", "team4", "team5", "enterprise"}
 
 
-def test_token_parts_mix(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SIM_CLAUDE_SESSION_TOKENS_TOTAL", "3700000")
-    monkeypatch.setenv("SIM_CLAUDE_SESSION_TURNS_EXPECTED", "6")
-    parts = se.claude_session_token_parts("tok-mix", turns_expected=6)
-    total = sum(parts.values())
-    assert parts["cacheRead"] > parts["cacheCreation"] > parts["output"]
-    assert parts["cacheRead"] / total > 0.9
-
-
-def test_models_two_or_three_per_session() -> None:
+def test_models_primary_plus_optional_haiku() -> None:
     models = se.claude_session_models("model-sess")
-    assert 2 <= len(models) <= 3
+    assert 1 <= len(models) <= 2
+    assert models[1:] in ([], ["claude-haiku-4-5"])
+
+
+def test_emit_cycles_give_six_turns_then_reap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drive the app's slot loop: one turn per live session per cycle, end at 6, series gone after the TTL."""
+    app = pytest.importorskip("app")
+    from types import SimpleNamespace
+
+    from prometheus_client import CollectorRegistry, Counter
+
+    for key, value in {
+        "SIM_CLAUDE_ALIGN_PRODUCTS_ROSTER": "true",
+        "SIM_PRODUCTS_ROSTER_SIZE": "24",
+        "SIM_CLAUDE_OTEL_ONLY_ROSTER_SIZE": "76",
+        "SIM_CLAUDE_LONG_SESSION_SEC_MIN": "300",
+        "SIM_CLAUDE_LONG_SESSION_SEC_MAX": "420",
+        "SIM_CLAUDE_SESSION_ID_ROTATE_SEC_MIN": "3600",
+        "SIM_CLAUDE_SESSION_ID_ROTATE_SEC_MAX": "3600",
+        "SIM_CLAUDE_SESSION_PROMPTS_MIN": "6",
+        "SIM_CLAUDE_SESSION_PROMPTS_MAX": "6",
+        "SIM_CLAUDE_SESSION_TURNS_EXPECTED": "6",
+        "SIM_CLAUDE_ACTIVITY_PACING": "true",
+        "SIM_CLAUDE_DAY_VARIATION": "false",
+        "SIM_CLAUDE_HOURLY_SHAPE": "false",
+        "SIM_CLAUDE_DAILY_SESSIONS": "2100",
+        "SIM_CLAUDE_TOP_SPENDER_INDICES": "17,14,3",
+        "TRACE_INTERVAL_SEC": "60",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(app, "_cc_live_slots", set())
+    monkeypatch.setattr(app, "_cc_slot_users", [])
+    monkeypatch.setattr(app, "_cc_user_session_ids", {})
+    monkeypatch.setattr(app, "_cc_start_carry", 0.0)
+    clock = SimpleNamespace(now=0.0)
+    monkeypatch.setattr(se, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    metric = Counter("sim_test_turns", "turns", ["session_id"], registry=CollectorRegistry())
+
+    turns: dict[str, int] = {}
+    last_cycle: dict[str, int] = {}
+    for cycle in range(20):
+        clock.now = cycle * 60.0
+        se.claude_reap_idle_sessions()
+        live_before = {sid for sid, n in turns.items() if n < 6}
+        started = 0
+        emitted = set()
+        for user in app._claude_roster_users_for_claude_code_emit():
+            sid = app._claude_session_id_for_roster_user(user)
+            started += sid not in turns
+            se.claude_session_note_turn(sid)
+            metric.labels(session_id=sid).inc()
+            se.claude_session_track_series(sid, metric, {"session_id": sid})
+            app._claude_note_session_user_prompt(user)
+            turns[sid] = turns.get(sid, 0) + 1
+            last_cycle[sid] = cycle
+            emitted.add(sid)
+        # 2100 sessions / 1440 cycles ≈ 1.46 starts per cycle → 8–9 live after warm-up.
+        assert started <= 2
+        if cycle >= 6:
+            assert 8 <= len(emitted) <= 9
+        assert live_before <= emitted
+        exported = {sample.labels["session_id"] for sample in metric.collect()[0].samples}
+        reaped = {sid for sid, c in last_cycle.items() if (cycle - c) * 60 >= 150}
+        assert not exported & reaped
+        assert exported >= emitted
+
+    assert max(turns.values()) == 6
+    assert sum(n == 6 for n in turns.values()) >= 18
 
 
 def test_duplicate_token_metric_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:

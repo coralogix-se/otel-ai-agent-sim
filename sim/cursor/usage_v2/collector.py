@@ -805,11 +805,6 @@ class CursorUsageCollector(Collector):
             return
         from sim.cursor.usage_v2.scales import cursor_scale_amount, cursor_should_emit_series
 
-        if not cursor_should_emit_series(name):
-            return
-        amount = cursor_scale_amount(name, amount)
-        if amount == 0:
-            return
         spec = _SPEC_BY_NAME.get(name)
         if spec is None or spec.kind != "delta":
             raise ValueError(f"unknown delta metric: {name}")
@@ -817,15 +812,17 @@ class CursorUsageCollector(Collector):
         if missing:
             raise ValueError(f"{name} missing labels: {missing}")
         key = (name, _label_key({k: labels[k] for k in spec.labelnames}))
+        if not cursor_should_emit_series(name, key):
+            return
+        amount = cursor_scale_amount(name, amount)
+        if amount == 0:
+            return
         with self._lock:
             self._deltas[key] += float(amount)
 
     def set_snapshot(self, name: str, labels: dict[str, str], value: float) -> None:
         from sim.cursor.usage_v2.scales import cursor_scale_amount, cursor_should_emit_series
 
-        if not cursor_should_emit_series(name):
-            return
-        value = cursor_scale_amount(name, value)
         spec = _SPEC_BY_NAME.get(name)
         if spec is None or spec.kind != "snapshot":
             raise ValueError(f"unknown snapshot metric: {name}")
@@ -833,6 +830,9 @@ class CursorUsageCollector(Collector):
         if missing:
             raise ValueError(f"{name} missing labels: {missing}")
         key = (name, _label_key({k: labels[k] for k in spec.labelnames}))
+        if not cursor_should_emit_series(name, key):
+            return
+        value = cursor_scale_amount(name, value)
         with self._lock:
             self._snapshots[key] = float(value)
 
@@ -842,11 +842,6 @@ class CursorUsageCollector(Collector):
             return
         from sim.cursor.usage_v2.scales import cursor_scale_amount, cursor_should_emit_series
 
-        if not cursor_should_emit_series(name):
-            return
-        amount = cursor_scale_amount(name, amount)
-        if amount == 0:
-            return
         spec = _SPEC_BY_NAME.get(name)
         if spec is None or spec.kind != "snapshot":
             raise ValueError(f"unknown snapshot metric for accrue: {name}")
@@ -854,6 +849,11 @@ class CursorUsageCollector(Collector):
         if missing:
             raise ValueError(f"{name} missing labels: {missing}")
         key = (name, _label_key({k: labels[k] for k in spec.labelnames}))
+        if not cursor_should_emit_series(name, key):
+            return
+        amount = cursor_scale_amount(name, amount)
+        if amount == 0:
+            return
         with self._lock:
             self._snapshots[key] = float(self._snapshots.get(key, 0.0)) + float(amount)
 

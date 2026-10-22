@@ -9,9 +9,17 @@ from __future__ import annotations
 import hashlib
 import os
 import random
+from datetime import datetime, timezone
 
+from sim.common.day_variation import date_unit_interval
 from sim.common.env import _env_float, _env_int
 
+_SEAT_PRICE_USD = 19.0
+_HEAVY_TOKEN_MULT = 100
+_DORMANT_TEAM = "legacy-tools"
+_TEAMS = ("engineering", "platform", "data", "security", "product")
+# Few IDEs/languages keep the per-IDE/per-language series count near the real tenant's.
+_IDE_BY_USER = ("vscode", "vscode", "intellij", "pycharm", "neovim")
 _FEATURES = (
     "agent_edit",
     "chat_inline",
@@ -19,7 +27,6 @@ _FEATURES = (
     "chat_panel_ask_mode",
     "code_completion",
 )
-_IDES = ("intellij", "neovim", "pycharm", "rustrover", "vscode", "webstorm", "zed")
 _PHASES = ("No Cohort", "Phase 1", "Phase 3")
 _COMMENT_TYPES = (
     "accessibility",
@@ -30,11 +37,40 @@ _COMMENT_TYPES = (
     "performance",
     "spelling",
 )
-_LANGUAGES = ("Python", "TypeScript", "Go", "Java", "Rust", "Ruby", "jsonc", "YAML")
+_LANGUAGES = ("Python", "TypeScript", "Go", "Java", "Rust", "Ruby")
 
 
-def _pick(items: tuple[str, ...]) -> str:
-    return random.choice(items)
+def _stable_hash(*parts: str) -> int:
+    return int(hashlib.sha256(":".join(parts).encode()).hexdigest()[:8], 16)
+
+
+def copilot_user_bucket(purpose: str, login: str) -> int:
+    """Stable 0-99 bucket per user and purpose, so a user's role never drifts between restarts."""
+    return _stable_hash("copilot", purpose, login) % 100
+
+
+def copilot_seat_profile(login: str) -> str:
+    """``heavy`` (one token outlier), ``idle`` (unused seat) or ``active``."""
+    bucket = copilot_user_bucket("seat", login)
+    if bucket == 0:
+        return "heavy"
+    return "idle" if bucket <= 40 else "active"
+
+
+def copilot_token_mult(login: str) -> int:
+    return _HEAVY_TOKEN_MULT if copilot_seat_profile(login) == "heavy" else 1
+
+
+def copilot_default_model() -> str:
+    return os.environ.get("SIM_COPILOT_DEFAULT_MODEL", "claude-sonnet-4-6").strip() or "claude-sonnet-4-6"
+
+
+def copilot_user_language(user_l: dict[str, str]) -> str:
+    return _LANGUAGES[_stable_hash("language", _user_id_for(user_l)) % len(_LANGUAGES)]
+
+
+def _copilot_user_ide(user_l: dict[str, str]) -> str:
+    return _IDE_BY_USER[_stable_hash("ide", _user_id_for(user_l)) % len(_IDE_BY_USER)]
 
 
 def _user_id_for(user_l: dict[str, str]) -> str:
@@ -63,7 +99,6 @@ def emit_copilot_extra_session(
     *,
     org: str,
     user_l: dict[str, str],
-    model: str,
     generations: int,
     acceptances: int,
     interactions: int,
@@ -72,11 +107,17 @@ def emit_copilot_extra_session(
     loc_suggested: int,
 ) -> None:
     """Increment brief §7 Add counters for one session."""
-    feature = _pick(_FEATURES)
-    # Prefer vscode for CLI sim traffic; still emit other IDEs for cardinality.
-    ide = "vscode" if random.random() < 0.55 else _pick(_IDES)
-    language = _pick(_LANGUAGES)
+    today = datetime.now(timezone.utc).date().isoformat()
+    feature = _FEATURES[_stable_hash("feature", org, today) % len(_FEATURES)]
+    ide = _copilot_user_ide(user_l)
+    language = copilot_user_language(user_l)
+    model = copilot_default_model()
     u = _user_ext(user_l)
+    # Only a fraction of users get the per-dimension breakdown series (keeps series near the real tenant's).
+    breakdown = copilot_user_bucket("breakdown", u["user_login"]) < _env_float(
+        "SIM_COPILOT_USER_BREAKDOWN_FRAC", 0.2
+    ) * 100
+    user_breakdown_inc = collector._inc_counter if breakdown else (lambda *_: None)
 
     # Org activity_count by_* (★ generation/acceptance already renamed on primary handles).
     if generations:
@@ -100,22 +141,22 @@ def emit_copilot_extra_session(
             {"organization": org, "model": model, "feature": feature},
             generations,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_code_generation_activity_count_by_feature",
             {**u, "feature": feature},
             generations,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_code_generation_activity_count_by_ide",
             {**u, "ide": ide},
             generations,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_code_generation_activity_count_by_language_feature",
             {**u, "language": language, "feature": feature},
             generations,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_code_generation_activity_count_by_model_feature",
             {**u, "model": model, "feature": feature},
             generations,
@@ -137,29 +178,29 @@ def emit_copilot_extra_session(
             {"organization": org, "language": language, "feature": feature},
             acceptances,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_code_acceptance_activity_count_by_feature",
             {**u, "feature": feature},
             acceptances,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_code_acceptance_activity_count_by_ide",
             {**u, "ide": ide},
             acceptances,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_code_acceptance_activity_count_by_language_feature",
             {**u, "language": language, "feature": feature},
             acceptances,
         )
 
     if interactions:
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_user_initiated_interaction_count_by_feature",
             {**u, "feature": feature},
             interactions,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_user_initiated_interaction_count_by_ide",
             {**u, "ide": ide},
             interactions,
@@ -185,22 +226,22 @@ def emit_copilot_extra_session(
             {"organization": org, "model": model, "feature": feature},
             loc_added,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_added_sum_by_feature",
             {**u, "feature": feature},
             loc_added,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_added_sum_by_ide",
             {**u, "ide": ide},
             loc_added,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_added_sum_by_language_feature",
             {**u, "language": language, "feature": feature},
             loc_added,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_added_sum_by_model_feature",
             {**u, "model": model, "feature": feature},
             loc_added,
@@ -223,17 +264,17 @@ def emit_copilot_extra_session(
         collector._inc_counter(
             "github_copilot_user_loc_deleted_sum", u, loc_deleted
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_deleted_sum_by_feature",
             {**u, "feature": feature},
             loc_deleted,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_deleted_sum_by_ide",
             {**u, "ide": ide},
             loc_deleted,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_deleted_sum_by_language_feature",
             {**u, "language": language, "feature": feature},
             loc_deleted,
@@ -258,17 +299,17 @@ def emit_copilot_extra_session(
         collector._inc_counter(
             "github_copilot_user_loc_suggested_to_add_sum", u, loc_suggested
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_suggested_to_add_sum_by_feature",
             {**u, "feature": feature},
             loc_suggested,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_suggested_to_add_sum_by_ide",
             {**u, "ide": ide},
             loc_suggested,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_suggested_to_add_sum_by_language_feature",
             {**u, "language": language, "feature": feature},
             loc_suggested,
@@ -296,23 +337,51 @@ def emit_copilot_extra_session(
             {"organization": org, "language": language, "feature": feature},
             loc_deleted,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_suggested_to_delete_sum", u, loc_deleted
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_suggested_to_delete_sum_by_feature",
             {**u, "feature": feature},
             loc_deleted,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_suggested_to_delete_sum_by_ide",
             {**u, "ide": ide},
             loc_deleted,
         )
-        collector._inc_counter(
+        user_breakdown_inc(
             "github_copilot_user_loc_suggested_to_delete_sum_by_language_feature",
             {**u, "language": language, "feature": feature},
             loc_deleted,
+        )
+
+
+def emit_copilot_team_membership(collector, *, org: str, user_l: dict[str, str], profile: str) -> None:
+    """★ user_team_membership — cxai labels: organization, team_id, team_slug, user_id, user_login.
+
+    ~3.3 teams per user; idle seats also join the dormant team so one team is mostly unused.
+    """
+    u = _user_ext(user_l)
+    login = u["user_login"] or "unknown"
+    n_teams = max(1, _env_int("SIM_COPILOT_TEAMS_PER_USER", 3)) + (
+        1 if copilot_user_bucket("teams", login) < 30 else 0
+    )
+    first_team = copilot_user_bucket("team-start", login) % len(_TEAMS)
+    slugs = [_TEAMS[(first_team + i) % len(_TEAMS)] for i in range(n_teams)]
+    if profile == "idle":
+        slugs[0] = _DORMANT_TEAM
+    for slug in slugs:
+        collector._set_gauge(
+            "github_copilot_user_team_membership",
+            {
+                "organization": org,
+                "team_id": str(10_000_000 + _stable_hash("team", org, slug) % 9_000_000),
+                "team_slug": slug,
+                "user_id": u["user_id"],
+                "user_login": login,
+            },
+            1.0,
         )
 
 
@@ -320,31 +389,11 @@ def emit_copilot_extra_gauges(
     collector,
     *,
     org: str,
-    user_l: dict[str, str],
     dau: int,
     wau: int,
     mau: int,
 ) -> None:
-    """Refresh brief §7 Add gauges (adoption, team membership, PR extras, monthly agent/chat)."""
-    u = _user_ext(user_l)
-    # ★ user_team_membership — cxai labels: organization, team_id, team_slug, user_id, user_login
-    n_teams = max(1, _env_int("SIM_COPILOT_TEAMS_PER_USER", 2))
-    login = u["user_login"] or "unknown"
-    for i in range(n_teams):
-        slug = ("engineering", "platform", "data", "security", "product")[i % 5]
-        team_id = str(10_000_000 + (hash(f"{org}:{slug}") % 9_000_000))
-        collector._set_gauge(
-            "github_copilot_user_team_membership",
-            {
-                "organization": org,
-                "team_id": team_id,
-                "team_slug": slug if i == 0 else f"team-{slug}",
-                "user_id": u["user_id"],
-                "user_login": login,
-            },
-            1.0,
-        )
-
+    """Refresh brief §7 Add gauges (adoption, PR extras, monthly agent/chat)."""
     # Adoption phases (~3 series).
     engaged = max(1.0, float(dau))
     collector._set_gauge(
@@ -400,47 +449,46 @@ def emit_copilot_extra_gauges(
         max(0.0, float(mau) * _env_float("SIM_COPILOT_MONTHLY_CHAT_FRAC", 0.04)),
     )
 
-    # PR extras (org-level).
-    if random.random() < 0.15:
-        collector._inc_counter(
-            "github_copilot_org_pull_requests_suggestions",
-            {"organization": org},
-            random.randint(1, 4),
-        )
-        collector._inc_counter(
-            "github_copilot_org_pull_requests_applied_suggestions",
-            {"organization": org},
-            random.randint(0, 2),
-        )
-        ct = _pick(_COMMENT_TYPES)
-        collector._inc_counter(
-            "github_copilot_org_pull_requests_copilot_suggestions_by_comment_type",
-            {"organization": org, "comment_type": ct},
-            random.randint(1, 3),
-        )
-        if random.random() < 0.4:
-            collector._inc_counter(
-                "github_copilot_org_pull_requests_copilot_applied_suggestions_by_comment_type",
-                {"organization": org, "comment_type": ct},
-                1,
-            )
-    if random.random() < 0.08:
+
+def emit_copilot_pr_gauges(collector, *, org: str) -> None:
+    """Daily PR values, set (not accumulated) each session so every PR metric has data every day.
+
+    Applied/suggested stays ~12%, below the code-reviewer-ROI insight's 20% floor.
+    """
+    day_factor = 0.8 + 0.4 * date_unit_interval()
+    suggestions = round(42 * day_factor)
+    applied = round(suggestions * 0.12)
+    created_by_copilot = round(13 * day_factor)
+    merged = round(21 * day_factor)
+    org_l = {"organization": org}
+    daily_values = {
+        "pull_requests_created": 38 * day_factor,
+        "pull_requests_reviewed": 24 * day_factor,
+        "pull_requests_merged": merged,
+        "pull_requests_created_by_copilot": created_by_copilot,
+        "pull_requests_reviewed_by_copilot": 9 * day_factor,
+        "pull_requests_copilot_suggestions": suggestions,
+        "pull_requests_copilot_applied_suggestions": applied,
+        "pull_requests_suggestions": suggestions,
+        "pull_requests_applied_suggestions": applied,
+        "pull_requests_median_minutes_to_merge": 240 * day_factor,
+        "pull_requests_median_minutes_to_merge_copilot_reviewed": 180 * day_factor,
+        "pull_requests_merged_reviewed_by_copilot": merged * 0.4,
+        "pull_requests_merged_created_by_copilot": created_by_copilot * 0.5,
+    }
+    for name, value in daily_values.items():
+        collector._set_gauge(f"github_copilot_org_{name}", org_l, float(round(value)))
+    for comment_type in _COMMENT_TYPES[:3]:
+        by_type = {"organization": org, "comment_type": comment_type}
         collector._set_gauge(
-            "github_copilot_org_pull_requests_median_minutes_to_merge_copilot_reviewed",
-            {"organization": org},
-            random.uniform(30.0, 2400.0),
+            "github_copilot_org_pull_requests_copilot_suggestions_by_comment_type",
+            by_type,
+            float(round(suggestions / 3)),
         )
-    if random.random() < 0.05:
-        collector._inc_counter(
-            "github_copilot_org_pull_requests_merged_reviewed_by_copilot",
-            {"organization": org},
-            1,
-        )
-    if random.random() < 0.02:
-        collector._inc_counter(
-            "github_copilot_org_pull_requests_merged_created_by_copilot",
-            {"organization": org},
-            1,
+        collector._set_gauge(
+            "github_copilot_org_pull_requests_copilot_applied_suggestions_by_comment_type",
+            by_type,
+            float(round(applied / 3)),
         )
 
 
@@ -455,14 +503,10 @@ def enrich_billing_families(
 ) -> list[tuple[str, dict[str, str], float]]:
     """Extra billing gauges (quantity/price) matching cxai unit_type labels."""
     unit_type = "ai-units" if "ai" in sku or sku.endswith("_unit") else "seats"
-    # Map enterprise/business SKUs to ai-unit style when configured.
     if sku in ("copilot_enterprise", "copilot_business"):
-        sku_out = os.environ.get("SIM_COPILOT_BILLING_QUANTITY_SKU", "copilot_ai_unit")
         unit_type = "ai-units"
-    else:
-        sku_out = sku
-    price = (gross_usd / quantity) if quantity > 0 else 19.0
-    labels = {"organization": organization, "sku": sku_out, "unit_type": unit_type}
+    price = _SEAT_PRICE_USD
+    labels = {"organization": organization, "sku": sku, "unit_type": unit_type}
     return [
         ("github_copilot_billing_discount_quantity", labels, quantity * 0.9),
         ("github_copilot_billing_gross_quantity", labels, quantity),

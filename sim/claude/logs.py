@@ -34,6 +34,7 @@ def _cc_claude_log_attributes_flat(
         "user.email": user_email,
         "terminal_type": str(base.get("terminal.type", "")),
         "event_name": event_name,
+        "event.name": event_name,
         "event_sequence": event_sequence,
         "event_timestamp": event_timestamp_iso,
     }
