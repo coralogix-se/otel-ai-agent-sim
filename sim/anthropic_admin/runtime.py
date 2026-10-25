@@ -236,16 +236,20 @@ _INSIGHT_TOOL_REJECTION_INDEX = 1
 
 
 def _insight_model_weights() -> dict[str, float]:
-    """Opus-family ≥60% of org spend (opus-spend-concentration)."""
+    """Opus-family ≈70% of org spend (opus-spend-concentration fires at ≥60%).
+
+    Weights are pick shares, not cost shares: an Opus emit costs ~$0.32 per unit volume vs
+    ~$0.34 for the non-Opus mix below, so 72% of picks lands ≈70% of actual cost.
+    """
     if not _env_bool("SIM_ANTHROPIC_INSIGHT_OPUS_CONCENTRATION", True):
         return _MODEL_WEIGHTS
     return {
-        "claude-opus-5": 0.35,
-        "claude-opus-4-8": 0.25,
-        "claude-sonnet-5": 0.15,
-        "claude-sonnet-4-6": 0.12,
-        "claude-haiku-4-5-20251001": 0.08,
-        "claude-fable-5": 0.05,
+        "claude-opus-5": 0.42,
+        "claude-opus-4-8": 0.30,
+        "claude-sonnet-5": 0.10,
+        "claude-sonnet-4-6": 0.08,
+        "claude-haiku-4-5-20251001": 0.06,
+        "claude-fable-5": 0.04,
     }
 
 
@@ -270,11 +274,16 @@ def _elapsed_day_fraction(now: datetime) -> float:
 
 
 def _top_spender_rank_target_usd(rank: int) -> float:
-    """Daily USD cap for a pinned top spender (#1 slightly above peers)."""
+    """Daily USD cap for a pinned top spender.
+
+    One whale: at the $2K default #1 caps at $3.7K and #2/#3 at $1.2K. With ~$245/day from the
+    other 21 users the 24-user average is ~$265, so #1 ≈ 14× (user-cost-concentration fires
+    at ≥10×) and #2/#3 ≈ 4.5×; the org total stays near $6.3K/day.
+    """
     target = _top_spender_daily_usd_target()
     if target <= 0:
         return 0.0
-    return target * (1.05 if rank == 1 else 1.0)
+    return target * (1.85 if rank == 1 else 0.6)
 
 
 def _insight_user_volume_mult(
@@ -283,7 +292,7 @@ def _insight_user_volume_mult(
     now: datetime,
     accrued_usd: float = 0.0,
 ) -> float:
-    """Pace pinned top spenders toward ~$2K/day; mild afternoon spike for everyone else.
+    """Pace pinned top spenders toward their rank target; mild afternoon spike for everyone else.
 
     Returns ``0`` when the daily cap is already hit so callers can skip the emit.
     Catch-up is intentionally mild — prior 380–9000× multipliers overshot to ~$12K/user/day.
@@ -316,6 +325,19 @@ def _insight_tool_rejection_rate(roster_index: int) -> float:
     if roster_index == _INSIGHT_TOOL_REJECTION_INDEX:
         return _env_float("SIM_ANTHROPIC_INSIGHT_TOOL_REJECTION_RATE", 0.42)
     return 0.02
+
+
+def _seat_posture() -> tuple[int, int, int]:
+    """(seats assigned, pending invites, monthly active users) for the Claude Products seat insights.
+
+    Defaults fire low-product-adoption (60/160 = 37.5% < 40%), high-pending-invites
+    (28/160 = 17.5% > 15%) and low-stickiness (WAU 24 / MAU 60 = 40% < 50%). Seats are
+    licences, not ``ORG_ROLES`` members, so the governance member counts keep their values.
+    """
+    seats = max(1, _env_int("SIM_ANTHROPIC_SEATS_ASSIGNED", 160))
+    pending = max(0, _env_int("SIM_ANTHROPIC_PENDING_INVITES", 28))
+    monthly = min(seats, max(1, _env_int("SIM_ANTHROPIC_MONTHLY_ACTIVE_USERS", 60)))
+    return seats, pending, monthly
 
 
 def _cx_app() -> str:
@@ -1274,8 +1296,7 @@ class AnthropicAdminSim:
 
     def _refresh_seat_gauges(self) -> None:
         base = self._analytics_base()
-        seats = max(1, sum(n for _, n in ORG_ROLES))
-        pending = max(0, int(round(seats * 0.06)))
+        seats, pending, monthly_active = _seat_posture()
         self.seats_assigned.labels(**base).set(seats)
         self.pending_invites.labels(**base).set(pending)
         n_users = max(1, len(self.users))
@@ -1284,8 +1305,9 @@ class AnthropicAdminSim:
             email for email, _p in self._user_chats
         }
         daily_all = max(3, len(active_emails) or int(n_users * 0.45))
-        weekly_all = min(seats, max(daily_all, int(n_users * 0.75)))
-        monthly_all = min(seats, max(weekly_all, int(n_users * 0.9)))
+        # Every sim user is active within a week; the monthly pool adds seat holders not seen this week.
+        weekly_all = min(seats, max(daily_all, n_users))
+        monthly_all = min(seats, max(weekly_all, monthly_active))
         by_product = {
             "all": (daily_all, weekly_all, monthly_all),
             "claude_code": (max(2, daily_all // 2), max(4, weekly_all // 2), max(6, monthly_all // 2)),
@@ -1574,8 +1596,7 @@ class AnthropicAdminSim:
                 },
             )
 
-        seats = max(1, sum(n for _, n in ORG_ROLES))
-        pending = max(0, int(round(seats * 0.06)))
+        seats, pending, monthly_active = _seat_posture()
         summary: dict[str, object] = {
             "assigned_seat_count": seats,
             "pending_invite_count": pending,
@@ -1588,8 +1609,8 @@ class AnthropicAdminSim:
         }
         n_users = max(1, len(self.users))
         daily_all = max(3, int(n_users * 0.45))
-        weekly_all = min(seats, max(daily_all, int(n_users * 0.75)))
-        monthly_all = min(seats, max(weekly_all, int(n_users * 0.9)))
+        weekly_all = min(seats, max(daily_all, n_users))
+        monthly_all = min(seats, max(weekly_all, monthly_active))
         window_vals = {"daily": daily_all, "weekly": weekly_all, "monthly": monthly_all}
         product_share = {
             "": 1.0,

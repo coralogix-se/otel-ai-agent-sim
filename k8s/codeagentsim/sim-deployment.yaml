@@ -428,8 +428,8 @@ spec:
             # ``claude_code.user_prompt`` logs with ``prompt`` + ``claude_code.api_response_body``.
             # Default repo mix (non-rogue): ~90% managed, ~10% unmanaged (``SIM_CLAUDE_*_REPO_FRAC``).
             # All sessions emit linkable ``org/repo`` names on ``claude_code_session_repo_info`` (no ``unknown``).
-            # Managed = repos in GitHub integration scan (``GetScan``), not all coralogix/* on GitHub.
-            # obdev scan (2026-06): ``coralogix/cxai-observability-demo-playground`` only.
+            # Managed = repos matching the tenant's managed repo prefixes in AI Center repo settings.
+            # Eight managed repos weighted 30/20/14/10/8/7/6/5 % by list order (sim/common/repos.py).
             # Whales: ~13% of daily cost each (≥12× the per-user average); #1 is the unmanaged-repo rogue.
             # Whales start sessions 3× as often (SIM_CLAUDE_WHALE_SESSION_WEIGHT); 10% of their sessions are
             # heavy ($100–150, SIM_CLAUDE_HEAVY_SESSION_*) ≈ 5/day, >10× the average session cost.
@@ -450,7 +450,7 @@ spec:
             - name: SIM_CLAUDE_ROGUE_USER_TOKEN_MULT_MAX
               value: "1.8"
             - name: SIM_CLAUDE_ORG_REPOS
-              value: "coralogix/cxai-observability-demo-playground"
+              value: "coralogix/cxai-observability-demo-playground,coralogix/ai-center-frontend,coralogix/otel-collector-contrib,coralogix/llm-tracekit,coralogix/ai-span-tagger,coralogix/guardrail-service,coralogix/dataprime-engine,coralogix/infra-terraform"
             # Background unmanaged traffic for unmanagedRepoSpend (>10% of total tokens).
             - name: SIM_CLAUDE_UNMANAGED_REPO_FRAC
               value: "0.15"
@@ -461,6 +461,12 @@ spec:
               value: "17"
             - name: SIM_CLAUDE_HEAVY_SESSION_TOKEN_MULT
               value: "1.5"
+            # heavySessions: the #1 whale's first 2 sessions each UTC day cost $270 ≈ 15.5M tokens
+            # (≥ 10× the session average and ≥ 5M).
+            - name: SIM_CLAUDE_TOKEN_HEAVY_SESSIONS_PER_DAY
+              value: "2"
+            - name: SIM_CLAUDE_TOKEN_HEAVY_SESSION_COST_USD
+              value: "270"
             # - name: SIM_FORCE_AGENT
             #   value: claude_code
             # - name: SIM_FORCE_AGENT

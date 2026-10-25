@@ -10,69 +10,34 @@ import re
 from sim.common.env import _env_float, _env_int
 from sim.common.identity import _CORALOGIX_TEAM_USERS
 
-# Managed repos: must appear in the tenant GitHub integration scan (``ScansService/GetScan``),
-# not merely exist in the Coralogix GitHub org. cx498 classifies managed vs unmanaged by matching
-# ``repository_name`` / ``github.copilot.git.repository`` against that scan set (full name or bare repo).
-# onlineboutique-dev / obdev scan (2026-06-23 HAR): only this repo is in the scan today.
-# Override with ``SIM_CLAUDE_ORG_REPOS`` (comma-separated).
+# Managed repos: classified by the tenant's managed repo prefixes in AI Center repo settings
+# (``classifyRepo`` matches full ``org/repo`` or a prefix such as ``coralogix``).
+# Override with ``SIM_CLAUDE_ORG_REPOS`` (comma-separated); weights follow list order.
 _DEFAULT_ORG_REPOS: tuple[str, ...] = (
     "coralogix/cxai-observability-demo-playground",
+    "coralogix/ai-center-frontend",
+    "coralogix/otel-collector-contrib",
+    "coralogix/llm-tracekit",
+    "coralogix/ai-span-tagger",
+    "coralogix/guardrail-service",
+    "coralogix/dataprime-engine",
+    "coralogix/infra-terraform",
 )
+# Uneven shares so Repository Token Distribution shows a head and a tail, not one repo at ~98%.
+_ORG_REPO_WEIGHTS: tuple[int, ...] = (30, 20, 14, 10, 8, 7, 6, 5)
 
-# Fictional external / personal repos (unmanaged — not in org scan). Override with ``SIM_CLAUDE_UNMANAGED_REPOS``.
-# Brief §6 targets ~200 repository_name values on session_repo_info (c4c cardinality).
-_UNMANAGED_REPO_ORGS: tuple[str, ...] = (
-    "jchen",
-    "devkits",
-    "metrics",
-    "observability",
-    "labs",
-    "acme",
-    "northwind",
-    "fabrikam",
-    "contoso",
-    "globex",
-    "initech",
-    "umbrella",
-    "stark",
-    "wayne",
-    "oscorp",
-    "cyberdyne",
-    "tyrell",
-    "weyland",
-    "aperture",
-    "blackmesa",
+# External / personal repos (unmanaged). Override with ``SIM_CLAUDE_UNMANAGED_REPOS``.
+_UNMANAGED_REPOS: tuple[str, ...] = (
+    "jchen/dotfiles",
+    "acme/api-gateway",
+    "devkits/super-cli",
+    "northwind/data-pipeline",
+    "labs/multi-agent-runner",
+    "fabrikam/billing-service",
+    "observability/trace-profiler",
+    "globex/frontend-web",
 )
-_UNMANAGED_REPO_NAMES: tuple[str, ...] = (
-    "dotfiles",
-    "super-cli",
-    "collector-core",
-    "trace-profiler",
-    "multi-agent-runner",
-    "api-gateway",
-    "billing-service",
-    "auth-service",
-    "frontend-web",
-    "mobile-ios",
-    "mobile-android",
-    "data-pipeline",
-    "feature-flags",
-    "ml-ranking",
-    "search-index",
-    "notifications",
-    "payments",
-    "inventory",
-    "catalog",
-    "edge-proxy",
-)
-_UNMANAGED_REPOS: tuple[str, ...] = tuple(
-    f"{org}/{name}-{i:02d}"
-    for i, (org, name) in enumerate(
-        (o, n)
-        for o in _UNMANAGED_REPO_ORGS
-        for n in _UNMANAGED_REPO_NAMES
-    )
-)[:200]
+_UNMANAGED_REPO_WEIGHTS: tuple[int, ...] = (30, 20, 15, 10, 8, 7, 5, 5)
 
 # Roster indices pinned as “rogue” users: heavy unmanaged-repo use + elevated spend (stable across runs).
 # Default: products-roster index 17 (sam.martinez) — the #1 top spender / unmanaged-repo demo.
@@ -362,9 +327,14 @@ def _session_repo_rng(session_id: str) -> random.Random:
 
 def _pick_repo_name(repo_class: str, rng: random.Random) -> str:
     if repo_class == "managed":
-        return rng.choice(_parse_csv("SIM_CLAUDE_ORG_REPOS", _DEFAULT_ORG_REPOS))
-    # ``unmanaged`` and legacy ``unknown`` class both resolve to external org/repo names.
-    return rng.choice(_parse_csv("SIM_CLAUDE_UNMANAGED_REPOS", _UNMANAGED_REPOS))
+        repos = _parse_csv("SIM_CLAUDE_ORG_REPOS", _DEFAULT_ORG_REPOS)
+        weights = _ORG_REPO_WEIGHTS
+    else:
+        # ``unmanaged`` and legacy ``unknown`` class both resolve to external org/repo names.
+        repos = _parse_csv("SIM_CLAUDE_UNMANAGED_REPOS", _UNMANAGED_REPOS)
+        weights = _UNMANAGED_REPO_WEIGHTS
+    # Repos past the end of the weight list (env override) share the smallest weight.
+    return rng.choices(repos, weights=[weights[min(i, len(weights) - 1)] for i in range(len(repos))])[0]
 
 
 def sim_session_repository_names(
