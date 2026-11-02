@@ -1,7 +1,8 @@
 """Fixed-cardinality catalog for the OpenAI Administration / API Platform simulator.
 
-Contract (team, 2026-09-30): daily cost/usage gauges with ``date``, inventory
-restated without ``date``, models gpt-5.5-led, ~$700–1200/weekday.
+Contract (team, 2026-09-30; models refreshed 2026-11-02): daily cost/usage gauges
+with ``date``, inventory restated without ``date``, models gpt-6.1-sol-led,
+~$700–1200/weekday.
 
 Label / metric names match live OpenAI Administration exporter shapes (kb/eu2):
 ``organization`` on all series; cost includes key/user + org id/name; compliance
@@ -14,22 +15,23 @@ from __future__ import annotations
 import hashlib
 import os
 
-# FE-priced / tiered model ids (spend-weighted; gpt-5.5 ~65%).
+# FE-priced / tiered model ids (spend-weighted; GPT-6.1 Sol ~65%, Nov 2026).
+# GPT-5.5 / 5.4 retired from Copilot on 2026-10-19; Admin still bills current Sol tier.
 OPENAI_ADMIN_MODELS: tuple[str, ...] = (
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5-mini",
-    "gpt-4.1-mini",
+    "gpt-6.1-sol",
+    "gpt-6.1-terra",
+    "gpt-6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-luna",
 )
 
-# Spend share → expensive-model insight (≥60% on gpt-5.5).
+# Spend share → expensive-model insight (≥60% on flagship Sol).
 OPENAI_ADMIN_MODEL_SPEND_WEIGHTS: dict[str, float] = {
-    "gpt-5.5": 0.65,
-    "gpt-5.4": 0.15,
-    "gpt-5.4-mini": 0.10,
-    "gpt-5-mini": 0.06,
-    "gpt-4.1-mini": 0.04,
+    "gpt-6.1-sol": 0.65,
+    "gpt-6.1-terra": 0.15,
+    "gpt-6-luna": 0.10,
+    "gpt-5.6-sol": 0.06,
+    "gpt-5.6-luna": 0.04,
 }
 
 USAGE_COMPLETION_FIELDS: tuple[str, ...] = (
@@ -70,8 +72,8 @@ PLATFORM_FEATURE_MODELS: dict[str, tuple[str, ...]] = {
     "audio_speeches": ("gpt-4o-mini-tts", "tts-1-hd"),
     "audio_transcriptions": ("gpt-4o-transcribe", "whisper-1"),
     "moderations": ("omni-moderation-latest",),
-    "web_search": ("gpt-5.5", "gpt-5.4"),
-    "file_search": ("gpt-5.5", "gpt-5.4-mini"),
+    "web_search": ("gpt-6.1-sol", "gpt-6.1-terra"),
+    "file_search": ("gpt-6.1-sol", "gpt-6-luna"),
 }
 
 SERVICE_TIERS: tuple[str, ...] = ("default", "flex", "priority")

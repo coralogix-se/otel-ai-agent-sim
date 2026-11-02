@@ -37,7 +37,7 @@ def test_team_subsystem_stable(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_models_primary_plus_optional_haiku() -> None:
     models = se.claude_session_models("model-sess")
     assert 1 <= len(models) <= 2
-    assert models[1:] in ([], ["claude-haiku-4-5"])
+    assert models[1:] in ([], ["claude-haiku-5-5"])
 
 
 def test_emit_cycles_give_six_turns_then_reap(monkeypatch: pytest.MonkeyPatch) -> None:

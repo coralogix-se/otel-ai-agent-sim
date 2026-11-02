@@ -15,25 +15,26 @@ DEFAULT_TEAM_NAME = "Coralogix Engineering"
 # dmb-sm observed ~$129k / 7d (Sep 2026) → ~$6.71M / yr.
 DEFAULT_ORG_POOL_WEEKLY_USD = 129_000.0
 
+# Usage dashboard model labels (cursor.com/docs/models + Admin API shapes, Nov 2026).
 CURSOR_USAGE_MODELS: tuple[str, ...] = (
     "default",
-    "gpt-5.6-terra-high",
-    "cursor-grok-4.6-high",
-    "cursor-grok-4.6-high-fast",
-    "claude-sonnet-5-thinking-high",
+    "gpt-6.1-terra-high",
+    "cursor-grok-4.7-high",
+    "cursor-grok-4.7-high-fast",
+    "claude-sonnet-5-5-thinking-high",
     "cursor-grok-4.6-medium",
     "composer-2.5",
     "claude-sonnet-5-thinking-medium",
-    "claude-4.6-sonnet-medium-thinking",
-    "claude-4.5-opus-high-thinking",
+    "claude-sonnet-5-5-thinking-medium",
+    "claude-opus-5-5-thinking-high",
     "cursor-grok-4.5-high",
     "composer-2.5-fast",
     "claude-opus-5-thinking-high",
     "claude-opus-4-8-thinking-high",
-    "gpt-5.6-sol-high",
+    "gpt-6.1-sol-high",
     "cursor-grok-4.6-medium-fast",
     "gpt-5.6-sol-medium",
-    "claude-4.6-opus-high-thinking",
+    "claude-opus-5-5-thinking-medium",
 )
 
 # Weights tuned to cxai-dev ``cursor_events_total`` mix (7d window, Sep 2026).

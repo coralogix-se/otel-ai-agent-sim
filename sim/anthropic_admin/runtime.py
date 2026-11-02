@@ -210,12 +210,12 @@ ACTIVITY_LABELS = (
 
 _WEB_SEARCH_USD_EACH = 0.01
 _MODEL_WEIGHTS: dict[str, float] = {
-    "claude-sonnet-5": 0.34,
-    "claude-sonnet-4-6": 0.28,
-    "claude-haiku-4-5-20251001": 0.18,
-    "claude-opus-5": 0.10,
-    "claude-opus-4-8": 0.06,
-    "claude-fable-5": 0.04,
+    "claude-sonnet-5-5": 0.34,
+    "claude-sonnet-5": 0.22,
+    "claude-haiku-5-5": 0.18,
+    "claude-opus-5-5": 0.12,
+    "claude-opus-5": 0.08,
+    "claude-fable-5-1": 0.06,
 }
 _ACTIVITY_WEIGHTS: dict[str, float] = {
     "claude_chat_viewed": 0.40,
@@ -243,13 +243,15 @@ def _insight_model_weights() -> dict[str, float]:
     """
     if not _env_bool("SIM_ANTHROPIC_INSIGHT_OPUS_CONCENTRATION", True):
         return _MODEL_WEIGHTS
+    # Opus 5.5 is ~20% cheaper than Opus 5; keep Opus-family pick share high so
+    # cost concentration still fires near ≥60% of org spend.
     return {
-        "claude-opus-5": 0.42,
-        "claude-opus-4-8": 0.30,
-        "claude-sonnet-5": 0.10,
-        "claude-sonnet-4-6": 0.08,
-        "claude-haiku-4-5-20251001": 0.06,
-        "claude-fable-5": 0.04,
+        "claude-opus-5-5": 0.48,
+        "claude-opus-5": 0.24,
+        "claude-sonnet-5-5": 0.10,
+        "claude-sonnet-5": 0.08,
+        "claude-haiku-5-5": 0.06,
+        "claude-fable-5-1": 0.04,
     }
 
 

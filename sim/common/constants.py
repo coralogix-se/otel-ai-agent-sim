@@ -122,24 +122,26 @@ CLAUDE_CODE_SAMPLE_ASSISTANT_REPLIES = (
 # Dump pools + assert rates: ``python3 scripts/print_model_pools.py --check``.
 
 # Default when ``SIM_CLAUDE_MODEL`` unset and profile has no model.
-CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-5"
+# Anthropic API aliases resolve to Sonnet/Opus/Haiku 5.5 (checked 2026-11-02).
+# Daily-coding default is Sonnet 5.5; account ``default`` on API/Enterprise is Opus 5.5.
+CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-5-5"
 
 # Claude Code API model ids (https://code.claude.com/docs/en/model-config).
 # ``model`` on ``claude_code.api_request`` logs, Prometheus counters, and spans uses full ids
-# (e.g. ``claude-sonnet-5``), not ``/model`` aliases like ``sonnet``. ``SIM_CLAUDE_MODEL`` overrides.
-# Weighted toward Sonnet/Haiku for realistic spend; Opus 5 + Fable remain but are rare.
+# (e.g. ``claude-sonnet-5-5``), not ``/model`` aliases like ``sonnet``. ``SIM_CLAUDE_MODEL`` overrides.
+# Weighted toward current 5.5-family; keep a few 5.0 / Fable ids for mix realism.
 _CLAUDE_CODE_MODELS = (
+    "claude-sonnet-5-5",
+    "claude-sonnet-5-5",
+    "claude-sonnet-5-5",
     "claude-sonnet-5",
-    "claude-sonnet-5",
-    "claude-sonnet-5",
-    "claude-sonnet-5",
-    "claude-sonnet-4-6",
-    "claude-sonnet-4-5-20250929",
+    "claude-haiku-5-5",
+    "claude-haiku-5-5",
     "claude-haiku-4-5",
-    "claude-haiku-4-5",
-    "claude-haiku-4-5-20251001",
+    "claude-opus-5-5",
     "claude-opus-5",
     "claude-opus-4-8",
+    "claude-fable-5-1",
     "claude-fable-5",
 )
 
@@ -175,50 +177,46 @@ CODEX_SAMPLE_PROMPTS = (
     "optimize this hot loop for fewer allocations",
 )
 
-# Codex CLI default (https://developers.openai.com/codex/models — Power uses Sol).
-CODEX_DEFAULT_MODEL = "gpt-5.6-sol"
+# Codex CLI default (https://developers.openai.com/api/docs/pricing — GPT-6.1 Sol is current Power/Sol).
+CODEX_DEFAULT_MODEL = "gpt-6.1-sol"
 
-# Codex CLI pool: Astra (rare) + GPT-5.6 Sol / Terra / Luna.
-# gpt-5.5 retires from Codex on 2026-10-14; gpt-5.4 already retired from ChatGPT sign-in.
+# Codex CLI pool: Astra (rare) + GPT-6.1 Sol / Terra + GPT-6 Luna.
 CODEX_CLI_MODELS = (
-    "gpt-5.6-sol",
-    "gpt-5.6-sol",
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    "gpt-5.6-luna",
+    "gpt-6.1-sol",
+    "gpt-6.1-sol",
+    "gpt-6.1-sol",
+    "gpt-6.1-terra",
+    "gpt-6.1-terra",
+    "gpt-6-luna",
+    "gpt-6-luna",
     "gpt-6-astra",
 )
 
-# Cursor Composer: Cursor-native + API-pool models (https://cursor.com/docs/models).
+# Cursor Composer: Cursor-native + API-pool models (https://cursor.com/docs/models, Nov 2026).
 # ``composer-2.5-fast`` is the default interactive tier; ``composer-2.5`` is the standard tier.
+# Plus included pool: Grok 4.7 / 4.6 / 4.5 + Composer 2.5.
 CURSOR_DEFAULT_MODEL = "composer-2.5-fast"
 
 CURSOR_COMPOSER_MODELS = (
     "composer-2.5",
     "composer-2.5-fast",
     "composer-2.5-fast",
+    "grok-4.7",
     "grok-4.6",
     "grok-4.5",
+    "claude-sonnet-5-5",
     "claude-sonnet-5",
-    "claude-sonnet-4-6",
+    "claude-opus-5-5",
     "claude-opus-5",
-    "claude-opus-4-8",
-    "claude-haiku-4-5",
-    "claude-fable-5",
+    "claude-haiku-5-5",
+    "claude-fable-5-1",
     "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.1-pro",
+    "gemini-4-argon",
+    "gpt-6.1-sol",
+    "gpt-6.1-terra",
+    "gpt-6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "kimi-k2.7-code",
     "kimi-k3",
 )
 
@@ -344,49 +342,46 @@ COPILOT_CLI_SAMPLE_ASSISTANT_REPLIES = (
     "I'll run the linter and formatter on the touched packages before suggesting the final diff.",
 )
 
-# Copilot CLI (https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference).
-# Default is Claude Sonnet 4.6. Astra is opt-in, not the automatic default.
-# Kimi and Grok are Cursor models, not Copilot CLI.
-COPILOT_DEFAULT_MODEL = "claude-sonnet-4-6"
+# Copilot CLI (https://docs.github.com/en/copilot/reference/ai-models/supported-models, Nov 2026).
+# Current default / day-to-day coding: Claude Sonnet 5.5. Drop retired 4.6 / 5.4 / 5.5 OpenAI chat ids.
+COPILOT_DEFAULT_MODEL = "claude-sonnet-5-5"
 
 COPILOT_CLI_MODELS = (
-    "claude-sonnet-4-6",
-    "claude-sonnet-4-6",
-    "claude-sonnet-4-6",
-    "claude-haiku-4-5",
-    "claude-haiku-4-5",
-    "gpt-5.4-mini",
-    "gpt-5.4-mini",
+    "claude-sonnet-5-5",
+    "claude-sonnet-5-5",
+    "claude-sonnet-5-5",
+    "claude-sonnet-5",
+    "claude-haiku-5-5",
+    "claude-haiku-5-5",
+    "gpt-6.1-terra",
+    "gpt-6.1-terra",
+    "gpt-6-luna",
+    "gpt-6-luna",
+    "gpt-6.1-sol",
+    "gpt-6-sol",
+    "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
-    "gpt-5-mini",
-    "gpt-5.4",
-    "gpt-5.5",
-    "gpt-5.6-sol",
     "gpt-5.3-codex",
     "gpt-6-astra",
+    "claude-opus-5-5",
+    "claude-opus-5",
     "claude-opus-4-8",
-    "claude-opus-4-7",
+    "claude-fable-5-1",
     "claude-fable-5",
     "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.1-pro-preview",
+    "gemini-4-argon",
     "mai-code-1.1-flash",
-    "mai-code-1-flash",
 )
 
 # Gemini CLI (https://ai.google.dev/gemini-api/docs/pricing). Default is 3.8 Flash.
-# Gemma 4 has no paid API rate, so it is omitted.
+# Gemini 4 Argon intro through 2026-11-30. Gemma 4 has no paid API rate, so it is omitted.
 GEMINI_DEFAULT_MODEL = "gemini-3.8-flash"
 
 GEMINI_CLI_MODELS = (
     "gemini-3.8-flash",
     "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
+    "gemini-4-argon",
     "gemini-3-flash-preview",
     "gemini-3.1-flash-lite",
     "gemini-2.5-flash",

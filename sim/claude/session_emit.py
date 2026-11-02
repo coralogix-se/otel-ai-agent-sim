@@ -17,16 +17,16 @@ from sim.claude.day_variation import (
 )
 from sim.common.env import _env_bool, _env_float, _env_int
 
-_HAIKU = "claude-haiku-4-5"
+_HAIKU = "claude-haiku-5-5"
 
-# c4c-like model mix (brief §6). Weights sum to 100.
+# Current Anthropic API mix (checked 2026-11-02). Weights sum to 100.
 _MODEL_MIX: tuple[tuple[str, int], ...] = (
     ("claude-opus-5-5", 55),
     ("claude-fable-5-1", 19),
     ("claude-opus-5-5[1m]", 7),
     ("claude-sonnet-5-5", 6),
     ("claude-sonnet-5", 4),
-    ("claude-haiku-4-5", 4),
+    ("claude-haiku-5-5", 4),
     ("claude-opus-5", 3),
     ("claude-fable-5", 2),
 )

@@ -3,7 +3,7 @@
 Contract:
 - Cost/usage: one daily gauge bucket per ``date`` (backfill ≥28d; restamp today).
 - Inventory / compliance / spend limits: no ``date``; restated each cycle.
-- Models: gpt-5.5 (~65% spend), gpt-5.4, gpt-5.4-mini, gpt-5-mini, gpt-4.1-mini.
+- Models: gpt-6.1-sol (~65% spend), gpt-6.1-terra, gpt-6-luna, gpt-5.6-sol, gpt-5.6-luna.
 - Weekday ~$700–1200 / ~270M in / ~30M out / ~150k requests; weekend ×0.6.
 - Labels match live OpenAI Administration exporter (kb): ``organization`` everywhere;
   cost carries key/user + org id/name; compliance metric names without ``project_`` prefix.

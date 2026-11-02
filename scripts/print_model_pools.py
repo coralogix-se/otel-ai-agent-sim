@@ -61,56 +61,46 @@ DEFAULTS: dict[str, str] = {
     "cursor": CURSOR_DEFAULT_MODEL,
     "copilot": COPILOT_DEFAULT_MODEL,
     "gemini": GEMINI_DEFAULT_MODEL,
-    "anthropic_admin": "claude-sonnet-5",
+    "anthropic_admin": "claude-sonnet-5-5",
 }
 
 # Glasswing / limited — must stay out of general Claude pool.
-EXCLUDED_FROM_CLAUDE_POOL = ("claude-mythos-5",)
+EXCLUDED_FROM_CLAUDE_POOL = ("claude-mythos-5", "claude-mythos-5-1")
 
 # Vendor list rates the sim should charge (input, output) USD per 1M tokens.
-# Sonnet 5: $2/$10 is standard (Anthropic, Sep 2026). GPT-5.6 Sol: promo $4/$20 through ≥2026-11-21.
+# Checked 2026-11-02 against Anthropic / OpenAI / Google / Cursor docs.
+# Opus 5.5 $4/$20; Sonnet 5.5 $2/$10; Haiku 5.5 $0.10/$0.50; GPT-6.1 Sol $2/$10;
+# GPT-5.6 Sol promo $4/$20 through ≥2026-11-21; Gemini 3.8 Flash intro $0.75/$3.75 through 2026-12-31.
 EXPECTED_RATES: dict[str, tuple[float, float]] = {
     "claude-fable-5": (10.0, 50.0),
+    "claude-fable-5-1": (10.0, 50.0),
     "claude-sonnet-5": (2.0, 10.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-opus-5-5": (4.0, 20.0),
     "claude-opus-5": (5.0, 25.0),
     "claude-opus-4-8": (5.0, 25.0),
-    "claude-opus-4-7": (5.0, 25.0),
-    "claude-opus-4-7": (5.0, 25.0),
-    "claude-opus-4-6": (5.0, 25.0),
-    "claude-sonnet-4-6": (3.0, 15.0),
-    "claude-sonnet-4-5": (3.0, 15.0),
-    "claude-sonnet-4-5-20250929": (3.0, 15.0),
+    "claude-haiku-5-5": (0.10, 0.50),
     "claude-haiku-4-5": (1.0, 5.0),
-    "claude-haiku-4-5-20251001": (1.0, 5.0),
     "gpt-6-astra": (10.0, 50.0),
+    "gpt-6.1-sol": (2.0, 10.0),
+    "gpt-6.1-terra": (1.0, 5.0),
+    "gpt-6-sol": (2.0, 10.0),
+    "gpt-6-luna": (0.10, 0.50),
     "gpt-5.6": (4.0, 20.0),
     "gpt-5.6-sol": (4.0, 20.0),
     "gpt-5.6-terra": (2.0, 12.0),
     "gpt-5.6-luna": (0.20, 1.20),
-    "gpt-5.5": (5.0, 30.0),
-    "gpt-5.4": (2.50, 15.0),
-    "gpt-5.4-mini": (0.75, 4.50),
-    "gpt-5-mini": (0.25, 2.00),
-    "gpt-5.4-nano": (0.20, 1.25),
     "gpt-5.3-codex": (1.75, 14.0),
-    "gpt-5-codex": (1.75, 14.0),
+    "gemini-4-argon": (2.00, 10.00),
     "gemini-3.8-flash": (0.75, 3.75),
-    "gemini-3.7-flash": (0.75, 3.75),
-    "gemini-3.6-flash": (0.75, 3.75),
-    "gemini-3.5-flash": (1.50, 9.00),
-    "gemini-3.1-pro": (2.00, 12.00),
-    "gemini-3.1-pro-preview": (2.00, 12.00),
-    "gemini-3-flash": (0.50, 3.00),
     "gemini-3-flash-preview": (0.50, 3.00),
     "gemini-3.1-flash-lite": (0.25, 1.50),
     "gemini-2.5-flash": (0.30, 2.50),
     "composer-2.5": (0.50, 2.50),
     "composer-2.5-fast": (3.00, 15.00),
+    "grok-4.7": (2.00, 6.00),
     "grok-4.6": (2.00, 6.00),
-    "grok-4.6-fast": (4.00, 12.00),
     "grok-4.5": (2.00, 6.00),
-    "grok-4.5-fast": (4.00, 18.00),
-    "kimi-k2.7-code": (0.95, 4.00),
     "kimi-k3": (3.00, 15.00),
     "mai-code-1.1-flash": (0.75, 4.50),
 }

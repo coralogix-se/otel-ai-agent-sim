@@ -55,8 +55,8 @@ def test_emit_cycle_creates_api_platform_gauges() -> None:
         assert f"openai_administration_usage_{field}" in names
 
     assert 'date="2026-09-30"' in body
-    assert 'model="gpt-5.5"' in body
-    assert 'line_item="gpt-5.5, input"' in body
+    assert 'model="gpt-6.1-sol"' in body
+    assert 'line_item="gpt-6.1-sol, input"' in body
     assert 'cx_application_name="OpenAI"' in body
     assert f'organization="{sim.organization}"' in body
     assert 'organization_name="' in body
