@@ -7,6 +7,7 @@ import os
 import random
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from sim.claude.day_variation import (
     claude_daily_multiplier,
@@ -109,6 +110,8 @@ class _SessionEmitState:
 
 
 _SESSION_STATE: dict[str, _SessionEmitState] = {}
+# (UTC day, token-heavy sessions started that day) — see ``_claim_token_heavy_session``.
+_TOKEN_HEAVY_DAY: tuple[str, int] = ("", 0)
 
 # Org-wide cacheRead / (input + cacheRead + cacheCreation) ≈ 85%, under the 90% cacheInefficiency floor.
 _TOKEN_TYPE_FRACS: tuple[tuple[str, float], ...] = (
@@ -317,7 +320,11 @@ def claude_session_cost_usd(roster_user: dict | None) -> float:
         sim_top_spender_pace_multiplier,
     )
     from sim.common.identity import claude_aligned_slot_count
-    from sim.common.repos import is_sim_top_spender, sim_top_spender_roster_indices
+    from sim.common.repos import (
+        is_sim_top_spender,
+        sim_top_spender_rank,
+        sim_top_spender_roster_indices,
+    )
 
     whale_usd = claude_top_spender_daily_usd_target()
     n_whales = len(sim_top_spender_roster_indices())
@@ -327,6 +334,11 @@ def claude_session_cost_usd(roster_user: dict | None) -> float:
         max(1, claude_aligned_slot_count()) - n_whales + n_whales * weight
     )
     if is_sim_top_spender(roster_user):
+        # heavySessions needs ≥ 10× the average session and ≥ 5M tokens. $270 ≈ 15.5M tokens at the
+        # default 270M tokens / $4,700 ratio, above 10× the ~1.3M 7-day session average. Weekday
+        # pacing absorbs the cost; on weekends (#1 target ≈ $300) the pair overshoots by ≈ $250.
+        if sim_top_spender_rank(roster_user) == 1 and _claim_token_heavy_session():
+            return _env_float("SIM_CLAUDE_TOKEN_HEAVY_SESSION_COST_USD", 270.0)
         heavy_frac = _env_float("SIM_CLAUDE_HEAVY_SESSION_FRAC", 0.15)
         lo = _env_float("SIM_CLAUDE_HEAVY_SESSION_COST_USD_MIN", 100.0)
         hi = max(lo, _env_float("SIM_CLAUDE_HEAVY_SESSION_COST_USD_MAX", 150.0))
@@ -339,6 +351,17 @@ def claude_session_cost_usd(roster_user: dict | None) -> float:
     rest = max(0.0, claude_daily_cost_usd() - n_whales * whale_usd)
     other_sessions = max(1.0, claude_daily_sessions() - n_whales * whale_sessions)
     return rest / other_sessions * random.uniform(0.7, 1.3)
+
+
+def _claim_token_heavy_session() -> bool:
+    """True for the first ``SIM_CLAUDE_TOKEN_HEAVY_SESSIONS_PER_DAY`` calls each UTC day."""
+    global _TOKEN_HEAVY_DAY
+    day = datetime.now(UTC).date().isoformat()
+    claimed = _TOKEN_HEAVY_DAY[1] if _TOKEN_HEAVY_DAY[0] == day else 0
+    if claimed >= _env_int("SIM_CLAUDE_TOKEN_HEAVY_SESSIONS_PER_DAY", 2):
+        return False
+    _TOKEN_HEAVY_DAY = (day, claimed + 1)
+    return True
 
 
 def claude_session_plan(session_id: str, roster_user: dict | None) -> _SessionEmitState:

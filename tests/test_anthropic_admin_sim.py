@@ -298,16 +298,37 @@ def test_top_spenders_pace_near_daily_usd_target(monkeypatch: pytest.MonkeyPatch
     avery = by_email.get("avery.okafor@coralogix.com", 0.0)
     taylor = by_email.get("taylor.silva@coralogix.com", 0.0)
     jordan = by_email.get("jordan.garcia@coralogix.com", 0.0)
-    # Mid-day (~0.5 day fraction) → hundreds toward ~$1K; hard cap ≤ ~$2.1K.
+    # Mid-day (~0.5 day fraction) → hundreds; hard caps $3.7K (#1) and $1.2K (#2/#3).
     assert sam >= 200.0, sam
     assert avery >= 150.0, avery
     assert taylor >= 150.0, taylor
-    assert sam <= 2100.0, sam
-    assert avery <= 2000.0, avery
-    assert taylor <= 2000.0, taylor
+    assert sam <= 3700.0, sam
+    assert avery <= 1200.0, avery
+    assert taylor <= 1200.0, taylor
     # #1 unmanaged rogue stays clearly ahead of the old index-0 outlier.
     assert sam > jordan
     assert sam >= avery * 0.9
+
+
+def test_seat_gauges_fire_adoption_insights() -> None:
+    """low-product-adoption < 40%, high-pending-invites > 15%, low-stickiness WAU/MAU < 50% (MAU ≥ 10)."""
+    registry = CollectorRegistry()
+    sim = AnthropicAdminSim(registry=registry, logger=None, emits_per_cycle=8)
+    sim.emit_cycle(now=datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc))
+    values: dict[str, float] = {}
+    for line in generate_latest(registry).decode().splitlines():
+        if line.startswith("anthropic_analytics_seats_assigned{"):
+            values["seats"] = float(line.rsplit(" ", 1)[-1])
+        elif line.startswith("anthropic_analytics_pending_invites{"):
+            values["pending"] = float(line.rsplit(" ", 1)[-1])
+        elif line.startswith("anthropic_analytics_active_users{") and 'product="all"' in line:
+            window = line.split('window="', 1)[1].split('"', 1)[0]
+            values[window] = float(line.rsplit(" ", 1)[-1])
+    assert values["monthly"] / values["seats"] < 0.40
+    assert values["pending"] / values["seats"] > 0.15
+    assert values["monthly"] >= 10
+    assert values["weekly"] / values["monthly"] < 0.50
+    assert values["daily"] <= values["weekly"] <= values["monthly"]
 
 
 def test_utc_midnight_drops_prior_date_user_cost_series() -> None:

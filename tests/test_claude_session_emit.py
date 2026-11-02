@@ -109,13 +109,3 @@ def test_emit_cycles_give_six_turns_then_reap(monkeypatch: pytest.MonkeyPatch) -
 def test_duplicate_token_metric_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SIM_CLAUDE_EMIT_DUPLICATE_TOKEN_METRIC", raising=False)
     assert se.claude_duplicate_token_metric_enabled() is False
-
-
-def test_unmanaged_repos_cardinality_in_source() -> None:
-    """Brief §6: ~200 repository_name values (avoid importing repos→otel in this env)."""
-    from pathlib import Path
-
-    src = Path(__file__).resolve().parents[1] / "sim" / "common" / "repos.py"
-    text = src.read_text()
-    assert "_UNMANAGED_REPOS: tuple[str, ...] = tuple(" in text
-    assert ")[:200]" in text

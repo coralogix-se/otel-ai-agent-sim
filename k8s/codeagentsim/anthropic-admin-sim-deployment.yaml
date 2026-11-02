@@ -69,13 +69,22 @@ spec:
             - name: SIM_ANTHROPIC_ADMIN_COST_LOG_SEC
               value: "86400"
             # Enterprise top spenders on Claude Products (same roster indices as Claude Code):
-            # 17=sam.martinez (#1 unmanaged rogue), 14=avery.okafor, 3=taylor.silva → ~$2K/day each.
+            # 17=sam.martinez (#1 unmanaged rogue), 14=avery.okafor, 3=taylor.silva. From the $2K base,
+            # #1 caps at 1.85× ($3.7K ≈ 14× the user average) and #2/#3 at 0.6× ($1.2K ≈ 4.5×).
             - name: SIM_CLAUDE_TOP_SPENDER_INDICES
               value: "17,14,3"
             - name: SIM_ANTHROPIC_TOP_SPENDER_DAILY_USD
               value: "2000"
             - name: SIM_ANTHROPIC_TOP_SPENDER_DEDICATED_EMIT
               value: "true"
+            # Seat posture for the adoption insights: 60/160 used (< 40%), 28/160 pending (> 15%),
+            # WAU 24 / MAU 60 (< 50% stickiness).
+            - name: SIM_ANTHROPIC_SEATS_ASSIGNED
+              value: "160"
+            - name: SIM_ANTHROPIC_PENDING_INVITES
+              value: "28"
+            - name: SIM_ANTHROPIC_MONTHLY_ACTIVE_USERS
+              value: "60"
           ports:
             - name: metrics
               containerPort: 9090
