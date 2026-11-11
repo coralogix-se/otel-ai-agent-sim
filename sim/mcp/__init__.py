@@ -18,7 +18,7 @@ Baseline error shapes (insight thresholds in ``mcp-insights.ts``):
   every call with slow ``tools/list`` (discovery overhead: ≥20% of server time);
 - ``resources/list`` on servers without resources → -32601 "Method not found" (rejected methods).
 
-Off by default in ``app.py``: ``SIM_MCP_ENABLED=true``; volume ``SIM_MCP_SERVER_SPANS_PER_HOUR``.
+On by default in ``app.py``; ``SIM_MCP_ENABLED=false`` turns it off; volume ``SIM_MCP_SERVER_SPANS_PER_HOUR``.
 Standalone batch runner: ``python -m sim.mcp``.
 """
 
@@ -166,7 +166,7 @@ SERVERS_BY_NAME = {server.name: server for server in SERVERS}
 
 
 def mcp_enabled() -> bool:
-    return _env_bool("SIM_MCP_ENABLED", False)
+    return _env_bool("SIM_MCP_ENABLED", True)
 
 
 def build_providers(exporter: SpanExporter) -> dict:
