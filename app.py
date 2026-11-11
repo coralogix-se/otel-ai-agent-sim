@@ -74,6 +74,7 @@ from sim.common.constants import (
     claude_code_gen_ai_system_for_model,
 )
 from sim.copilot.cli import emit_copilot_cli_session
+from sim.mcp import emit_mcp_cycle, flush_mcp, init_mcp
 from sim.copilot.collector_metrics import copilot_collector_enabled, register_copilot_collector_metrics
 from sim.cursor.usage_v2 import (
     emit_cursor_usage_metrics_cycle,
@@ -3408,6 +3409,7 @@ def main() -> None:
     global _sim_cli
     _sim_cli = SimCliTracerProviders(tp_gemini, tp_codex, tp_claude, tp_cursor, tp_github_copilot)
     st.sim_cli = _sim_cli
+    init_mcp(span_exporter)
 
     resource = Resource.create(
         {
@@ -4369,11 +4371,13 @@ def main() -> None:
             for _ in range(int(iterations_raw)):
                 run_sophisticated_trace()
                 emit_cursor_usage_metrics_cycle()
+                emit_mcp_cycle(interval)
         else:
             while True:
                 cycle_start = time.monotonic()
                 run_sophisticated_trace()
                 emit_cursor_usage_metrics_cycle()
+                emit_mcp_cycle(interval)
                 # Fixed-rate cycles: pacing assumes 3600 / TRACE_INTERVAL_SEC cycles per hour, so a
                 # slow cycle (e.g. a blocking OTLP flush) must not push every later cycle back.
                 time.sleep(max(0.0, interval - (time.monotonic() - cycle_start)))
@@ -4400,6 +4404,7 @@ def main() -> None:
             _gemini_log_provider.shutdown()
         if _copilot_log_provider is not None:
             _copilot_log_provider.shutdown()
+        flush_mcp()
         provider.shutdown()
         if tp_gemini is not None:
             tp_gemini.shutdown()
