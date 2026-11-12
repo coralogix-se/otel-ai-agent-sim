@@ -77,6 +77,17 @@ def default_organization() -> str:
     return os.environ.get("SIM_OPENAI_COMPLIANCE_ORG", "org-SimOpenAICompliance01").strip()
 
 
+def shared_roster_seed(organization: str | None = None) -> str:
+    """One seed for ChatGPT + Codex compliance sims.
+
+    Both emit ``openai_compliance_user_state`` / ``_user_identity`` into the same
+    tenant. Distinct seeds produce distinct ``workspace_id`` values, and the
+    ChatGPT Users grid (unfiltered by subsystem) then shows every person twice.
+    """
+    org = (organization or default_organization()).strip()
+    return f"openai-compliance:{org}"
+
+
 def build_workspaces(count: int, *, seed: str) -> list[ComplianceWorkspace]:
     n = max(1, count)
     out: list[ComplianceWorkspace] = []
@@ -101,8 +112,10 @@ def build_seats(
     for wi, ws in enumerate(workspaces):
         for ui in range(n):
             idx = wi * n + ui
+            # Index first/last independently so small rosters (≤ len(_FIRST))
+            # do not all collapse onto _LAST[0].
             first = _FIRST[idx % len(_FIRST)]
-            last = _LAST[(idx // len(_FIRST)) % len(_LAST)]
+            last = _LAST[idx % len(_LAST)]
             email = f"{first.lower()}.{last.lower()}{ui}@{domain}"
             name = f"{first} {last}"
             user_id = f"user-{_stable_token(f'{seed}:{email}', 24)}"

@@ -55,6 +55,7 @@ from sim.common.openai_compliance import (
     default_organization,
     hours_for_day,
     metric_base,
+    shared_roster_seed,
     utc_today,
 )
 
@@ -176,7 +177,8 @@ class ChatGPTEnterpriseSim:
         )
         n_ws = max(1, _env_int("SIM_CHATGPT_ENTERPRISE_WORKSPACES", DEFAULT_WORKSPACES))
         n_users = max(8, _env_int("SIM_CHATGPT_ENTERPRISE_USERS", DEFAULT_USERS))
-        seed = f"chatgpt-enterprise:{self.organization}"
+        # Share roster seed with Codex so both sims write one workspace/user set.
+        seed = shared_roster_seed(self.organization)
         self.workspaces = build_workspaces(n_ws, seed=seed)
         self.seats = build_seats(
             self.workspaces, users_per_workspace=n_users, seed=seed, domain="coralogix.com"

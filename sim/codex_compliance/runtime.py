@@ -26,6 +26,7 @@ from sim.common.openai_compliance import (
     day_rng,
     default_organization,
     metric_base,
+    shared_roster_seed,
     utc_today,
 )
 from sim.codex_compliance.constants import (
@@ -168,7 +169,8 @@ class CodexComplianceSim:
         )
         n_ws = max(1, _env_int("SIM_CODEX_COMPLIANCE_WORKSPACES", DEFAULT_WORKSPACES))
         n_users = max(10, _env_int("SIM_CODEX_COMPLIANCE_USERS", DEFAULT_USERS))
-        seed = f"codex-compliance:{self.organization}"
+        # Share roster seed with ChatGPT so both sims write one workspace/user set.
+        seed = shared_roster_seed(self.organization)
         self.workspaces = build_workspaces(n_ws, seed=seed)
         self.seats = build_seats(
             self.workspaces, users_per_workspace=n_users, seed=seed, domain="coralogix.com"
