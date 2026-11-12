@@ -1,0 +1,75 @@
+# Kind-local Coralogix otel-integration (slim): scrape compliance sims → US2.
+# Install:
+#   kubectl -n coralogix create secret generic coralogix-keys \
+#     --from-literal=PRIVATE_KEY="$CORALOGIX_PRIVATE_KEY"
+#   helm upgrade --install otel-coralogix coralogix/otel-integration \
+#     -n coralogix -f k8s/kind-compliance/coralogix-otel-values.yaml
+global:
+  domain: us2.coralogix.com
+  clusterName: kind-cluster
+  defaultApplicationName: openai-integration
+  defaultSubsystemName: kind-compliance
+  collectionInterval: 30s
+  logLevel: info
+
+# Skip node agent on kind — cluster collector alone scrapes the sims.
+opentelemetry-agent:
+  enabled: false
+
+opentelemetry-cluster-collector:
+  enabled: true
+  replicaCount: 1
+  presets:
+    fleetManagement:
+      enabled: false
+    clusterMetrics:
+      enabled: false
+    kubernetesEvents:
+      enabled: false
+    kubernetesApiServerMetrics:
+      enabled: false
+    collectorMetrics:
+      enabled: true
+    otlpReceiver:
+      enabled: true
+    coralogixExporter:
+      enabled: true
+      privateKey: ${env:CORALOGIX_PRIVATE_KEY}
+  # Prefer metric / resource attrs over namespace for Application/Subsystem.
+  config:
+    exporters:
+      coralogix:
+        application_name_attributes:
+          - cx.application.name
+          - k8s.namespace.name
+          - service.namespace
+        subsystem_name_attributes:
+          - cx.subsystem.name
+          - k8s.deployment.name
+          - service.name
+  extraConfig:
+    receivers:
+      prometheus/sims:
+        trim_metric_suffixes: false
+        config:
+          scrape_configs:
+            - job_name: otel-codex-compliance-sim
+              scrape_interval: 30s
+              scrape_timeout: 25s
+              static_configs:
+                - targets:
+                    - otel-codex-compliance-sim.codeagentsim.svc.cluster.local:9090
+            - job_name: otel-chatgpt-enterprise-sim
+              scrape_interval: 30s
+              scrape_timeout: 25s
+              static_configs:
+                - targets:
+                    - otel-chatgpt-enterprise-sim.codeagentsim.svc.cluster.local:9090
+    service:
+      pipelines:
+        metrics:
+          receivers:
+            - prometheus/sims
+
+opentelemetry-gateway:
+  enabled: false

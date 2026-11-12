@@ -48,6 +48,18 @@ data:
               static_configs:
                 - targets:
                     - otel-openai-admin-sim:9090
+            - job_name: otel-codex-compliance-sim
+              scrape_interval: 60s
+              scrape_timeout: 55s
+              static_configs:
+                - targets:
+                    - otel-codex-compliance-sim:9090
+            - job_name: otel-chatgpt-enterprise-sim
+              scrape_interval: 60s
+              scrape_timeout: 55s
+              static_configs:
+                - targets:
+                    - otel-chatgpt-enterprise-sim:9090
 
     processors:
       # Backpressure before the kernel OOM killer; keep limit_mib ~75–80% of the pod memory limit (3Gi).

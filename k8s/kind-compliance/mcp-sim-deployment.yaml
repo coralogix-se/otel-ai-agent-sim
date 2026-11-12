@@ -1,0 +1,44 @@
+# Kind-local MCP server sim (AICE-1306): OTLP spans → Coralogix otel-integration collector.
+# Separate from compliance Prometheus sims; no metrics port required.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-mcp-sim
+  namespace: codeagentsim
+  labels:
+    app: otel-mcp-sim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-mcp-sim
+  template:
+    metadata:
+      labels:
+        app: otel-mcp-sim
+    spec:
+      containers:
+        - name: sim
+          image: otel-ai-agent-sim:kind-compliance-local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "sim.mcp"]
+          env:
+            - name: OTLP_ENDPOINT
+              value: coralogix-opentelemetry-collector.coralogix.svc.cluster.local:4317
+            - name: SIM_MCP_BATCH_SEC
+              value: "60"
+            - name: SIM_MCP_SPANS_PER_BATCH
+              value: "120"
+            - name: DEPLOYMENT_ENVIRONMENT
+              value: kind-cluster
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 384Mi

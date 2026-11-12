@@ -1,0 +1,51 @@
+# MCP server sim (AICE-1306): OTLP spans → otel-collector-codeagentsim:24317.
+# Separate from compliance Prometheus sims; no metrics port required.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-mcp-sim
+  namespace: codeagentsim
+  labels:
+    app: otel-mcp-sim
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-mcp-sim
+  template:
+    metadata:
+      labels:
+        app: otel-mcp-sim
+    spec:
+      initContainers:
+        - name: wait-for-collector
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - "until nc -z otel-collector-codeagentsim 24317; do echo waiting for otel collector otlp-grpc; sleep 2; done"
+      containers:
+        - name: sim
+          image: 827602716714.dkr.ecr.us-west-2.amazonaws.com/otel-ai-agent-sim:demo-shape-20261112a
+          imagePullPolicy: Always
+          command: ["python", "-m", "sim.mcp"]
+          env:
+            - name: OTLP_ENDPOINT
+              value: otel-collector-codeagentsim:24317
+            - name: SIM_MCP_BATCH_SEC
+              value: "60"
+            - name: SIM_MCP_SPANS_PER_BATCH
+              value: "120"
+            - name: DEPLOYMENT_ENVIRONMENT
+              value: codeagentsim
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 384Mi
